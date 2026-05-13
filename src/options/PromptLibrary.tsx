@@ -591,7 +591,7 @@ export default function PromptLibrary() {
                           </>
                         ) : (
                           <>
-                            <Pencil className="w-3 h-3" /> 编辑 / 详情
+                            <Pencil className="w-3 h-3" /> 编辑 / 历史
                           </>
                         )}
                       </button>
