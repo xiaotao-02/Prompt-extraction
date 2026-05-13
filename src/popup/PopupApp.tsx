@@ -22,6 +22,7 @@ import {
   restorePromptVersion,
 } from '@/lib/storage';
 import type { HistoryItem, PromptVersion, RefineResponse } from '@/lib/types';
+import { formatTime } from '../options/_shared/time';
 
 const REFINE_SUGGESTIONS = [
   '翻译成英文',
@@ -372,10 +373,15 @@ function VersionList({
   copiedId: string | null;
   onRestore: (v: PromptVersion) => void;
 }) {
+  // 同图反推次数统计（用于头部副标题）
+  const extractedCount = item.versions.filter((v) => v.source === 'extracted').length;
   return (
     <div className="mt-2 rounded-lg border border-zinc-200 dark:border-zinc-700 bg-zinc-50/60 dark:bg-zinc-900/50 overflow-hidden">
-      <div className="px-2.5 py-1.5 text-[10px] font-semibold text-zinc-500 border-b border-zinc-200/70 dark:border-zinc-700/70">
-        共 {item.versions.length} 个版本（最新在上）
+      <div className="px-2.5 py-1.5 text-[10px] font-semibold text-zinc-500 border-b border-zinc-200/70 dark:border-zinc-700/70 flex items-center justify-between gap-2">
+        <span>共 {item.versions.length} 个版本（最新在上）</span>
+        {extractedCount > 1 && (
+          <span className="font-normal text-zinc-400">同一张图反推 {extractedCount} 次</span>
+        )}
       </div>
       <ul className="divide-y divide-zinc-200/60 dark:divide-zinc-700/60 max-h-[200px] overflow-y-auto">
         {item.versions.map((v, i) => {
@@ -383,9 +389,16 @@ function VersionList({
           const cid = `${item.id}::${v.id}`;
           return (
             <li key={v.id} className={`p-2 ${isCurrent ? 'bg-emerald-50/60 dark:bg-emerald-500/10' : ''}`}>
-              <div className="flex items-center gap-1.5 text-[10px] mb-1">
+              <div className="flex items-center gap-1.5 text-[10px] mb-1 flex-wrap">
                 <SourceTag source={v.source} />
                 <span className="text-zinc-500">{formatTime(v.createdAt)}</span>
+                {v.meta && (
+                  <span className="inline-flex items-center gap-1 px-1.5 py-px rounded bg-white/80 dark:bg-zinc-800/80 text-zinc-600 dark:text-zinc-300 ring-1 ring-zinc-200/60 dark:ring-zinc-700/60">
+                    <span className="font-medium">{v.meta.provider}</span>
+                    <span className="text-zinc-300 dark:text-zinc-600">·</span>
+                    <span className="font-mono truncate max-w-[110px]">{v.meta.model}</span>
+                  </span>
+                )}
                 {isCurrent && (
                   <span className="ml-auto px-1.5 py-px rounded bg-emerald-100 dark:bg-emerald-500/20 text-emerald-700 dark:text-emerald-300 font-medium">
                     当前
@@ -562,14 +575,4 @@ function EmptyState({ onOpenOptions }: { onOpenOptions: () => void }) {
       </button>
     </div>
   );
-}
-
-function formatTime(t: number): string {
-  const d = new Date(t);
-  const now = new Date();
-  const diff = now.getTime() - t;
-  if (diff < 60_000) return '刚刚';
-  if (diff < 3600_000) return `${Math.floor(diff / 60_000)} 分钟前`;
-  if (diff < 86400_000) return `${Math.floor(diff / 3600_000)} 小时前`;
-  return `${d.getMonth() + 1}/${d.getDate()} ${d.getHours()}:${String(d.getMinutes()).padStart(2, '0')}`;
 }

@@ -46,6 +46,7 @@ import type {
   PromptVersionSource,
   RefineResponse,
 } from '@/lib/types';
+import { formatTime } from './_shared/time';
 
 type SortKey = 'updated' | 'created' | 'versions';
 type ViewMode = 'list' | 'grid';
@@ -801,13 +802,34 @@ function ItemRow({
   onDelete: () => void;
 }) {
   const versionCount = item.versions?.length || 0;
+  // 让用户点击整行任意空白处都能 toggle 展开/收起；同时仍要支持划选 prompt 文本
+  // 与点击内部按钮、checkbox、来源链接（这些 handler 自己已 stopPropagation）。
+  const onRowClick = (e: React.MouseEvent<HTMLDivElement>) => {
+    // 用户在划选文本时不应误触发展开/收起
+    const sel = typeof window !== 'undefined' ? window.getSelection() : null;
+    if (sel && sel.toString().length > 0 && sel.containsNode(e.currentTarget, true)) return;
+    onExpand();
+  };
+  const stop = (e: React.SyntheticEvent) => e.stopPropagation();
   return (
-    <div className="group flex gap-3 p-3.5">
+    <div
+      className="group flex gap-3 p-3.5 cursor-pointer select-text"
+      onClick={onRowClick}
+      role="button"
+      tabIndex={0}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          onExpand();
+        }
+      }}
+    >
       <input
         type="checkbox"
         className="mt-1 w-4 h-4 accent-violet-500 flex-none cursor-pointer"
         checked={checked}
         onChange={onToggleSelect}
+        onClick={stop}
         title="选中此条"
       />
       <Thumb item={item} size="md" />
@@ -848,7 +870,10 @@ function ItemRow({
 
         <div className="mt-2 flex items-center gap-1 flex-wrap text-[11px]">
           <button
-            onClick={() => onCopy(item.prompt, `cur:${item.id}`)}
+            onClick={(e) => {
+              stop(e);
+              onCopy(item.prompt, `cur:${item.id}`);
+            }}
             className="inline-flex items-center gap-1 px-2 py-1 rounded-md hover:bg-zinc-100 dark:hover:bg-zinc-800 text-zinc-600 dark:text-zinc-300 transition"
           >
             {copiedKey === `cur:${item.id}` ? (
@@ -863,7 +888,10 @@ function ItemRow({
             )}
           </button>
           <button
-            onClick={onExpand}
+            onClick={(e) => {
+              stop(e);
+              onExpand();
+            }}
             className={`inline-flex items-center gap-1 px-2 py-1 rounded-md transition ${
               expanded
                 ? 'bg-violet-100 dark:bg-violet-500/20 text-violet-700 dark:text-violet-300'
@@ -881,7 +909,10 @@ function ItemRow({
             )}
           </button>
           <button
-            onClick={onTogglePin}
+            onClick={(e) => {
+              stop(e);
+              onTogglePin();
+            }}
             className={`inline-flex items-center gap-1 px-2 py-1 rounded-md transition ${
               item.pinned
                 ? 'bg-amber-100 dark:bg-amber-500/20 text-amber-700 dark:text-amber-300'
@@ -904,6 +935,7 @@ function ItemRow({
               href={item.pageUrl}
               target="_blank"
               rel="noreferrer"
+              onClick={stop}
               className="inline-flex items-center gap-1 px-2 py-1 rounded-md hover:bg-zinc-100 dark:hover:bg-zinc-800 text-zinc-600 dark:text-zinc-300 transition"
               title={item.pageTitle || item.pageUrl}
             >
@@ -911,7 +943,10 @@ function ItemRow({
             </a>
           )}
           <button
-            onClick={onDelete}
+            onClick={(e) => {
+              stop(e);
+              onDelete();
+            }}
             className="ml-auto inline-flex items-center gap-1 px-2 py-1 rounded-md hover:bg-rose-50 dark:hover:bg-rose-500/10 text-zinc-400 hover:text-rose-500 transition opacity-0 group-hover:opacity-100 focus:opacity-100"
             title="删除这条记录"
           >
@@ -947,21 +982,41 @@ function ItemGridCard({
   onDelete: () => void;
 }) {
   const versionCount = item.versions?.length || 0;
+  // 网格卡片整卡可点击：和列表行一致，避免划选文本时误触发
+  const stop = (e: React.SyntheticEvent) => e.stopPropagation();
+  const onCardClick = (e: React.MouseEvent<HTMLDivElement>) => {
+    const sel = typeof window !== 'undefined' ? window.getSelection() : null;
+    if (sel && sel.toString().length > 0 && sel.containsNode(e.currentTarget, true)) return;
+    onExpand();
+  };
   return (
     <div
-      className={`group card !p-0 overflow-hidden flex flex-col transition-all duration-200 ${
+      className={`group card !p-0 overflow-hidden flex flex-col transition-all duration-200 cursor-pointer ${
         expanded ? 'ring-2 ring-violet-500/40 shadow-lg shadow-violet-500/5' : 'hover:shadow-md hover:-translate-y-0.5'
       } ${item.pinned ? 'border-amber-300 dark:border-amber-500/40' : ''}`}
+      onClick={onCardClick}
+      role="button"
+      tabIndex={0}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          onExpand();
+        }
+      }}
     >
       <div className="relative aspect-[4/3] bg-zinc-100 dark:bg-zinc-800 overflow-hidden">
         <Thumb item={item} size="full" />
         <div className="absolute inset-x-0 top-0 p-2 flex items-start justify-between pointer-events-none">
-          <label className="pointer-events-auto inline-flex items-center justify-center w-6 h-6 rounded-md bg-white/85 dark:bg-zinc-900/85 backdrop-blur ring-1 ring-black/5 dark:ring-white/10 cursor-pointer transition opacity-0 group-hover:opacity-100 has-[:checked]:opacity-100">
+          <label
+            onClick={stop}
+            className="pointer-events-auto inline-flex items-center justify-center w-6 h-6 rounded-md bg-white/85 dark:bg-zinc-900/85 backdrop-blur ring-1 ring-black/5 dark:ring-white/10 cursor-pointer transition opacity-0 group-hover:opacity-100 has-[:checked]:opacity-100"
+          >
             <input
               type="checkbox"
               className="w-3.5 h-3.5 accent-violet-500"
               checked={checked}
               onChange={onToggleSelect}
+              onClick={stop}
             />
           </label>
           <div className="pointer-events-auto flex items-center gap-1">
@@ -1012,7 +1067,10 @@ function ItemGridCard({
           {item.prompt || <span className="text-zinc-400 italic">（空）</span>}
         </p>
         <button
-          onClick={onExpand}
+          onClick={(e) => {
+            stop(e);
+            onExpand();
+          }}
           className={`mt-1 inline-flex items-center justify-center gap-1 text-[11px] py-1.5 rounded-md transition ${
             expanded
               ? 'bg-violet-100 dark:bg-violet-500/20 text-violet-700 dark:text-violet-300'
@@ -1056,7 +1114,12 @@ function IconBtn({
   } as const;
   return (
     <button
-      onClick={onClick}
+      onClick={(e) => {
+        // 网格卡片整卡可点击展开，浮层按钮（复制/置顶/删除）必须阻止冒泡，
+        // 否则会同时触发外层 onExpand。
+        e.stopPropagation();
+        onClick();
+      }}
       title={title}
       className={`w-7 h-7 rounded-md inline-flex items-center justify-center bg-white/85 dark:bg-zinc-900/85 backdrop-blur ring-1 ring-black/5 dark:ring-white/10 transition ${
         active ? activeMap[activeColor || 'violet'] : 'text-zinc-600 dark:text-zinc-200'
@@ -1384,8 +1447,28 @@ function VersionsTab({
   onRestoreVersion: (v: PromptVersion) => void;
   onDeleteVersion: (v: PromptVersion) => void;
 }) {
+  // 统计有 meta 的版本里出现过几个不同的 provider/model 组合，
+  // 用于在头部给出"同一张图被 N 个模型反推过"的提示，告诉用户为什么这条记录的版本会比较多。
+  const extractedCount = item.versions.filter((v) => v.source === 'extracted').length;
+  const distinctModels = new Set(
+    item.versions
+      .map((v) => (v.meta ? `${v.meta.provider}|${v.meta.model}` : ''))
+      .filter(Boolean)
+  );
   return (
-    <ul className="rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 divide-y divide-zinc-100 dark:divide-zinc-800 overflow-hidden">
+    <div className="space-y-2">
+      {extractedCount > 1 && (
+        <div className="text-[11px] text-zinc-500 dark:text-zinc-400 inline-flex items-center gap-1.5">
+          <Layers className="w-3 h-3 text-violet-500" />
+          这张图共被反推过 <b className="text-zinc-700 dark:text-zinc-200">{extractedCount}</b> 次
+          {distinctModels.size > 1 && (
+            <span>
+              · 涵盖 <b className="text-zinc-700 dark:text-zinc-200">{distinctModels.size}</b> 个模型
+            </span>
+          )}
+        </div>
+      )}
+      <ul className="rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 divide-y divide-zinc-100 dark:divide-zinc-800 overflow-hidden">
       {item.versions.map((v, i) => {
         const isCurrent = i === 0;
         const cid = `ver:${item.id}::${v.id}`;
@@ -1397,6 +1480,15 @@ function VersionsTab({
             <div className="flex items-center gap-2 text-[11px] mb-1.5 flex-wrap">
               <SourceTag source={v.source} />
               <span className="text-zinc-500">{new Date(v.createdAt).toLocaleString()}</span>
+              {v.meta && (
+                <span className="inline-flex items-center gap-1 px-1.5 py-px rounded bg-zinc-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-300">
+                  <span className="font-medium">{v.meta.provider}</span>
+                  <span className="text-zinc-300 dark:text-zinc-600">·</span>
+                  <span className="font-mono truncate max-w-[160px]">{v.meta.model}</span>
+                  <span className="text-zinc-300 dark:text-zinc-600">·</span>
+                  <span>{v.meta.style}</span>
+                </span>
+              )}
               {v.note && (
                 <span className="text-zinc-500 italic truncate max-w-[260px]">· {v.note}</span>
               )}
@@ -1445,7 +1537,8 @@ function VersionsTab({
           </li>
         );
       })}
-    </ul>
+      </ul>
+    </div>
   );
 }
 
@@ -1693,13 +1786,4 @@ function BulkActionBar({
       </div>
     </div>
   );
-}
-
-function formatTime(t: number): string {
-  const d = new Date(t);
-  const diff = Date.now() - t;
-  if (diff < 60_000) return '刚刚';
-  if (diff < 3600_000) return `${Math.floor(diff / 60_000)} 分钟前`;
-  if (diff < 86400_000) return `${Math.floor(diff / 3600_000)} 小时前`;
-  return `${d.getMonth() + 1}/${d.getDate()} ${d.getHours()}:${String(d.getMinutes()).padStart(2, '0')}`;
 }
