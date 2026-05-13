@@ -8,4 +8,7 @@ dist-zip
 .env
 .env.local
 .chrome-dev-profile
+*.tsbuildinfo
+prompt-extracto-data.json
+*-data.json
 

@@ -33,7 +33,7 @@ export type OutputStyle = 'natural-zh' | 'natural-en' | 'sd-tags' | 'midjourney'
  * 历史上还存在过 'fidelity' (v0.1.7 高保真档)，已下线；老 settings 里如果还存着这个
  * 值，会在 getStrategy 里安全回退到 DEFAULT_STRATEGY_ID。
  */
-export type StrategyId = 'classic' | 'v016';
+export type StrategyId = 'classic' | 'v016' | 'v010' | 'v022';
 
 export interface ProviderConfig {
   id: ProviderId;

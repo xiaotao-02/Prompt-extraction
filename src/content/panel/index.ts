@@ -13,6 +13,7 @@ import {
   setShadow,
   setPanel,
   setCurrentState,
+  panelActions,
   type PanelState,
 } from './state';
 import {
@@ -89,3 +90,6 @@ export function closePanel(): void {
   }
   setCurrentState(null);
 }
+
+panelActions.renderPanel = renderPanel;
+panelActions.closePanel = closePanel;

@@ -1,54 +1,80 @@
 import type { RuntimeMessage } from '@/lib/types';
 import { renderPanel, updatePanel, closePanel } from './panel';
 
-chrome.runtime.onMessage.addListener((message: RuntimeMessage, _sender, sendResponse) => {
-  if (message.type === 'PING') {
-    sendResponse({ ok: true });
-    return true;
-  }
-  if (message.type === 'EXTRACT_PENDING') {
-    renderPanel({
-      requestId: message.payload.requestId,
-      imageUrl: message.payload.imageUrl,
-      status: 'loading',
-      stage: 'calling',
-      startedAt: Date.now(),
-      strategy: message.payload.strategy,
-    });
+function isContextValid(): boolean {
+  try {
+    return !!chrome.runtime?.id;
+  } catch {
     return false;
   }
-  if (message.type === 'EXTRACT_PROGRESS') {
-    // 只把"实际带值"的字段塞进 patch，避免后台只为通知 strategy 而发的
-    // progress 把面板已经推进到的 stage / partial 重置回 undefined。
-    const patch: Parameters<typeof updatePanel>[1] = {};
-    if (message.payload.stage !== undefined) patch.stage = message.payload.stage;
-    if (message.payload.partial !== undefined) patch.partial = message.payload.partial;
-    if (message.payload.strategy !== undefined) patch.strategy = message.payload.strategy;
-    updatePanel(message.payload.requestId, patch);
-    return false;
+}
+
+/**
+ * 安全发送消息。上下文失效时静默忽略，避免 Uncaught Error。
+ */
+export function safeSendMessage(message: unknown, callback?: (response: any) => void): void {
+  if (!isContextValid()) return;
+  try {
+    if (callback) {
+      chrome.runtime.sendMessage(message, callback);
+    } else {
+      chrome.runtime.sendMessage(message);
+    }
+  } catch {
+    // Extension context invalidated
   }
-  if (message.type === 'EXTRACT_RESULT') {
-    updatePanel(message.payload.requestId, {
-      status: 'success',
-      prompt: message.payload.prompt,
-      provider: message.payload.provider,
-      model: message.payload.model,
-      partial: undefined,
-      stage: undefined,
-    });
+}
+
+try {
+  chrome.runtime.onMessage.addListener((message: RuntimeMessage, _sender, sendResponse) => {
+    if (message.type === 'PING') {
+      sendResponse({ ok: true });
+      return true;
+    }
+    if (message.type === 'EXTRACT_PENDING') {
+      renderPanel({
+        requestId: message.payload.requestId,
+        imageUrl: message.payload.imageUrl,
+        status: 'loading',
+        stage: 'calling',
+        startedAt: Date.now(),
+        strategy: message.payload.strategy,
+      });
+      return false;
+    }
+    if (message.type === 'EXTRACT_PROGRESS') {
+      const patch: Parameters<typeof updatePanel>[1] = {};
+      if (message.payload.stage !== undefined) patch.stage = message.payload.stage;
+      if (message.payload.partial !== undefined) patch.partial = message.payload.partial;
+      if (message.payload.strategy !== undefined) patch.strategy = message.payload.strategy;
+      updatePanel(message.payload.requestId, patch);
+      return false;
+    }
+    if (message.type === 'EXTRACT_RESULT') {
+      updatePanel(message.payload.requestId, {
+        status: 'success',
+        prompt: message.payload.prompt,
+        provider: message.payload.provider,
+        model: message.payload.model,
+        partial: undefined,
+        stage: undefined,
+      });
+      return false;
+    }
+    if (message.type === 'EXTRACT_ERROR') {
+      updatePanel(message.payload.requestId, {
+        status: 'error',
+        error: message.payload.error,
+        partial: undefined,
+        stage: undefined,
+      });
+      return false;
+    }
     return false;
-  }
-  if (message.type === 'EXTRACT_ERROR') {
-    updatePanel(message.payload.requestId, {
-      status: 'error',
-      error: message.payload.error,
-      partial: undefined,
-      stage: undefined,
-    });
-    return false;
-  }
-  return false;
-});
+  });
+} catch {
+  // Extension context already invalidated at registration time
+}
 
 document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape') closePanel();
@@ -77,8 +103,9 @@ window.addEventListener(
   'contextmenu',
   (ev: MouseEvent) => {
     try {
+      if (!isContextValid()) return;
       const url = captureMediaUrlAtPoint(ev);
-      chrome.runtime.sendMessage(
+      safeSendMessage(
         {
           type: 'CTX_MENU_PREP',
           payload: { imageUrl: url },

@@ -80,3 +80,8 @@ export function setCurrentState(v: PanelState | null) {
 export function setLoadingTickHandle(v: number | null) {
   loadingTickHandle = v;
 }
+
+export const panelActions = {
+  renderPanel: (_state: PanelState): void => {},
+  closePanel: (): void => {},
+};

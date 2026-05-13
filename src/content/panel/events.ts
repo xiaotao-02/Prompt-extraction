@@ -1,7 +1,32 @@
 import { appendPromptVersion, getHistoryItem, restorePromptVersion } from '@/lib/storage';
 import type { RefineResponse } from '@/lib/types';
-import { currentState, setCurrentState, panel } from './state';
-import { renderPanel, closePanel } from './index';
+import { currentState, setCurrentState, panel, panelActions } from './state';
+
+function renderPanel(...args: Parameters<typeof panelActions.renderPanel>) {
+  return panelActions.renderPanel(...args);
+}
+function closePanel() {
+  return panelActions.closePanel();
+}
+
+function isContextValid(): boolean {
+  try {
+    return !!chrome.runtime?.id;
+  } catch {
+    return false;
+  }
+}
+
+function safeSendMessage(message: unknown, callback?: (response: any) => void): void {
+  if (!isContextValid()) return;
+  try {
+    if (callback) {
+      chrome.runtime.sendMessage(message, callback);
+    } else {
+      chrome.runtime.sendMessage(message);
+    }
+  } catch { /* context invalidated */ }
+}
 
 /**
  * 仅刷新和"是否脏"相关的 UI 部分，避免在每次按键时整片重渲染导致 textarea 失焦。
@@ -88,7 +113,8 @@ export function bindEvents(root: HTMLElement): void {
         return;
       }
       if (action === 'retry') {
-        chrome.runtime.sendMessage({ type: 'PING' });
+        if (!isContextValid()) return;
+        safeSendMessage({ type: 'PING' });
         renderPanel({
           ...state,
           status: 'loading',
@@ -101,7 +127,7 @@ export function bindEvents(root: HTMLElement): void {
           partial: undefined,
           startedAt: Date.now(),
         });
-        chrome.runtime.sendMessage({
+        safeSendMessage({
           type: 'EXTRACT_PROMPT',
           payload: {
             imageUrl: state.imageUrl,
@@ -113,7 +139,8 @@ export function bindEvents(root: HTMLElement): void {
         return;
       }
       if (action === 'open-options') {
-        chrome.runtime.sendMessage({ type: 'OPEN_OPTIONS' });
+        if (!isContextValid()) return;
+        safeSendMessage({ type: 'OPEN_OPTIONS' });
         return;
       }
       if (action === 'toggle-versions') {
@@ -213,52 +240,61 @@ export function bindEvents(root: HTMLElement): void {
           refineInstruction: instruction,
         });
         renderPanel(currentState!);
+        if (!isContextValid()) {
+          setCurrentState({ ...currentState!, refineLoading: false, refineError: '扩展已更新，请刷新页面' });
+          renderPanel(currentState!);
+          return;
+        }
         const baseline = state.draft ?? state.prompt ?? '';
-        chrome.runtime.sendMessage(
-          {
-            type: 'REFINE_PROMPT',
-            payload: {
-              historyId: state.requestId,
-              instruction,
-              current: baseline,
+        try {
+          chrome.runtime.sendMessage(
+            {
+              type: 'REFINE_PROMPT',
+              payload: {
+                historyId: state.requestId,
+                instruction,
+                current: baseline,
+              },
             },
-          },
-          (resp: RefineResponse | undefined) => {
-            if (!currentState || currentState.requestId !== state.requestId) return;
-            if (chrome.runtime.lastError || !resp) {
+            (resp: RefineResponse | undefined) => {
+              if (!currentState || currentState.requestId !== state.requestId) return;
+              if (chrome.runtime.lastError || !resp) {
+                setCurrentState({
+                  ...currentState,
+                  refineLoading: false,
+                  refineError:
+                    chrome.runtime.lastError?.message || '后台未响应，请稍后再试',
+                });
+                renderPanel(currentState);
+                return;
+              }
+              if (!resp.ok) {
+                setCurrentState({
+                  ...currentState,
+                  refineLoading: false,
+                  refineError: resp.error,
+                });
+                renderPanel(currentState);
+                return;
+              }
               setCurrentState({
                 ...currentState,
                 refineLoading: false,
-                refineError:
-                  chrome.runtime.lastError?.message || '后台未响应，请稍后再试',
+                refineError: undefined,
+                refineInstruction: '',
+                refineOpen: false,
+                prompt: resp.prompt,
+                draft: resp.prompt,
+                versionsOpen: true,
               });
+              void syncVersions(state.requestId);
               renderPanel(currentState);
-              return;
             }
-            if (!resp.ok) {
-              setCurrentState({
-                ...currentState,
-                refineLoading: false,
-                refineError: resp.error,
-              });
-              renderPanel(currentState);
-              return;
-            }
-            setCurrentState({
-              ...currentState,
-              refineLoading: false,
-              refineError: undefined,
-              refineInstruction: '',
-              refineOpen: false,
-              prompt: resp.prompt,
-              draft: resp.prompt,
-              versionsOpen: true,
-            });
-            // 拉一次最新版本列表
-            void syncVersions(state.requestId);
-            renderPanel(currentState);
-          }
-        );
+          );
+        } catch {
+          setCurrentState({ ...currentState!, refineLoading: false, refineError: '扩展已更新，请刷新页面' });
+          renderPanel(currentState!);
+        }
         return;
       }
     });

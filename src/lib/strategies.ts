@@ -47,11 +47,11 @@ import type { OutputStyle, StrategyId } from './types';
 // ============================================================
 
 /** stylePromptSet 组件的版本号。新增版本时只追加，不改老版本（历史档要靠它锚定）。 */
-export type StylePromptSetVersion = 'v0.1.0';
+export type StylePromptSetVersion = 'v0.1.0' | 'v0.1.1' | 'v0.2.2';
 /** sampling 组件的版本号。 */
-export type SamplingVersion = 'v0.1.0';
+export type SamplingVersion = 'v0.1.0' | 'v0.2.2';
 /** customJoin 组件的版本号。 */
-export type CustomJoinVersion = 'v0.1.0';
+export type CustomJoinVersion = 'v0.1.0' | 'v0.2.2';
 
 // ----- stylePromptSet 各版本 -----
 
@@ -66,6 +66,63 @@ const STYLE_PROMPT_SET_V010: Record<OutputStyle, string> = {
     'Generate a Midjourney v6 style English prompt for this image. Use a vivid descriptive sentence with comma-separated style modifiers, then end with appropriate parameters like --ar 16:9 --style raw if relevant. Output ONLY the prompt, no explanation, no markdown.',
 };
 
+// v0.1.1：在 v0.1.0 基础上加 3 条硬约束（覆盖率清单 + 去模板句 + 去主观词），采样不变。
+// 目的：让 "v0.1.6 策略" 这一档在同温度同 token 上限下输出更紧、更有结构、更少水词。
+const STYLE_PROMPT_SET_V011: Record<OutputStyle, string> = {
+  'natural-zh':
+    '请用自然流畅的中文段落详细描述这张图片，作为 AI 绘图工具的高质量提示词。必须按"主体 → 主体细节 → 姿态 → 服饰 → 环境 → 光照 → 风格"的顺序逐项展开，少一项都算违规。禁止以"这是一张/画面中/总而言之/总体而言"等模板句开头或收尾。禁止"美丽的/梦幻般的/令人惊叹的"等主观抽象修饰，使用具体名词 + 具体形容。只输出提示词正文，不要任何前缀、解释或 Markdown。',
+  'natural-en':
+    'Describe this image as a high-quality prompt for AI image generators. You MUST cover, in order: subject → subject details → pose → clothing → setting → lighting → style. Missing any is a violation. Do NOT open or close with template phrases like "This is an image of...", "Overall,...", "In summary,...". Do NOT use subjective fillers like "beautiful, dreamy, breathtaking" — use concrete nouns and concrete adjectives. Output ONLY the prompt body — no prefix, no explanation, no markdown.',
+  'sd-tags':
+    'Generate a Stable Diffusion / Danbooru-style English tag prompt for this image. Comma-separated lowercase short tags, single line, ordered: quality boosters → subject → subject features → pose → clothing → setting → lighting → style. Tags must describe elements actually visible in the image. No subjective fillers ("beautiful", "dreamy"). No negative-prompt tags ("blurry", "low quality"). Output ONLY the tag list, single line, no explanation.',
+  midjourney:
+    'Generate a Midjourney v6 style English prompt for this image. A single dense descriptive sentence in the order subject → subject details → pose → setting → lighting → style, followed by comma-separated style modifiers, then parameters like --ar 16:9 --style raw if relevant. No subjective fillers, no template phrases ("This image shows..."). Output ONLY the prompt, no explanation, no markdown.',
+};
+
+// v0.2.2：直接从 v0.1.0 演化的"v0.1.0 增强版"。设计动机不依赖 v0.1.1 / v0.2.x，
+// 只针对 v0.1.0 本身实测出来的 4 类输出问题做最小手术：
+//
+//   (A) v0.1.0 把"画面 / 风格 / 构图 / 光线 / 色调 / 氛围 / 主体细节"7 个抽象方面
+//       一并丢给模型自由组织，覆盖率不稳——常出现"色调"和"氛围"被反复说而"姿态 /
+//       服饰每层 / 镜头焦段"被整块跳过的偏科现象。
+//       → 改成显式 10 维度清单：主体类型 / 主体外貌 / 表情眼神 / 姿态动作 /
+//         服饰逐层（颜色+质料+剪裁）/ 持物配饰 / 场景与前中背景 / 光照（方向+
+//         强度+色温+质感）/ 色彩（具体色名）/ 画风媒介构图镜头。模型先在心里
+//         逐项识别再串成段，**但维度名禁止打印进正文**（"主体："这种字面字符
+//         不要进 prompt，避免污染下游扩散模型 token 流）。
+//
+//   (B) v0.1.0 实测最常见的三类"低密度输出"：
+//       - 模板开头："这是一张……" / "整张图给人的感觉是……"
+//       - 主观水词："美丽的 / 梦幻般的 / 唯美 / 令人惊叹的 / 高质感"
+//       - 脑补图外："她似乎在思考人生" / "暗示一种孤独感" / "可能是傍晚下班路上"
+//       这三类对扩散模型 100% 无效甚至有害（无视觉锚 / 高熵主观词 / 偏离图意）。
+//       → 单独列三条硬约束：禁模板句开收尾 / 禁主观抽象修饰 / 禁脑补图外内容。
+//
+//   (C) v0.1.0 没说"图里没有该怎么办"，模型经常凑词——比如灰底特写头像非要补一句
+//       "背景是模糊的室内"，纯属臆造。
+//       → 加"空槽位静默跳过"硬约束，明确禁止凑词、禁止写"无 / 不可见"。
+//
+//   (D) v0.1.0 让"光照 / 颜色"自由表述，模型偷懒就吐"自然光 / 暖色调"，扩散模型
+//       的 attention 抓不到有用的视觉信号。
+//       → 在具体度要求里点名两个高价值维度：颜色必须给具体色名（"藏青 / 铁锈橙"
+//         而不是"暖色调"）；光照尽量给方向+强度+色温+质感（"左前 45° 主光、柔和、
+//         暖白 4500K、轻微边缘光"而不是"自然光"）。其他维度仍允许散文化表述，
+//         不强行 schema 化，避免把 v0.1.0 的"自然成段"卖点完全丢掉。
+//
+// 注：4 套指令共享一个版本号，是为了让中文段落 / 英文段落 / SD tag / Midjourney
+// 这 4 种口径在"覆盖维度 + 三禁 + 空槽位跳过"上保持成套一致，避免一种风格修了
+// 另一种风格继续吐套话。
+const STYLE_PROMPT_SET_V022: Record<OutputStyle, string> = {
+  'natural-zh':
+    '请把这张图片改写成一段可直接作为 Stable Diffusion / Midjourney / Flux 输入的中文提示词。请先在心里按以下 10 个维度对图片做识别：(1) 主体类型；(2) 主体外貌（年龄段 / 性别 / 发型发色 / 瞳色 / 肤色，仅写图中可辨认的）；(3) 表情与眼神；(4) 姿态 / 动作（身体朝向 + 手脚位置）；(5) 服饰自上而下逐层（每层的颜色 + 质料 + 剪裁）；(6) 持物 / 配饰；(7) 场景 / 环境与前景 / 中景 / 背景元素；(8) 光照（方向 + 强度 + 色温 + 质感）；(9) 色彩搭配（主色 + 次色，必须用具体色名）；(10) 画风 / 媒介 / 构图 / 镜头焦段。识别完之后按同一顺序把每个维度的内容紧凑成段写出来。具体度要求：颜色用"藏青 / 铁锈橙 / 雾灰"这种具体色名，禁用"暖色调 / 冷色调"；光照尽量写成"左前 45° 主光、柔和、暖白 4500K、轻微边缘光"，禁用"自然光 / 氛围光"这种空话。硬约束：(a) 维度名禁止打印进正文，不要出现"主体：" "光照：" 之类的字面标签；(b) 只描述图里真实可见的元素，禁止脑补人物动机 / 剧情 / 情绪 / 镜头外内容；(c) 禁用"美丽的 / 梦幻般的 / 唯美 / 令人惊叹的 / 高质感"等主观抽象水词，用具体名词 + 具体形容代替；(d) 不允许以"这是一张 / 画面中 / 整张图 / 总体而言 / 总而言之"等模板句开头或收尾；(e) 某个维度在图里确实没有就静默跳过，不要凑词，更不要写"无 / 不可见"。输出格式：单段中文正文，不分行、不分点、不要 Markdown、不要任何前缀或解释。',
+  'natural-en':
+    'Rewrite this image as a single dense English paragraph suitable as a prompt body for Stable Diffusion / Midjourney / Flux. First silently identify the image along these 10 dimensions: (1) subject type; (2) subject appearance (age range / gender / hairstyle & color / eye color / skin tone — only what is visibly identifiable); (3) expression and eye contact; (4) pose / action (body orientation + hand & foot placement); (5) clothing top-to-bottom, each layer\'s color + material + cut; (6) held objects / accessories; (7) setting plus foreground / midground / background; (8) lighting (direction + intensity + color temperature + quality); (9) color palette (primary + secondary, using concrete color names); (10) art style / medium / framing / focal length. Then write them out in the same order as ONE compact paragraph. Specificity requirements: use concrete color names ("navy, rust orange, fog gray"), never abstract palette words ("warm tones, cool tones"); prefer precise lighting ("45-degree key light from front-left, soft, warm 4500K, subtle rim light") over generic phrasing ("natural lighting, ambient light"). Hard rules: (a) NEVER print dimension labels into the output (no "Subject:" / "Lighting:" headers); (b) describe only elements actually visible — no speculation about motive, narrative, emotion or off-frame content; (c) forbid subjective fillers such as "beautiful, dreamy, breathtaking, stunning, high quality" — use concrete nouns and concrete adjectives instead; (d) do NOT open or close with template phrases like "This is an image of...", "The picture shows...", "Overall,...", "In summary,..."; (e) if a dimension has nothing visible, skip it silently — never pad with invented content, never write "none" or "not visible". Output format: ONE dense English paragraph. No line breaks, no bullets, no Markdown, no prefix, no explanation.',
+  'sd-tags':
+    'Generate a Stable Diffusion / Danbooru style tag prompt for this image. Output a single line of comma-separated lowercase English tags in this order: quality boosters → art style / medium → subject type → subject features (age / gender / hair / eye / skin — only what is visibly identifiable) → expression → pose → clothing & accessories (each item\'s color + material + cut) → setting → foreground / midground / background → lighting → color palette → camera & framing. Specificity: prefer concrete tags ("navy blue trench coat", "rim lighting", "shallow depth of field", "soft bokeh") over abstract ones ("warm tones", "natural lighting", "atmospheric"); always use specific color names rather than palette adjectives. Hard rules: (a) tags must reflect only elements actually visible in the image — no imagined narrative, no off-frame guesses, no emotional speculation; (b) no subjective fillers ("beautiful", "dreamy", "breathtaking"); (c) no negative-prompt-style tags here ("blurry", "low quality", "bad anatomy", "extra fingers", "watermark") — those belong to a separate negative prompt, not this positive line; (d) no sentences, no full stops, no Markdown, no line breaks; (e) if a category has nothing visible in the image, omit it silently — do not pad, do not write "none". Output ONLY the single tag line.',
+  midjourney:
+    'Generate a Midjourney v6 prompt for this image. Output a single English line. Begin with one dense descriptive sentence whose internal order follows: art style / medium → subject → subject features → expression → pose → clothing → accessories → setting → foreground / midground / background → lighting → color palette → camera & lens. Then append comma-separated style modifiers (e.g. "cinematic lighting, shallow depth of field, soft bokeh, 35mm film grain"). Finally append Midjourney parameters where relevant: --ar matching the image aspect ratio, --style raw, --stylize 100. Specificity: use concrete color names ("navy, rust orange, fog gray") over palette words ("warm tones"); use precise lighting ("45-degree key light, soft, warm 4500K, subtle rim light") over generic phrases ("natural lighting"); prefer diffusion-friendly vocabulary ("cinematic lighting, rim light, shallow depth of field, soft bokeh, overcast diffuse light"). Hard rules: (a) describe only elements actually visible — no imagined motive, no narrative, no off-frame guesses, no emotional speculation; (b) no subjective fillers ("beautiful, dreamy, breathtaking"); (c) no template openers / closers ("This image shows...", "Overall,..."); (d) never print dimension labels ("Lighting:", "Subject:") into the output; (e) if a dimension has nothing visible, omit it silently — no padding, no "none". Output ONLY the prompt line, no prefix, no explanation, no Markdown.',
+};
+
 /**
  * stylePromptSet 组件的版本注册表。键是版本号，值是该版本下完整的 4 套指令。
  *
@@ -76,6 +133,8 @@ const STYLE_PROMPT_SET_V010: Record<OutputStyle, string> = {
  */
 export const STYLE_PROMPT_SETS: Record<StylePromptSetVersion, Record<OutputStyle, string>> = {
   'v0.1.0': STYLE_PROMPT_SET_V010,
+  'v0.1.1': STYLE_PROMPT_SET_V011,
+  'v0.2.2': STYLE_PROMPT_SET_V022,
 };
 
 // ----- sampling 各版本 -----
@@ -97,6 +156,17 @@ export interface SamplingProfile {
  */
 export const SAMPLING_PROFILES: Record<SamplingVersion, SamplingProfile> = {
   'v0.1.0': { temperature: 0.4, maxTokens: 1024 },
+  // v0.2.2：直接从 v0.1.0 的 (0.4, 1024) 起步做两步调整。
+  // - 温度 0.4 → 0.3：v0.1.0 的 0.4 配合 v0.2.2 的 10 维度清单时容易出现"前几
+  //   个维度按顺序填，后几个开始飘"的现象（次要维度被高熵采样吃掉），收紧到
+  //   0.3 让维度顺序稳定。没继续往 0.2 / 0.25 收，是为了不把扩散模型偏好的中
+  //   等熵专业词砍掉——"边缘光 / 浅景深 / 柔和散景 / 阴天散射光"这种词在 0.2
+  //   左右概率会被压得很低，输出会退化成普通形容词。
+  // - maxTokens 1024 → 1280：实测 v0.2.2 的中文 10 维度展开（尤其是服饰逐层 +
+  //   光照四项 + 色彩具体色名）很容易把单次输出推到 1000~1200 token，1024 卡
+  //   线时经常把末段的"画风 / 镜头"截掉。加 25% 余量足够覆盖绝大多数图，又不
+  //   会显著拖慢响应。
+  'v0.2.2': { temperature: 0.3, maxTokens: 1280 },
 };
 
 // ----- customJoin 各版本 -----
@@ -110,6 +180,13 @@ export type CustomJoinPosition = 'prepend' | 'append';
 
 export const CUSTOM_JOINS: Record<CustomJoinVersion, CustomJoinPosition> = {
   'v0.1.0': 'append',
+  // v0.2.2：从 v0.1.0 的 append 切换到 prepend。
+  // v0.1.0 用 append 是为了"经典兼容"——把用户偏好以"额外要求："形式挂尾部。
+  // 但在 v0.2.2 的 10 维度清单下，append 会让用户写的"按吉卜力赛璐璐风、暖色
+  // 调"这种偏好出现在 attention 衰减尾部，模型已经按图里推断出的"写实摄影"填
+  // 完了画风 / 镜头维度，再回头看到"按吉卜力"已经晚了，权重低、跟随性差。
+  // prepend 让用户偏好先入上下文，10 维度的填充顺着这个偏好走，跟随性显著提升。
+  'v0.2.2': 'prepend',
 };
 
 // ============================================================
@@ -187,20 +264,56 @@ export const STRATEGIES: Record<StrategyId, StrategyDefinition> = {
       customJoin: 'v0.1.0',
     },
   },
-  // v016 和 classic 引用同一组组件版本 —— 因为 v0.1.1 ~ v0.1.6 这 6 个版本里
-  // stylePrompts/temperature/maxTokens/customPosition 一字未改，组件化之后这件
-  // 事直接表现在代码里：两档的 components 完全相同。这不是代码冗余，而是对
-  // "v0.1.6 = v0.1.5 那套行为"这一历史事实的忠实建模；将来若想单独迭代 v016
-  // 而不影响 classic，只需把 v016 的 components 换成新版本号即可。
-  v016: {
-    id: 'v016',
-    label: 'v0.1.6 策略',
+  // v010：v0.1.1 初始版的显式回滚入口。数值上和 classic 完全等价（因为 v0.1.1 ~
+  // v0.1.6 这 6 个版本里这套配置一字未改），独立列出只是给"按版本号回滚"的
+  // 用户一个无歧义入口。物料零成本——3 个组件版本都指 v0.1.0。
+  v010: {
+    id: 'v010',
+    label: 'v0.1.0 策略',
     description:
-      '温度 0.4 · 上限 1024 token · 自定义模板尾部追加。完整复刻 v0.1.6 那一版的提示词与采样参数（与"v0.1.5 策略"在数值上等价，因为 v0.1.1 ~ v0.1.6 期间这套配置未变）。习惯按版本号回滚的用户可以从这里直接选。',
+      '温度 0.4 · 上限 1024 token · 自定义模板尾部追加。完整复刻 v0.1.1 初始版的行为（与"v0.1.5 策略"在数值上等价，因为 v0.1.1 ~ v0.1.6 期间这套配置未变）。用于按版本号回到最早一版的输出感。',
     components: {
       stylePromptSet: 'v0.1.0',
       sampling: 'v0.1.0',
       customJoin: 'v0.1.0',
+    },
+  },
+  // v016：本次升级 —— 指令层换上 v0.1.1（覆盖率清单 + 去模板句 + 去主观词），
+  // 采样与拼接保持 v0.1.0 不变。同温度同 token 上限下输出更紧、更有结构、更少
+  // 水词，总响应时长基本与 classic 持平。老用户 settings 里持久化的 'v016'
+  // 字段无需迁移，行为静默升级。
+  v016: {
+    id: 'v016',
+    label: 'v0.1.6 策略',
+    description:
+      '温度 0.4 · 上限 1024 token · 自定义模板尾部追加。v0.1.6 优化版：指令层加入覆盖率清单、禁模板句、禁主观词，采样参数与 v0.1.5 一致，速度不变但输出更紧凑、更有结构。',
+    components: {
+      stylePromptSet: 'v0.1.1',
+      sampling: 'v0.1.0',
+      customJoin: 'v0.1.0',
+    },
+  },
+  // v022：直接从 v0.1.0 演化的"v0.1.0 增强版"。设计思路只针对 v0.1.0 本身的 6
+  // 个具体短板做最小手术，未参考其它中间版本（v0.1.1 / v0.2.0 / v0.2.1）：
+  //   - 指令层：把 v0.1.0 的 7 个抽象方面换成 10 维度显式清单（主体类型 / 外貌 /
+  //     表情 / 姿态 / 服饰逐层 / 配饰 / 场景前中背景 / 光照四项 / 具体色名 / 画风
+  //     镜头），并加入"三禁 + 空槽位跳过 + 维度名不打印"4 条硬约束，把 v0.1.0
+  //     实测最常见的"模板开头 / 主观水词 / 脑补图外 / 凑词"4 类废 token 一次性
+  //     堵掉；
+  //   - 采样层：温度 0.4 → 0.3 让维度顺序稳定；maxTokens 1024 → 1280 给中文 10
+  //     维度展开预留 25% 余量，避免末段"画风 / 镜头"被截掉；
+  //   - 拼接层：append → prepend 让用户自定义偏好先入上下文，画风跟随性显著提升。
+  // 这一档优先级：还原度 ≈ 用户跟随性 ≫ 速度；用户 settings 旧值不会被动到，
+  // 想要这套新行为请主动切到 v022。
+  v022: {
+    id: 'v022',
+    label: 'v0.2.2 策略',
+    description:
+      '温度 0.3 · 上限 1280 token · 自定义模板前置。从 v0.1.0 直接演化：10 维度显式清单 + 三禁（模板句 / 主观水词 / 脑补图外）+ 空槽位静默跳过 + 维度名不打印。颜色强制具体色名、光照强制方向+强度+色温+质感。优先级：还原度 ≈ 用户跟随性 ≫ 速度。',
+    components: {
+      stylePromptSet: 'v0.2.2',
+      sampling: 'v0.2.2',
+      customJoin: 'v0.2.2',
     },
   },
 };
@@ -273,6 +386,8 @@ export function getStrategy(id: StrategyId | undefined | null): ResolvedStrategy
  * temperature / maxTokens / customPosition 的扁平对象，开销忽略不计。
  */
 export const STRATEGY_LIST: ResolvedStrategy[] = [
+  resolveStrategy(STRATEGIES.v022),
   resolveStrategy(STRATEGIES.v016),
   resolveStrategy(STRATEGIES.classic),
+  resolveStrategy(STRATEGIES.v010),
 ];

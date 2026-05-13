@@ -18,7 +18,9 @@ import type { PanelState } from './state';
  */
 export const STRATEGY_LABEL: Record<StrategyId, string> = {
   classic: 'v0.1.5 策略',
+  v010: 'v0.1.0 策略',
   v016: 'v0.1.6 策略',
+  v022: 'v0.2.2 策略',
 };
 
 export function strategyLabel(id: StrategyId | undefined): string {
