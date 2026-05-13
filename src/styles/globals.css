@@ -11,6 +11,11 @@
     color: #18181b;
     font-family: var(--font-sans);
   }
+  /* 永远预留纵向滚动条空间，避免切换 tab / 内容高度变化时
+     滚动条出现-消失导致 sticky header 整体水平抖动。 */
+  html {
+    scrollbar-gutter: stable;
+  }
   @media (prefers-color-scheme: dark) {
     html, body {
       background: #0a0a0a;

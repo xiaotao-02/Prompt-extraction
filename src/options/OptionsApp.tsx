@@ -3,6 +3,11 @@ import { Save, Settings as SettingsIcon, BookOpen, Check } from 'lucide-react';
 import SettingsView from './SettingsView';
 import PromptLibrary from './PromptLibrary';
 
+// 顶部「保存设置 / 已保存」按钮共用的基础布局类。
+// 颜色和交互态在渲染时再根据 dirty 拼接，避免 disabled 时仍残留 hover/active 反馈。
+const SAVE_BUTTON_BASE =
+  'inline-flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium shadow-sm transition flex-none';
+
 type Tab = 'settings' | 'library';
 
 const TAB_STORAGE_KEY = 'options_active_tab_v1';
@@ -23,7 +28,15 @@ export default function OptionsApp() {
       return 'settings';
     }
   });
-  const [savedHint, setSavedHint] = useState(false);
+  /**
+   * 设置面板「未保存的修改」标志。
+   * - true：用户在 SettingsView 改过字段但还没落盘 → 顶部按钮显示「保存设置」
+   * - false：当前 UI 状态与 chrome.storage 里完全一致 → 显示「已保存」并禁用
+   *
+   * 这里没有用一次性的「保存成功 → N 秒后消失」提示，因为用户希望保存后能
+   * 持续看到「已保存」状态，直到自己再次编辑设置。
+   */
+  const [dirty, setDirty] = useState(false);
 
   useEffect(() => {
     try {
@@ -39,12 +52,17 @@ export default function OptionsApp() {
   const registerSaveHandler = useCallback((handler: () => Promise<void>) => {
     saveHandlerRef.current = handler;
   }, []);
+  // SettingsView 通过这个回调把 dirty 状态推给 header 按钮。
+  // 用 useCallback 保持引用稳定，避免子组件的 useEffect 反复触发。
+  const handleDirtyChange = useCallback((d: boolean) => {
+    setDirty(d);
+  }, []);
 
   const onSave = async () => {
     if (!saveHandlerRef.current) return;
     await saveHandlerRef.current();
-    setSavedHint(true);
-    setTimeout(() => setSavedHint(false), 1600);
+    // dirty 会在 SettingsView 完成 persistAndMark 后通过 onDirtyChange 自动归零，
+    // 这里不需要也不应该再手动 setDirty(false)，否则可能与子组件的真实状态错位。
   };
 
   return (
@@ -81,12 +99,23 @@ export default function OptionsApp() {
             />
           </nav>
 
-          {tab === 'settings' && (
-            <button className="btn-primary flex-none" onClick={onSave}>
-              {savedHint ? <Check className="w-4 h-4" /> : <Save className="w-4 h-4" />}
-              {savedHint ? '已保存' : '保存设置'}
-            </button>
-          )}
+          {/* 保存按钮始终占位，提示词库 tab 下用 invisible 隐藏，
+              避免按钮出现/消失让中间 Tab 栏位置左右跳动。
+              dirty=true → 紫色「保存设置」可点击；dirty=false → 绿色「已保存」禁用。 */}
+          <button
+            className={`${SAVE_BUTTON_BASE} ${
+              dirty
+                ? 'bg-gradient-to-br from-indigo-500 to-violet-500 text-white hover:brightness-110 active:scale-[0.98] cursor-pointer'
+                : 'bg-emerald-50 dark:bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-500/30 cursor-default'
+            } ${tab === 'settings' ? '' : 'invisible'}`}
+            onClick={onSave}
+            disabled={!dirty}
+            aria-hidden={tab !== 'settings'}
+            tabIndex={tab === 'settings' && dirty ? 0 : -1}
+          >
+            {dirty ? <Save className="w-4 h-4" /> : <Check className="w-4 h-4" />}
+            {dirty ? '保存设置' : '已保存'}
+          </button>
         </div>
 
         {/* 小屏：把 Tab 单独放到第二行 */}
@@ -108,7 +137,10 @@ export default function OptionsApp() {
 
       <main className="w-full max-w-5xl mx-auto px-8 py-8">
         {tab === 'settings' ? (
-          <SettingsView registerSaveHandler={registerSaveHandler} />
+          <SettingsView
+            registerSaveHandler={registerSaveHandler}
+            onDirtyChange={handleDirtyChange}
+          />
         ) : (
           <PromptLibrary />
         )}

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Check,
   Eye,
@@ -28,6 +28,11 @@ const STYLE_OPTIONS: { value: OutputStyle; label: string; desc: string }[] = [
 interface Props {
   /** 父组件提供的「保存中 / 已保存」状态，按钮渲染在外层 header，方便和 Tab 切换共用。 */
   registerSaveHandler?: (handler: () => Promise<void>) => void;
+  /**
+   * 通知父级当前 settings 是否相对「上次落盘」有修改，
+   * 父级据此把顶部按钮在「保存设置」与「已保存」之间切换。
+   */
+  onDirtyChange?: (dirty: boolean) => void;
 }
 
 /**
@@ -36,9 +41,17 @@ interface Props {
  * 这是从原 OptionsApp.tsx 抽离出来的完整设置 UI，
  * 让 OptionsApp 可以并列展示「提示词库」管理后台。
  */
-export default function SettingsView({ registerSaveHandler }: Props) {
+export default function SettingsView({ registerSaveHandler, onDirtyChange }: Props) {
   const [settings, setSettings] = useState<AppSettings | null>(null);
   const [savedAt, setSavedAt] = useState<number | null>(null);
+  /**
+   * 「上次成功落盘」时的 settings 序列化快照。
+   * - 与当前 settings 的序列化值比较即可得到 dirty 状态；
+   * - 首次从 storage 拿到的就是落盘态，所以也算「已保存」；
+   * - 所有写 storage 的路径都必须走 persistAndMark，
+   *   否则会出现「按钮显示已保存，但实际未落盘」的不一致。
+   */
+  const [lastSavedSig, setLastSavedSig] = useState<string | null>(null);
   const [showKey, setShowKey] = useState(false);
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState<{ ok: boolean; msg: string } | null>(null);
@@ -58,8 +71,26 @@ export default function SettingsView({ registerSaveHandler }: Props) {
   const autoFetchedRef = useRef<Map<ProviderId, string>>(new Map());
 
   useEffect(() => {
-    getSettings().then(setSettings);
+    getSettings().then((s) => {
+      setSettings(s);
+      setLastSavedSig(JSON.stringify(s));
+    });
   }, []);
+
+  /** 写盘 + 同步「已保存」签名，统一入口，保证按钮状态不会和真实存储脱节。 */
+  const persistAndMark = useCallback(async (next: AppSettings) => {
+    await saveSettings(next);
+    setLastSavedSig(JSON.stringify(next));
+  }, []);
+
+  const dirty = useMemo(() => {
+    if (!settings || lastSavedSig === null) return false;
+    return JSON.stringify(settings) !== lastSavedSig;
+  }, [settings, lastSavedSig]);
+
+  useEffect(() => {
+    onDirtyChange?.(dirty);
+  }, [dirty, onDirtyChange]);
 
   useEffect(() => {
     setModelFilter('');
@@ -70,11 +101,11 @@ export default function SettingsView({ registerSaveHandler }: Props) {
   useEffect(() => {
     if (!registerSaveHandler || !settings) return;
     registerSaveHandler(async () => {
-      await saveSettings(settings);
+      await persistAndMark(settings);
       setSavedAt(Date.now());
       setTimeout(() => setSavedAt(null), 2000);
     });
-  }, [registerSaveHandler, settings]);
+  }, [registerSaveHandler, settings, persistAndMark]);
 
   // —— 配置完成后自动拉取模型列表 ——
   // 触发条件：当前 provider 的 apiKey + baseUrl 都已填写，且这对组合在本会话里
@@ -118,28 +149,19 @@ export default function SettingsView({ registerSaveHandler }: Props) {
   );
 
   /**
-   * 下拉框最终展示的模型列表 = provider 内置 modelOptions ∪ 从端点拉到的模型。
-   * - 内置选项排在前面，是为了让人工挑选过的「视觉模型」首选保持显眼；
-   * - 之后拼上去重后的 discovered，避免重复条目；
-   * - 当前选中的 model 若两边都没有，会通过下面的「__custom__」选项进入自定义输入。
+   * 下拉框展示的模型列表 = 从端点 `/models` 拉到的模型。
+   * - 不再混入「内置推荐」，避免一些中转站实际没上线但内置写死的模型造成误导；
+   * - 当前选中的 model 若不在列表里，会通过「__custom__」选项进入自定义输入；
+   * - 端点尚未拉取过时（列表为空），下方会自动 fallback 到纯文本输入框。
    *
    * 必须放在「加载中」早期 return 之前，否则两次渲染的 hook 数量不一致，
    * 会触发 React error #310（Rendered fewer/more hooks than during the previous render）。
    */
   const combinedModelOptions = useMemo(() => {
-    if (!settings || !activeMeta) return [];
+    if (!settings) return [];
     const cfg = settings.providers[settings.activeProvider];
-    const disc = cfg?.discoveredModels ?? [];
-    const set = new Set<string>(activeMeta.modelOptions);
-    const result: string[] = [...activeMeta.modelOptions];
-    for (const m of disc) {
-      if (!set.has(m)) {
-        set.add(m);
-        result.push(m);
-      }
-    }
-    return result;
-  }, [settings, activeMeta]);
+    return cfg?.discoveredModels ?? [];
+  }, [settings]);
 
   if (!settings || !activeMeta) {
     return <div className="p-8 text-sm text-zinc-500">加载中…</div>;
@@ -161,7 +183,7 @@ export default function SettingsView({ registerSaveHandler }: Props) {
     setTesting(true);
     setTestResult(null);
     try {
-      await saveSettings(settings);
+      await persistAndMark(settings);
       const r = await extractPrompt({ imageUrl: testImage, settings });
       setTestResult({ ok: true, msg: r.prompt });
     } catch (e) {
@@ -200,7 +222,7 @@ export default function SettingsView({ registerSaveHandler }: Props) {
         return next;
       });
       if (persisted) {
-        await saveSettings(persisted);
+        await persistAndMark(persisted);
       }
     } catch (e) {
       setFetchModelsError(e instanceof Error ? e.message : String(e));
@@ -230,7 +252,7 @@ export default function SettingsView({ registerSaveHandler }: Props) {
       },
     };
     setSettings(next);
-    await saveSettings(next);
+    await persistAndMark(next);
     setModelFilter('');
     setFetchModelsError(null);
   };
@@ -243,7 +265,7 @@ export default function SettingsView({ registerSaveHandler }: Props) {
 
   const applyConfig = async (next: AppSettings) => {
     setSettings(next);
-    await saveSettings(next);
+    await persistAndMark(next);
     setSavedAt(Date.now());
     setTimeout(() => setSavedAt(null), 2000);
   };
@@ -377,15 +399,6 @@ export default function SettingsView({ registerSaveHandler }: Props) {
                     updateActiveCfg({ model: e.target.value });
                   }}
                 >
-                  {activeMeta.modelOptions.length > 0 && (
-                    <optgroup label="内置推荐">
-                      {activeMeta.modelOptions.map((m) => (
-                        <option key={`builtin-${m}`} value={m}>
-                          {m}
-                        </option>
-                      ))}
-                    </optgroup>
-                  )}
                   {discovered.length > 0 && (
                     <optgroup
                       label={`端点拉取（${discovered.length}）${
@@ -394,13 +407,11 @@ export default function SettingsView({ registerSaveHandler }: Props) {
                           : ''
                       }`}
                     >
-                      {discovered
-                        .filter((m) => !activeMeta.modelOptions.includes(m))
-                        .map((m) => (
-                          <option key={`fetched-${m}`} value={m}>
-                            {m}
-                          </option>
-                        ))}
+                      {discovered.map((m) => (
+                        <option key={`fetched-${m}`} value={m}>
+                          {m}
+                        </option>
+                      ))}
                     </optgroup>
                   )}
                   <option value="__custom__">自定义...</option>

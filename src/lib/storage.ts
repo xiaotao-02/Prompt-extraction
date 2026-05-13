@@ -167,24 +167,21 @@ export async function saveSettings(settings: AppSettings): Promise<void> {
   await writeDiscoveredMap(map);
 
   // 2) 写轻量 settings 到 sync
+  let syncOk = false;
   try {
     await chrome.storage.sync.set({ [SETTINGS_KEY]: slim });
+    syncOk = true;
   } catch (err) {
     // 极端情况：sync 总配额耗尽，转写 local 保底，保证用户的 API Key 永远不丢
     console.warn('[PromptExtracto] sync set failed, falling back to local', err);
     await chrome.storage.local.set({ [SETTINGS_KEY]: slim });
   }
 
-  // 双向兜底：若之前的 fallback 写到了 local，把它清理掉，避免下次重复读取分歧
-  if (chrome.storage.sync) {
-    try {
-      const check = await chrome.storage.sync.get(SETTINGS_KEY);
-      if (check[SETTINGS_KEY]) {
-        await chrome.storage.local.remove(SETTINGS_KEY).catch(() => undefined);
-      }
-    } catch {
-      /* ignore */
-    }
+  // sync 写成功后，清掉之前可能 fallback 残留在 local 的旧值，避免下次 getSettings
+  // 读取分歧。这里**不再** sync.get 二次确认（写成功的 set 已经够说明问题），省一次
+  // 跨进程往返；清 local 失败也无关紧要（local 没有旧值就什么也不会发生）。
+  if (syncOk) {
+    chrome.storage.local.remove(SETTINGS_KEY).catch(() => undefined);
   }
 
   void notifyBackupSubscribers();
@@ -241,13 +238,72 @@ function migrateItem(raw: HistoryItem): HistoryItem {
   };
 }
 
+/**
+ * History 内存缓存。
+ *
+ * 为什么需要：`HISTORY_LIMIT = 300` + 每条带 ~32KB 缩略图 dataUrl，整段 history JSON
+ * 累积起来可达 5–10MB。原本 `addHistory` 流程是「`storage.local.get` 反序列化整段 →
+ * unshift → `storage.local.set` 序列化整段」，每次右键抽图都要为此付出 100–300ms
+ * 同步 IPC + JSON 开销。**因为 service worker 是单线程**，这会让"刚抽完上一张、紧
+ * 接着抽下一张"明显卡一拍；并且开销随历史条数线性增长，正好对应用户感觉到的
+ * 「越用越慢」。
+ *
+ * 缓存策略：
+ * - 首次读时从 storage 反序列化一份并存到 `historyCache`
+ * - 之后的所有 read/write 都直接走缓存（write 会同步把数组替换并异步写回 storage）
+ * - 其它 context（options / popup）修改了 history 时，通过 `storage.onChanged` 监听
+ *   及时使缓存失效 / 同步
+ *
+ * service worker 30s 闲置销毁后第一次冷启会重读一次，这是预期且可接受的成本。
+ */
+let historyCache: HistoryItem[] | null = null;
+
+/**
+ * 把外部 `storage.onChanged` 事件传过来的新值同步进缓存。
+ *
+ * 注意：因为 `storage.local.set` 会把内层对象做结构化克隆后回传，
+ * 不能用引用相等保证 newValue === 我们刚写进去的那份；这里始终重建一份。
+ */
+function syncHistoryCacheFromExternal(rawNew: unknown): void {
+  if (!Array.isArray(rawNew)) {
+    historyCache = null;
+    return;
+  }
+  try {
+    historyCache = (rawNew as HistoryItem[]).map(migrateItem);
+  } catch {
+    historyCache = null;
+  }
+}
+
+// service worker / options / popup 都能跑到这一行：监听 storage 跨 context 变化，
+// 保证不同 context 里的 historyCache 不会发生分歧。
+try {
+  chrome.storage?.onChanged?.addListener((changes, area) => {
+    if (area !== 'local') return;
+    if (HISTORY_KEY in changes) {
+      syncHistoryCacheFromExternal(changes[HISTORY_KEY].newValue);
+    }
+  });
+} catch {
+  /* 测试环境 / 无 chrome.storage 时静默 */
+}
+
 export async function getHistory(): Promise<HistoryItem[]> {
-  const data = await chrome.storage.local.get(HISTORY_KEY);
-  const raw = (data[HISTORY_KEY] as HistoryItem[]) || [];
-  return raw.map(migrateItem);
+  if (!historyCache) {
+    const data = await chrome.storage.local.get(HISTORY_KEY);
+    const raw = (data[HISTORY_KEY] as HistoryItem[]) || [];
+    historyCache = raw.map(migrateItem);
+  }
+  // 返回浅拷贝：原代码契约里 mutator（addHistory / patchHistoryItem 等）会直接
+  // mutate 自己拿到的 list 再 writeHistory；调用方 (PromptLibrary 等) 拿到的引用
+  // 不应被这些 mutate 偷偷修改。slice() 在 300 条以内是微秒级，不构成开销。
+  return historyCache.slice();
 }
 
 async function writeHistory(list: HistoryItem[]): Promise<void> {
+  // 先更新内存缓存，确保紧随其后的 getHistory 不需要等 storage 落盘就能拿到最新值
+  historyCache = list;
   await chrome.storage.local.set({ [HISTORY_KEY]: list });
   notifyBackupSubscribers();
 }
@@ -260,6 +316,7 @@ export async function addHistory(item: HistoryItem): Promise<void> {
 }
 
 export async function clearHistory(): Promise<void> {
+  historyCache = [];
   await chrome.storage.local.remove(HISTORY_KEY);
   notifyBackupSubscribers();
 }

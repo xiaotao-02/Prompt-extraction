@@ -1,6 +1,15 @@
-import type { AppSettings, OutputStyle, ProviderConfig, ProviderId } from '../types';
+import type { AppSettings, ExtractStage, OutputStyle, ProviderConfig, ProviderId } from '../types';
 import { STYLE_PROMPTS } from '../storage';
 import { fetchImageAsBase64, type FetchedImage } from '../image';
+
+/**
+ * 反推过程中的进度事件。stage 表示当前阶段，partial 表示流式阶段已经
+ * 累积到的提示词文本（每一条都是"到目前为止的全文"，不是 delta）。
+ */
+export interface ExtractProgressEvent {
+  stage: ExtractStage;
+  partial?: string;
+}
 
 export interface ExtractParams {
   imageUrl: string;
@@ -12,6 +21,11 @@ export interface ExtractParams {
    * 串行等待。
    */
   prefetched?: FetchedImage;
+  /**
+   * 反推进度回调。流式阶段会被节流到约 80ms 一次，避免给 content script
+   * 发太多 chrome.tabs.sendMessage。回调里抛错不影响主流程。
+   */
+  onProgress?: (ev: ExtractProgressEvent) => void;
 }
 
 export interface ExtractResult {
@@ -19,6 +33,21 @@ export interface ExtractResult {
   provider: ProviderId;
   model: string;
   style: OutputStyle;
+}
+
+/** 流式阶段两次进度回调之间的最小间隔（毫秒）。 */
+const STREAM_FLUSH_INTERVAL_MS = 80;
+
+function safeProgress(
+  onProgress: ExtractParams['onProgress'],
+  ev: ExtractProgressEvent
+): void {
+  if (!onProgress) return;
+  try {
+    onProgress(ev);
+  } catch (err) {
+    console.debug('[PromptExtracto] onProgress threw', err);
+  }
 }
 
 function buildInstruction(settings: AppSettings): string {
@@ -29,23 +58,36 @@ function buildInstruction(settings: AppSettings): string {
 }
 
 export async function extractPrompt(params: ExtractParams): Promise<ExtractResult> {
-  const { imageUrl, settings, prefetched } = params;
+  const { imageUrl, settings, prefetched, onProgress } = params;
   const providerId = settings.activeProvider;
   const cfg = settings.providers[providerId];
   if (!cfg.apiKey) {
     throw new Error(`请先在「设置」中为 ${providerId} 配置 API Key`);
   }
   const instruction = buildInstruction(settings);
-  // 优先用调用方预下载好的图片，避免在 background 里串行两次"下载 + 编码"
-  const img = prefetched ?? (await fetchImageAsBase64(imageUrl));
+
+  // 阶段 1：图片就绪
+  // - 如果调用方已经在外部并行下载完了，直接进入「calling」
+  // - 否则我们在这里同步下载，并先 emit 一次 fetching，便于面板秒切到
+  //   "正在下载图片"，避免一直停在通用 loading
+  let img: FetchedImage;
+  if (prefetched) {
+    img = prefetched;
+  } else {
+    safeProgress(onProgress, { stage: 'fetching' });
+    img = await fetchImageAsBase64(imageUrl);
+  }
+
+  // 阶段 2：开始呼叫大模型（首 token 之前都属于 calling）
+  safeProgress(onProgress, { stage: 'calling' });
 
   let prompt: string;
   switch (providerId) {
     case 'anthropic':
-      prompt = await callAnthropic(cfg, img, instruction);
+      prompt = await callAnthropic(cfg, img, instruction, onProgress);
       break;
     case 'gemini':
-      prompt = await callGemini(cfg, img, instruction);
+      prompt = await callGemini(cfg, img, instruction, onProgress);
       break;
     case 'openai':
     case 'zhipu':
@@ -53,7 +95,7 @@ export async function extractPrompt(params: ExtractParams): Promise<ExtractResul
     case 'siliconflow':
     case 'custom':
     default:
-      prompt = await callOpenAICompatible(cfg, img, instruction);
+      prompt = await callOpenAICompatible(cfg, img, instruction, onProgress);
       break;
   }
 
@@ -69,7 +111,8 @@ export async function extractPrompt(params: ExtractParams): Promise<ExtractResul
 async function callOpenAICompatible(
   cfg: ProviderConfig,
   img: FetchedImage,
-  instruction: string
+  instruction: string,
+  onProgress?: ExtractParams['onProgress']
 ): Promise<string> {
   // 大部分兼容 OpenAI 的服务端都接受 url 形式的 image_url，
   // 但跨域 + 鉴权 + base64 更稳妥，这里统一转 base64。
@@ -91,7 +134,7 @@ async function callOpenAICompatible(
     ],
     temperature: 0.4,
     max_tokens: 1024,
-    stream: false,
+    stream: true,
   };
 
   const resp = await fetch(url, {
@@ -99,6 +142,7 @@ async function callOpenAICompatible(
     headers: {
       'Content-Type': 'application/json',
       Authorization: `Bearer ${cfg.apiKey}`,
+      Accept: 'text/event-stream',
     },
     body: JSON.stringify(body),
   });
@@ -106,31 +150,82 @@ async function callOpenAICompatible(
   if (!resp.ok) {
     throw new Error(await describeRespFailure(resp, 'API'));
   }
-  const json = await parseJsonResponse<{
-    choices?: Array<{ message?: { content?: string | Array<{ type?: string; text?: string }> } }>;
-  }>(resp, 'API');
-  const content = json?.choices?.[0]?.message?.content;
+
+  // 少数兼容端不真正支持 stream，会忽略 stream:true 直接回 JSON。
+  // 这里按 content-type 判断，是 SSE 就走流式累积，否则当作 JSON 解析。
+  if (!isSseResponse(resp)) {
+    const json = await parseJsonResponse<{
+      choices?: Array<{
+        message?: { content?: string | Array<{ type?: string; text?: string }> };
+      }>;
+    }>(resp, 'API');
+    const content = json?.choices?.[0]?.message?.content;
+    const final = extractOpenAIContent(content);
+    if (!final) throw new Error('返回内容为空，请检查模型是否支持视觉输入');
+    return final;
+  }
+
+  let acc = '';
+  let lastFlushAt = 0;
+  let sawFirstChunk = false;
+  for await (const data of readSseDataChunks(resp)) {
+    if (data === '[DONE]') break;
+    let json: {
+      choices?: Array<{
+        delta?: { content?: string | Array<{ type?: string; text?: string }> };
+      }>;
+    };
+    try {
+      json = JSON.parse(data);
+    } catch {
+      continue;
+    }
+    const delta = json.choices?.[0]?.delta?.content;
+    const chunk = extractOpenAIContent(delta);
+    if (!chunk) continue;
+    acc += chunk;
+    if (!sawFirstChunk) {
+      sawFirstChunk = true;
+      safeProgress(onProgress, { stage: 'streaming', partial: acc });
+      lastFlushAt = Date.now();
+      continue;
+    }
+    const now = Date.now();
+    if (now - lastFlushAt >= STREAM_FLUSH_INTERVAL_MS) {
+      lastFlushAt = now;
+      safeProgress(onProgress, { stage: 'streaming', partial: acc });
+    }
+  }
+  if (!acc) throw new Error('返回内容为空，请检查模型是否支持视觉输入');
+  // 收尾再 flush 一次最终累积，确保面板上是完整文本
+  safeProgress(onProgress, { stage: 'streaming', partial: acc });
+  return acc;
+}
+
+function extractOpenAIContent(
+  content: string | Array<{ type?: string; text?: string }> | undefined
+): string {
   if (typeof content === 'string') return content;
   if (Array.isArray(content)) {
     return content
-      .map((c: { type?: string; text?: string }) =>
-        c?.type === 'text' && c?.text ? c.text : ''
-      )
+      .map((c) => (c?.type === 'text' && c?.text ? c.text : ''))
       .join('');
   }
-  throw new Error('返回内容为空，请检查模型是否支持视觉输入');
+  return '';
 }
 
 // ============ Anthropic Claude ============
 async function callAnthropic(
   cfg: ProviderConfig,
   img: FetchedImage,
-  instruction: string
+  instruction: string,
+  onProgress?: ExtractParams['onProgress']
 ): Promise<string> {
   const url = `${trimSlash(cfg.baseUrl)}/messages`;
   const body = {
     model: cfg.model,
     max_tokens: 1024,
+    stream: true,
     messages: [
       {
         role: 'user',
@@ -155,33 +250,77 @@ async function callAnthropic(
       'x-api-key': cfg.apiKey,
       'anthropic-version': '2023-06-01',
       'anthropic-dangerous-direct-browser-access': 'true',
+      Accept: 'text/event-stream',
     },
     body: JSON.stringify(body),
   });
   if (!resp.ok) {
     throw new Error(await describeRespFailure(resp, 'Claude'));
   }
-  const json = await parseJsonResponse<{ content?: Array<{ type?: string; text?: string }> }>(
-    resp,
-    'Claude'
-  );
-  const parts = json?.content;
-  if (!Array.isArray(parts)) throw new Error('Claude 返回内容异常');
-  return parts
-    .filter((p: { type?: string }) => p?.type === 'text')
-    .map((p: { text?: string }) => p.text || '')
-    .join('');
+
+  if (!isSseResponse(resp)) {
+    const json = await parseJsonResponse<{ content?: Array<{ type?: string; text?: string }> }>(
+      resp,
+      'Claude'
+    );
+    const parts = json?.content;
+    if (!Array.isArray(parts)) throw new Error('Claude 返回内容异常');
+    return parts
+      .filter((p) => p?.type === 'text')
+      .map((p) => p.text || '')
+      .join('');
+  }
+
+  let acc = '';
+  let lastFlushAt = 0;
+  let sawFirstChunk = false;
+  for await (const data of readSseDataChunks(resp)) {
+    let json: {
+      type?: string;
+      delta?: { type?: string; text?: string };
+    };
+    try {
+      json = JSON.parse(data);
+    } catch {
+      continue;
+    }
+    if (json.type === 'message_stop') break;
+    if (
+      json.type === 'content_block_delta' &&
+      json.delta?.type === 'text_delta' &&
+      json.delta.text
+    ) {
+      acc += json.delta.text;
+      if (!sawFirstChunk) {
+        sawFirstChunk = true;
+        safeProgress(onProgress, { stage: 'streaming', partial: acc });
+        lastFlushAt = Date.now();
+        continue;
+      }
+      const now = Date.now();
+      if (now - lastFlushAt >= STREAM_FLUSH_INTERVAL_MS) {
+        lastFlushAt = now;
+        safeProgress(onProgress, { stage: 'streaming', partial: acc });
+      }
+    }
+  }
+  if (!acc) throw new Error('Claude 返回内容为空');
+  safeProgress(onProgress, { stage: 'streaming', partial: acc });
+  return acc;
 }
 
 // ============ Google Gemini ============
 async function callGemini(
   cfg: ProviderConfig,
   img: FetchedImage,
-  instruction: string
+  instruction: string,
+  onProgress?: ExtractParams['onProgress']
 ): Promise<string> {
+  // Gemini 的流式端点是独立 path：:streamGenerateContent?alt=sse
+  // 加 alt=sse 才会真正以 SSE 推送，否则会拼成一个 JSON 数组一次性返回。
   const url = `${trimSlash(cfg.baseUrl)}/models/${encodeURIComponent(
     cfg.model
-  )}:generateContent?key=${encodeURIComponent(cfg.apiKey)}`;
+  )}:streamGenerateContent?alt=sse&key=${encodeURIComponent(cfg.apiKey)}`;
   const body = {
     contents: [
       {
@@ -204,18 +343,68 @@ async function callGemini(
   };
   const resp = await fetch(url, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', Accept: 'text/event-stream' },
     body: JSON.stringify(body),
   });
   if (!resp.ok) {
     throw new Error(await describeRespFailure(resp, 'Gemini'));
   }
-  const json = await parseJsonResponse<{
-    candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }>;
-  }>(resp, 'Gemini');
-  const parts = json?.candidates?.[0]?.content?.parts;
-  if (!Array.isArray(parts)) throw new Error('Gemini 返回内容异常');
-  return parts.map((p: { text?: string }) => p.text || '').join('');
+
+  if (!isSseResponse(resp)) {
+    // 兜底：被中转节点改回 JSON 数组 / 单 JSON 时仍然要能跑通
+    const text = await safeText(resp);
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(text);
+    } catch {
+      throw new Error('Gemini 返回内容无法解析为 JSON');
+    }
+    const items = Array.isArray(parsed) ? parsed : [parsed];
+    let acc = '';
+    for (const x of items) {
+      const parts = (x as { candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }> })
+        ?.candidates?.[0]?.content?.parts;
+      if (Array.isArray(parts)) {
+        for (const p of parts) acc += p?.text || '';
+      }
+    }
+    if (!acc) throw new Error('Gemini 返回内容异常');
+    return acc;
+  }
+
+  let acc = '';
+  let lastFlushAt = 0;
+  let sawFirstChunk = false;
+  for await (const data of readSseDataChunks(resp)) {
+    let json: {
+      candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }>;
+    };
+    try {
+      json = JSON.parse(data);
+    } catch {
+      continue;
+    }
+    const parts = json.candidates?.[0]?.content?.parts;
+    if (!Array.isArray(parts)) continue;
+    let added = '';
+    for (const p of parts) if (p?.text) added += p.text;
+    if (!added) continue;
+    acc += added;
+    if (!sawFirstChunk) {
+      sawFirstChunk = true;
+      safeProgress(onProgress, { stage: 'streaming', partial: acc });
+      lastFlushAt = Date.now();
+      continue;
+    }
+    const now = Date.now();
+    if (now - lastFlushAt >= STREAM_FLUSH_INTERVAL_MS) {
+      lastFlushAt = now;
+      safeProgress(onProgress, { stage: 'streaming', partial: acc });
+    }
+  }
+  if (!acc) throw new Error('Gemini 返回内容为空');
+  safeProgress(onProgress, { stage: 'streaming', partial: acc });
+  return acc;
 }
 
 // ============ 提示词文本重写（refine） ============
@@ -511,6 +700,58 @@ function normalizeOpenAIBase(raw: string): string {
     return trimmed;
   } catch {
     return trimmed;
+  }
+}
+
+/** 响应是不是 text/event-stream（含带 charset 后缀的情况）。 */
+function isSseResponse(resp: Response): boolean {
+  const ct = (resp.headers.get('content-type') || '').toLowerCase();
+  return ct.includes('text/event-stream');
+}
+
+/**
+ * 把一个 SSE 响应体逐行拆出来，只 yield `data:` 后面的有效负载。
+ *
+ * 我们只关心 OpenAI / Anthropic / Gemini 三家用到的事件子集：
+ * - `data: {...}`：负载本身
+ * - `data: [DONE]`：OpenAI 流式终止哨兵（由调用方自己识别）
+ * - `event:` / `id:` / `:` 注释行：直接忽略
+ *
+ * Chrome MV3 service worker 里 fetch 拿到的 ReadableStream 行为和
+ * 普通页面一致，所以这里不需要做 backpressure 处理。
+ */
+async function* readSseDataChunks(resp: Response): AsyncGenerator<string> {
+  if (!resp.body) throw new Error('SSE 响应缺少 body');
+  const reader = resp.body.getReader();
+  const decoder = new TextDecoder();
+  let buf = '';
+  try {
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buf += decoder.decode(value, { stream: true });
+      let nl: number;
+      while ((nl = buf.indexOf('\n')) >= 0) {
+        const line = buf.slice(0, nl).replace(/\r$/, '');
+        buf = buf.slice(nl + 1);
+        if (!line) continue;
+        if (line.startsWith('data:')) {
+          const data = line.slice(5).replace(/^ /, '');
+          if (data) yield data;
+        }
+      }
+    }
+    const tail = buf.replace(/\r$/, '');
+    if (tail.startsWith('data:')) {
+      const data = tail.slice(5).replace(/^ /, '');
+      if (data) yield data;
+    }
+  } finally {
+    try {
+      reader.releaseLock();
+    } catch {
+      /* ignore */
+    }
   }
 }
 

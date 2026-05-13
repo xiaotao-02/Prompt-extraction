@@ -52,6 +52,15 @@ export interface AppSettings {
   updates: UpdateSettings;
 }
 
+/**
+ * 反推流程的阶段。面板会根据这个值切换 loading 文案：
+ *   fetching   → 正在下载/解码图片（含动图扁平化、视频抓帧）
+ *   calling    → 已把图片发给大模型，等待首 token
+ *   streaming  → 模型已经开始吐字，正在流式接收
+ *   finalizing → 流式结束，正在保存历史/收尾
+ */
+export type ExtractStage = 'fetching' | 'calling' | 'streaming' | 'finalizing';
+
 export type PromptVersionSource = 'extracted' | 'edited' | 'restored' | 'refined';
 
 export interface PromptVersion {
@@ -119,6 +128,16 @@ export type RuntimeMessage =
       };
     }
   | {
+      type: 'EXTRACT_PROGRESS';
+      payload: {
+        requestId: string;
+        /** 当前所处阶段，便于面板切换文案 */
+        stage: ExtractStage;
+        /** 流式阶段时，已经收到的部分提示词文本（累计值） */
+        partial?: string;
+      };
+    }
+  | {
       type: 'REFINE_PROMPT';
       payload: {
         historyId: string;
@@ -160,7 +179,6 @@ export interface ProviderMeta {
   label: string;
   defaultBaseUrl: string;
   defaultModel: string;
-  modelOptions: string[];
   docsUrl: string;
   description: string;
 }

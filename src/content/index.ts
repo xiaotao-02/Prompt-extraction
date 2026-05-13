@@ -11,6 +11,15 @@ chrome.runtime.onMessage.addListener((message: RuntimeMessage, _sender, sendResp
       requestId: message.payload.requestId,
       imageUrl: message.payload.imageUrl,
       status: 'loading',
+      stage: 'calling',
+      startedAt: Date.now(),
+    });
+    return false;
+  }
+  if (message.type === 'EXTRACT_PROGRESS') {
+    updatePanel(message.payload.requestId, {
+      stage: message.payload.stage,
+      partial: message.payload.partial,
     });
     return false;
   }
@@ -20,6 +29,8 @@ chrome.runtime.onMessage.addListener((message: RuntimeMessage, _sender, sendResp
       prompt: message.payload.prompt,
       provider: message.payload.provider,
       model: message.payload.model,
+      partial: undefined,
+      stage: undefined,
     });
     return false;
   }
@@ -27,6 +38,8 @@ chrome.runtime.onMessage.addListener((message: RuntimeMessage, _sender, sendResp
     updatePanel(message.payload.requestId, {
       status: 'error',
       error: message.payload.error,
+      partial: undefined,
+      stage: undefined,
     });
     return false;
   }

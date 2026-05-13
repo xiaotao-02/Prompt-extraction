@@ -178,30 +178,64 @@ async function runExtraction(params: {
   const { tabId, imageUrl, pageUrl, pageTitle } = params;
   const requestId = params.requestId || crypto.randomUUID();
 
-  // 把三件互不依赖的耗时事拉到并行——以前是 ensureContentScript →
-  // EXTRACT_PENDING → getSettings → fetchImage 串行执行，其中 fetchImage
-  // （含网络下载 + 解码 + 可能的缩放）经常是几百 ms 起，把它和注入 / 配置
-  // 读取并发起来能把首请求时间打掉一大截。
+  // 立刻并行启动三件耗时的事：
+  //   1) 读 settings (chrome.storage)
+  //   2) 下载 / 规整图片
+  //   3) 「乐观」发送 EXTRACT_PENDING 让 panel 立刻显示 loading
   //
-  // 注意 imagePromise 必须挂一个空 .catch() 占位，否则在 ensureContentScript
-  // 完成前如果下载先失败，service worker 会触发 unhandledrejection；真正的
-  // 错误处理仍在下方 try 块里 await imagePromise 时同步抛出。
-  const ensurePromise = ensureContentScript(tabId);
+  // 关键变化（这一版的核心优化）：不再先 PING content script、不再 await
+  // sendToTab(EXTRACT_PENDING)。manifest 已声明 content_scripts: ['<all_urls>']
+  // @ document_idle，所以 content script 在绝大多数页面上已经自动注入，PING
+  // 唯一的"价值"就是消耗 10–50ms 阻塞主路径。我们改为「乐观发」：直接发消息，
+  // 失败时（chrome:// / about: / 新装的扩展遇上已打开的旧 tab 等极少数场景）
+  // 通过 chrome.runtime.lastError 回调发现，再异步注入 + 重发。这条兜底路径
+  // 不阻塞主流程；用户点完菜单几乎瞬时就能看到 panel。
   const settingsPromise = getSettings();
   const imagePromise = fetchImageAsBase64(imageUrl);
   imagePromise.catch(() => undefined);
 
-  await ensurePromise;
-  await sendToTab(tabId, {
+  postToTab(tabId, {
     type: 'EXTRACT_PENDING',
     payload: { requestId, imageUrl },
   });
 
+  // 图片下载经常不是瞬间完成（跨域 / blob / 动图扁平化 / 视频抓帧 base64
+  // 化都可能在 100ms～几秒级别）。如果 80ms 内还没完成，先把面板切到
+  // 'fetching' 阶段；否则就让 extractPrompt 自己 emit 'calling'，避免
+  // 在快路径上闪现一个无意义的 fetching。
+  let imageReady = false;
+  imagePromise.then(
+    () => {
+      imageReady = true;
+    },
+    () => {
+      imageReady = true;
+    }
+  );
+  setTimeout(() => {
+    if (imageReady) return;
+    postToTab(tabId, {
+      type: 'EXTRACT_PROGRESS',
+      payload: { requestId, stage: 'fetching' },
+    });
+  }, 80);
+
   try {
     const [settings, prefetched] = await Promise.all([settingsPromise, imagePromise]);
-    const result = await extractPrompt({ imageUrl, settings, prefetched });
+    const result = await extractPrompt({
+      imageUrl,
+      settings,
+      prefetched,
+      onProgress: (ev) => {
+        // 流式阶段已经在 API 层节流到 ≈80ms 一次，这里直接转发到 content。
+        postToTab(tabId, {
+          type: 'EXTRACT_PROGRESS',
+          payload: { requestId, stage: ev.stage, partial: ev.partial },
+        });
+      },
+    });
 
-    await sendToTab(tabId, {
+    postToTab(tabId, {
       type: 'EXTRACT_RESULT',
       payload: {
         requestId,
@@ -229,7 +263,7 @@ async function runExtraction(params: {
     }
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    await sendToTab(tabId, {
+    postToTab(tabId, {
       type: 'EXTRACT_ERROR',
       payload: { requestId, ok: false, error: message },
     });
@@ -305,28 +339,44 @@ async function runRefine(
   }
 }
 
-async function ensureContentScript(tabId: number): Promise<void> {
+/**
+ * 「乐观」向 tab 发送消息：不 await content script ACK，不阻塞主流程。
+ *
+ * 因为 manifest 已声明 content_scripts: ['<all_urls>'] @ document_idle，content script
+ * 在 99% 的页面上已经自动注入，第一次发送就能命中。只有极少数场景（chrome:// /
+ * about: / file:// 等 manifest 不允许注入的页，或扩展刚装好遇上旧 tab 还没刷新）
+ * 会通过 chrome.runtime.lastError 报错，那时我们再异步走「注入 → 重发」兜底，**绝
+ * 不让 panel 弹出 / 结果回传等用户感知最强的路径多等任何一次跨进程往返**。
+ */
+function postToTab(tabId: number, message: RuntimeMessage): void {
   try {
-    const reply = await chrome.tabs.sendMessage(tabId, { type: 'PING' } satisfies RuntimeMessage);
-    if (reply) return;
-  } catch {
-    // 没有响应说明 content script 未注入
+    chrome.tabs.sendMessage(tabId, message, () => {
+      const err = chrome.runtime.lastError;
+      if (!err) return;
+      // 异步兜底：注入 content script 后再重发一次。仍然 fire-and-forget。
+      void injectContentScript(tabId).then((ok) => {
+        if (!ok) {
+          console.warn('[PromptExtracto] postToTab fallback inject failed:', err.message);
+          return;
+        }
+        chrome.tabs.sendMessage(tabId, message, () => void chrome.runtime.lastError);
+      });
+    });
+  } catch (err) {
+    console.warn('[PromptExtracto] postToTab threw synchronously', err);
   }
+}
+
+async function injectContentScript(tabId: number): Promise<boolean> {
   try {
     await chrome.scripting.executeScript({
       target: { tabId },
       files: ['src/content/index.ts'],
     });
+    return true;
   } catch (err) {
     console.warn('[PromptExtracto] inject content script failed', err);
-  }
-}
-
-async function sendToTab(tabId: number, message: RuntimeMessage): Promise<void> {
-  try {
-    await chrome.tabs.sendMessage(tabId, message);
-  } catch (err) {
-    console.warn('[PromptExtracto] sendToTab failed', err);
+    return false;
   }
 }
 

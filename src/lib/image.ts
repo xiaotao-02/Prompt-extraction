@@ -62,8 +62,50 @@ const FLATTEN_TYPES = new Set([
 ]);
 
 export async function fetchImageAsBase64(imageUrl: string): Promise<FetchedImage> {
+  // ★ 快速路径：当 imageUrl 已经是 `data:image/<x>;base64,<payload>` 且体积在阈值内、
+  //   且不属于必须扁平化的格式（gif / apng / webp / svg），直接拆出 base64 段返回。
+  //
+  //   常见命中场景：content script 的 captureVideoFrame / canvas.toDataURL / SVG 序列化，
+  //   它们送过来的 imageUrl 本身就是一份现成的 base64。原先要 atob → Uint8Array → Blob →
+  //   FileReader.readAsDataURL 又走一圈，500KB 视频帧能浪费 100–200ms，**全是无用功**。
+  if (imageUrl.startsWith('data:')) {
+    const fast = tryFastDataUrl(imageUrl);
+    if (fast) return fast;
+  }
   const initial = await loadBlob(imageUrl);
   return normalizeForVisionApi(initial.blob, initial.mediaType);
+}
+
+/**
+ * 尝试把一条 `data:image/...;base64,...` URL 直通成 FetchedImage，跳过所有解码/重编码。
+ *
+ * 命中条件（任一不满足都返回 null 走完整路径）：
+ *   1. 必须是 base64 编码的 data URL（百分号编码的 SVG 等需要走 Blob 路径）
+ *   2. mediaType 必须是图像类型，且不在 {@link FLATTEN_TYPES} 里（动图 / SVG 仍需扁平化）
+ *   3. 解码后估算字节数 ≤ {@link SHRINK_BYTES_THRESHOLD}（否则可能需要走缩放）
+ *
+ * 字节数估算用 `Math.floor(base64.length * 0.75) - padding`：base64 每 4 字符对应 3 字节，
+ * 末尾 `=` padding 占位但不解码出字节。这个估算对快/慢阈值判断已经够精确。
+ */
+function tryFastDataUrl(url: string): FetchedImage | null {
+  // 用懒匹配抓 mediaType 与 base64 payload；非 base64 的 data URL 不在此路径处理
+  const match = /^data:([^;,]+)(?:;[^,]*)*;base64,(.*)$/i.exec(url);
+  if (!match) return null;
+  const mediaType = match[1].toLowerCase();
+  const base64 = match[2];
+  if (!mediaType.startsWith('image/')) return null;
+  if (FLATTEN_TYPES.has(mediaType)) return null;
+
+  const padding = base64.endsWith('==') ? 2 : base64.endsWith('=') ? 1 : 0;
+  const approxBytes = Math.floor(base64.length * 0.75) - padding;
+  if (approxBytes > SHRINK_BYTES_THRESHOLD) return null; // 让大图走缩放路径
+
+  return {
+    dataUrl: url,
+    base64,
+    mediaType,
+    byteLength: approxBytes,
+  };
 }
 
 async function loadBlob(imageUrl: string): Promise<{ blob: Blob; mediaType: string }> {
@@ -152,9 +194,9 @@ async function normalizeForVisionApi(
     // tryFlatten 返回 null 表示降级，继续走原 blob —— 即便服务端只能看到
     // 首帧或 SVG 原文，至少把请求送出去一次让用户看到模型的真实反馈。
   } else {
-    // 静态 PNG / JPEG / AVIF / BMP：仅在"长边 > 2048"或"体积 > 4MB"时
-    // 触发近无损降采样。阈值之内的小图原样上传，0 重编码、0 失真。
-    const shrunk = await tryShrinkLossless(blob, mediaType);
+    // 静态 PNG / JPEG / AVIF / BMP：仅在体积超阈值时触发近无损降采样。
+    // 体积之内的小图直接原样上传，0 解码、0 重编码、0 失真。
+    const shrunk = await tryShrinkLossless(blob);
     if (shrunk) {
       // 这种降采样对模型可见信息无损（远端本来就会做同样的 resize），
       // 所以不计入 originalMediaType；调用方无需提示用户。
@@ -171,15 +213,49 @@ async function normalizeForVisionApi(
     );
   }
 
-  const buffer = await finalBlob.arrayBuffer();
-  const base64 = arrayBufferToBase64(buffer);
+  // base64 化走 FileReader.readAsDataURL：在 service worker 主线程上是异步、
+  // 走线程池，不会同步阻塞消息派发；同时省掉一次 ArrayBuffer + Uint8Array 中转，
+  // 对几 MB 图能比同步 btoa(arrayBufferToBase64) 快一倍以上。
+  const dataUrl = await blobToDataUrl(finalBlob, finalType);
+  // dataUrl 形如 `data:<mime>;base64,<payload>`；提取 base64 段供 Anthropic / Gemini 用
+  const commaIdx = dataUrl.indexOf(',');
+  const base64 = commaIdx >= 0 ? dataUrl.slice(commaIdx + 1) : '';
   return {
-    dataUrl: `data:${finalType};base64,${base64}`,
+    dataUrl,
     base64,
     mediaType: finalType,
     byteLength: finalBlob.size,
     originalMediaType: originalType,
   };
+}
+
+/**
+ * 通过 FileReader 把 Blob 异步读成 `data:<mime>;base64,<...>`。
+ *
+ * 为什么不用 `arrayBuffer() + btoa`：后者在 service worker 主线程上是
+ * 同步阻塞，5–8MB 图能阻塞 100~500ms，期间所有 chrome.runtime / contextMenus
+ * 消息都会排队，连续抽图时第二张明显"卡一拍"。FileReader 在 Chrome service
+ * worker 里是支持的，且 readAsDataURL 内部走线程池。
+ *
+ * 当 blob.type 与目标 mime 不一致（例如我们扁平化后的输出是 image/jpeg 但
+ * 原 blob 还是 image/png），我们用 `new Blob([blob], { type: finalType })`
+ * 重新包一下，确保产出的 dataUrl 头部 mime 正确。
+ */
+function blobToDataUrl(blob: Blob, mediaType: string): Promise<string> {
+  if (typeof FileReader === 'undefined') {
+    // 极端环境兜底：退回同步路径
+    return blob.arrayBuffer().then((buf) => {
+      const base64 = arrayBufferToBase64(buf);
+      return `data:${mediaType};base64,${base64}`;
+    });
+  }
+  const target = blob.type === mediaType ? blob : new Blob([blob], { type: mediaType });
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result as string);
+    reader.onerror = () => reject(reader.error || new Error('FileReader failed'));
+    reader.readAsDataURL(target);
+  });
 }
 
 /**
@@ -230,20 +306,34 @@ async function tryFlatten(blob: Blob): Promise<Blob | null> {
 /**
  * 静态大图的近无损降采样。
  *
- * 触发条件：长边 > {@link SHRINK_DIM_THRESHOLD} 或体积 > {@link SHRINK_BYTES_THRESHOLD}。
- * 其它图片直接返回 null（外层会原样上传）。
+ * 触发条件：体积 > {@link SHRINK_BYTES_THRESHOLD}（仅靠体积判定，避免对
+ * 每张图都走一次 createImageBitmap 解码）。
  *
- * 编码策略：
- *   - PNG：缩尺寸后仍保留 PNG（不破坏透明通道，文字 / 线稿不会出现 JPEG 振铃）
- *   - 其它（JPEG / AVIF / BMP / …）：转 JPEG 0.95（人眼不可分辨）
+ * 为什么不再用"长边 > 1280 也触发"作为入口条件：
+ *   - 之前为了支持"长边超但体积不超"这种边角情况，所有图都要先做一次
+ *     `createImageBitmap` 拿宽高，再回头判断要不要缩。一张 800×600 / 400KB
+ *     的普通网图就要为此多花 50–300ms 的解码 + 内存分配，**这次解码 100%
+ *     是浪费的**。
+ *   - 体积 ≤ 1.5MB 的图，即便长边稍大（比如 1600×900 的 JPEG ≈ 600KB），
+ *     模型那侧本来就会做自己的 resize，本地再多缩一次的收益（几个 token、
+ *     几十 KB 上传）远低于多花的几百 ms 解码 + 重编码代价。
+ *   - 真正会"上传卡顿 / token 爆炸"的图全都是体积大的（1.5MB+ 的截图、
+ *     PNG 大图、AVIF / BMP 等）—— 体积阈值已经足够覆盖它们。
+ *
+ * 编码策略：缩放后**统一**转 JPEG（垫白底兼容透明 PNG）。
+ *   - 视觉 API 那侧 alpha 通道完全无用（会合成成底色），保 PNG 没有识图收益
+ *   - 而 OffscreenCanvas 的 PNG 编码没有最优滤波器选择，1080p PNG 编码常常
+ *     需要 500–1500ms 且产出体积 ≥ 原图 → 触发下方 `out.size >= blob.size`
+ *     分支整段白做；JPEG 编码同尺寸只要 50–200ms 且体积稳定缩小。
  *
  * 重要：只有重编码后体积*更小*才采用，否则继续走原 blob —— 避免某些场景
  * 下"重编码反而更大"的反向劣化（例如本身已经是极致压缩的小图）。
  */
 async function tryShrinkLossless(
-  blob: Blob,
-  mediaType: string
+  blob: Blob
 ): Promise<{ blob: Blob; mediaType: string } | null> {
+  // 体积阈值之内直接放行，跳过整次 createImageBitmap + canvas 编码（命中率极高的快速路径）
+  if (blob.size <= SHRINK_BYTES_THRESHOLD) return null;
   if (
     typeof createImageBitmap !== 'function' ||
     typeof OffscreenCanvas === 'undefined'
@@ -258,31 +348,27 @@ async function tryShrinkLossless(
   }
   try {
     const longest = Math.max(bitmap.width, bitmap.height);
-    const overDim = longest > SHRINK_DIM_THRESHOLD;
-    const overBytes = blob.size > SHRINK_BYTES_THRESHOLD;
-    if (!overDim && !overBytes) return null;
-
-    const scale = overDim ? SHRINK_DIM_THRESHOLD / longest : 1;
+    const scale = longest > SHRINK_DIM_THRESHOLD ? SHRINK_DIM_THRESHOLD / longest : 1;
     const w = Math.max(1, Math.round(bitmap.width * scale));
     const h = Math.max(1, Math.round(bitmap.height * scale));
     const canvas = new OffscreenCanvas(w, h);
     const ctx = canvas.getContext('2d');
     if (!ctx) return null;
+    // 透明 PNG 直接画到 JPEG 上会变黑（JPEG 不支持 alpha），先垫一层白底
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(0, 0, w, h);
     // 高质量重采样，对识图无影响但能让缩放后字体 / 边缘更干净
     ctx.imageSmoothingEnabled = true;
     ctx.imageSmoothingQuality = 'high';
     ctx.drawImage(bitmap, 0, 0, w, h);
 
-    const keepAlpha = mediaType === 'image/png';
-    const out = keepAlpha
-      ? await canvas.convertToBlob({ type: 'image/png' })
-      : await canvas.convertToBlob({
-          type: 'image/jpeg',
-          quality: SHRINK_JPEG_QUALITY,
-        });
+    const out = await canvas.convertToBlob({
+      type: 'image/jpeg',
+      quality: SHRINK_JPEG_QUALITY,
+    });
 
     if (out.size >= blob.size) return null;
-    return { blob: out, mediaType: keepAlpha ? 'image/png' : 'image/jpeg' };
+    return { blob: out, mediaType: 'image/jpeg' };
   } catch (err) {
     console.debug('[PromptExtracto] shrink failed', err);
     return null;
@@ -351,8 +437,7 @@ export async function makeStorageThumbnail(
       ctx.fillRect(0, 0, w, h);
       ctx.drawImage(bmp, 0, 0, w, h);
       const out = await canvas.convertToBlob({ type: 'image/jpeg', quality });
-      const buf = await out.arrayBuffer();
-      return `data:image/jpeg;base64,${arrayBufferToBase64(buf)}`;
+      return await blobToDataUrl(out, 'image/jpeg');
     } finally {
       try {
         bmp.close();
