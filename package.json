@@ -6,7 +6,7 @@
   "type": "module",
   "scripts": {
     "dev": "node scripts/generate-icons.mjs && vite",
-    "build": "node scripts/generate-icons.mjs && tsc -b --noEmit && vite build",
+    "build": "node scripts/generate-icons.mjs && tsc --noEmit && vite build",
     "build:watch": "node scripts/generate-icons.mjs && vite build --watch",
     "preview": "vite preview",
     "icons": "node scripts/generate-icons.mjs",
@@ -14,7 +14,7 @@
     "zip": "npm run build && node scripts/zip.mjs",
     "install:chrome": "node scripts/install-to-chrome.mjs",
     "install:edge": "node scripts/install-to-chrome.mjs --browser=edge",
-    "lint": "tsc -b --noEmit"
+    "lint": "tsc --noEmit"
   },
   "dependencies": {
     "lucide-react": "^0.460.0",
