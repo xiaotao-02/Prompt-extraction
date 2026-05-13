@@ -76,12 +76,8 @@ jobs:
       - name: Build & zip
         run: npm run zip
 
-      - name: Rename zip to a stable name
-        run: |
-          mkdir -p dist-zip
-          ORIG=$(ls dist-zip/*.zip | head -n1)
-          cp "$ORIG" "dist-zip/image-prompt-extractor-${{ steps.bump.outputs.tag }}.zip"
-          ls -la dist-zip
+      - name: List dist-zip
+        run: ls -la dist-zip
 
       - name: Commit & push bump
         run: |
