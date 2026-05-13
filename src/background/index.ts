@@ -318,6 +318,11 @@ async function persistHistory(params: {
           prompt: params.prompt,
           createdAt: now,
           source: 'extracted',
+          meta: {
+            provider: params.provider,
+            model: params.model,
+            style: params.style,
+          },
         },
       ],
     };
@@ -338,7 +343,17 @@ async function runRefine(
     if (!result.prompt) {
       return { ok: false, error: '模型返回了空提示词' };
     }
-    const updated = await appendPromptVersion(historyId, result.prompt, 'refined', instruction);
+    const updated = await appendPromptVersion(
+      historyId,
+      result.prompt,
+      'refined',
+      instruction,
+      {
+        provider: result.provider,
+        model: result.model,
+        style: settings.outputStyle,
+      }
+    );
     const versionId = updated?.versions[0]?.id || `${historyId}:r_${Date.now()}`;
     return {
       ok: true,

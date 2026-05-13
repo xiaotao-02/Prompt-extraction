@@ -13,19 +13,27 @@ export type OutputStyle = 'natural-zh' | 'natural-en' | 'sd-tags' | 'midjourney'
 /**
  * 提示词「策略档位」标识。
  *
- * 一档策略对应一组绑定的 stylePrompts + temperature + maxTokens + customPosition，
- * 具体定义见 {@link ./strategies.ts}。这里只保留 id 类型，避免 types.ts 反向依赖
- * strategies.ts。
+ * 一档策略 = 3 个组件维度的「版本组合引用」：
+ *   - stylePromptSet : 4 套 OutputStyle 指令文本的版本号
+ *   - sampling       : { temperature, maxTokens } 一对采样参数的版本号
+ *   - customJoin     : 用户自定义模板拼接位置的版本号
  *
- *   - 'classic'  : 修改前 v0.1.0 经典策略（温度 0.4 / 上限 1024 / custom 尾部追加）
- *   - 'v016'     : v0.1.6 策略。数值与 classic 完全相同——因为从 v0.1.1 一直到
- *                  v0.1.6 这 6 个版本的 stylePrompts/temperature/maxTokens/customPosition
- *                  一字未改。保留为独立档位是为了给习惯按版本号回滚的用户一个
- *                  显式入口（"我就是要 v0.1.6 那一版的输出感"），并方便后续
- *                  在不动 classic 的前提下单独迭代这一档。
- *   - 'fidelity' : 修改后 v0.1.7 高保真策略（温度 0.8 / 上限 2048 / custom 前置 + 有序展开指令）
+ * 具体的版本注册表与策略 → 组件版本的映射在 {@link ./strategies.ts}。这里只保留
+ * id 类型，避免 types.ts 反向依赖 strategies.ts。
+ *
+ *   - 'classic'  : UI 显示为 "v0.1.5 策略"。全部组件取 v0.1.0（温度 0.4 / 上限 1024 /
+ *                  custom 尾部追加 / 经典指令）。id 保持英文 'classic' 是为了不让
+ *                  老用户 settings 里持久化的字段因重命名而失效。
+ *   - 'v016'     : UI 显示为 "v0.1.6 策略"。全部组件也取 v0.1.0 —— 因为 v0.1.1~v0.1.6
+ *                  这 6 个版本里 stylePrompts/temperature/maxTokens/customPosition 一字
+ *                  未改，v0.1.6 那套行为本质就是 v0.1.0 那组组件版本。保留独立档位是
+ *                  为了给习惯按版本号回滚的用户一个显式入口，并方便后续在不动
+ *                  classic 的前提下把它换成新组件版本单独迭代。
+ *
+ * 历史上还存在过 'fidelity' (v0.1.7 高保真档)，已下线；老 settings 里如果还存着这个
+ * 值，会在 getStrategy 里安全回退到 DEFAULT_STRATEGY_ID。
  */
-export type StrategyId = 'classic' | 'v016' | 'fidelity';
+export type StrategyId = 'classic' | 'v016';
 
 export interface ProviderConfig {
   id: ProviderId;
@@ -68,11 +76,17 @@ export interface AppSettings {
   saveHistory: boolean;
   updates: UpdateSettings;
   /**
-   * 当前生效的提示词策略档位。决定 4 套 stylePrompts 的措辞、采样温度、
-   * 输出上限、以及用户自定义模板的拼接位置。详见 {@link ./strategies.ts}。
+   * 当前生效的提示词策略档位 id。
    *
-   * 老 settings 没有此字段 → 由 `getSettings` 合并 base 默认值时填上
-   * `DEFAULT_STRATEGY_ID`，保证旧数据无缝升级。
+   * 一个 id 在内部展开成 3 个组件版本（stylePromptSet / sampling / customJoin），
+   * 进而决定 4 套 stylePrompts 的措辞、采样温度、输出上限、以及用户自定义模板
+   * 的拼接位置。详见 {@link ./strategies.ts}。
+   *
+   * 这里依旧只持久化一个 id 字符串，是因为：
+   *   - 老 settings（v0.1.6 之前没有 promptStrategy 字段）由 `getSettings`
+   *     合并 base 默认值时自动填上 `DEFAULT_STRATEGY_ID`，旧数据无缝升级；
+   *   - 新版本里如果某个组件版本被淘汰，只要重命名内置策略对应的 id 不动，
+   *     用户旧数据里写着的 id 仍然能解析回最新可用的组件组合，不会出空白。
    */
   promptStrategy: StrategyId;
 }
@@ -94,6 +108,15 @@ export interface PromptVersion {
   createdAt: number;
   source: PromptVersionSource;
   note?: string;
+  /**
+   * 该版本对应的模型元数据。
+   *
+   * - 'extracted' / 'refined' 版本：记录这次调用实际使用的 provider/model/style，
+   *   这样在版本列表里能直观看出"这条结果是哪个模型出的"。
+   * - 'edited' / 'restored' 版本：通常省略（不绑定具体模型）。
+   * - 老数据没有该字段时，UI 应回退到展示「当前记录的 provider/model」。
+   */
+  meta?: { provider: ProviderId; model: string; style: OutputStyle };
 }
 
 export interface HistoryItem {
@@ -178,7 +201,7 @@ export type RuntimeMessage =
         /**
          * 本次反推所用策略档位 id（详见 strategies.ts）。
          * 仅在后台首次确认 settings 后发一次，让 loading 面板把
-         * "高保真 v0.1.7 / 经典 v0.1.0" 等档位标签亮出来。
+         * "v0.1.5 策略 / v0.1.6 策略" 等档位标签亮出来。
          */
         strategy?: StrategyId;
       };

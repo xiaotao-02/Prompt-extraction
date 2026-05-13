@@ -514,11 +514,12 @@ export default function SettingsView({ registerSaveHandler, onDirtyChange }: Pro
         </div>
       </section>
 
-      {/* 策略版本：决定 stylePrompts 措辞 + 采样温度 + 输出上限 + 自定义模板拼接位置 */}
+      {/* 策略版本：每一档 = 3 个组件维度（stylePromptSet / sampling / customJoin）的版本号组合。
+          底层模型见 src/lib/strategies.ts 的注释，这里只渲染。 */}
       <section className="card">
         <h2 className="text-sm font-semibold mb-1">策略版本</h2>
         <p className="text-xs text-zinc-500 mb-4">
-          切换不同档位的"提示词 + 采样"组合，效果不满意时可以随时换回旧版本对比。
+          一档策略 = <b>指令集 / 采样 / 拼接</b> 三个组件各自挑一个版本号的组合。切档其实是同时换这 3 个组件，对比效果时可以随时切回旧版本。
         </p>
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
           {STRATEGY_LIST.map((s) => {
@@ -548,6 +549,11 @@ export default function SettingsView({ registerSaveHandler, onDirtyChange }: Pro
                 <div className="text-[10px] text-zinc-400 mt-1.5 font-mono">
                   temperature {s.temperature} · max_tokens {s.maxTokens} ·{' '}
                   {s.customPosition === 'prepend' ? '自定义前置' : '自定义追加'}
+                </div>
+                {/* 组件版本指纹：让"选这档 = 选了 3 个组件版本"这件事在 UI 上一眼可见。
+                    两档之间只要有一个版本号不同，这一行就会差异化高亮可读。 */}
+                <div className="text-[10px] text-zinc-400 mt-0.5 font-mono">
+                  指令集@{s.components.stylePromptSet} · 采样@{s.components.sampling} · 拼接@{s.components.customJoin}
                 </div>
               </button>
             );
