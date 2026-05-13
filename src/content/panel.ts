@@ -101,7 +101,7 @@ async function syncVersions(requestId: string): Promise<void> {
     };
     renderPanel(currentState);
   } catch (err) {
-    console.warn('[ImagePrompt] syncVersions failed', err);
+    console.warn('[PromptExtracto] syncVersions failed', err);
   }
 }
 

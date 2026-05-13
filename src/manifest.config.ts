@@ -3,8 +3,8 @@ import pkg from '../package.json';
 
 export default defineManifest({
   manifest_version: 3,
-  name: '图片提示词提取器 · Image Prompt Extractor',
-  description: '右键任意网页图片，调用视觉大模型一键反推 AI 绘画提示词',
+  name: 'Prompt Extracto',
+  description: 'Prompt Extracto · 右键任意网页图片，调用视觉大模型一键反推 AI 绘画提示词',
   version: pkg.version,
   icons: {
     16: 'icons/icon-16.png',

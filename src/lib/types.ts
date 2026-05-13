@@ -158,6 +158,15 @@ export type RuntimeMessage =
   | {
       type: 'DISMISS_UPDATE';
       payload: { version: string };
+    }
+  | {
+      /**
+       * 内容脚本在用户按下右键时探测到鼠标位置的图片（含 <img> / <canvas> /
+       * 内联 <svg> / CSS background-image），用于在原生 'image' 上下文菜单
+       * 不出现时通过 fallback 菜单兜底。imageUrl 为空表示当前位置不是图片。
+       */
+      type: 'CTX_MENU_PREP';
+      payload: { imageUrl: string };
     };
 
 export interface RefineResponseOk {

@@ -1,7 +1,7 @@
 {
-  "name": "image-prompt-extractor",
+  "name": "prompt-extracto",
   "version": "0.1.4",
-  "description": "右键任意图片，调用视觉大模型提取 AI 绘画提示词的 Chrome 扩展",
+  "description": "Prompt Extracto · 右键任意图片，调用视觉大模型提取 AI 绘画提示词的 Chrome 扩展",
   "private": true,
   "type": "module",
   "scripts": {
@@ -9,6 +9,7 @@
     "build": "node scripts/generate-icons.mjs && tsc -b --noEmit && vite build",
     "preview": "vite preview",
     "icons": "node scripts/generate-icons.mjs",
+    "icons:from-image": "powershell -ExecutionPolicy Bypass -File scripts/resize-icons.ps1 && node scripts/optimize-pngs.mjs",
     "zip": "npm run build && node scripts/zip.mjs",
     "lint": "tsc -b --noEmit"
   },

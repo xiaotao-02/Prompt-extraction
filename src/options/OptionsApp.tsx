@@ -56,7 +56,7 @@ export default function OptionsApp() {
               <Sparkles className="w-5 h-5 text-white" />
             </div>
             <div className="min-w-0">
-              <h1 className="text-lg font-semibold truncate">图片提示词提取器</h1>
+              <h1 className="text-lg font-semibold truncate">Prompt Extracto</h1>
               <p className="text-xs text-zinc-500 truncate">
                 右键任意图片，反推 AI 绘画提示词
               </p>

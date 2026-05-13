@@ -1,10 +1,14 @@
-# 图片提示词提取器 · Image Prompt Extractor
+# Prompt Extracto
 
-一个 Chrome 扩展：在任意网页 **右键点击图片 → 提取图片提示词**，调用视觉大模型反推出可用于 AI 绘画的高质量提示词（支持中文段落 / 英文段落 / Stable Diffusion 标签 / Midjourney 风格）。
+一个 Chrome 扩展：在任意网页 **右键点击图片 / 动图 / 视频 → 提取提示词**，调用视觉大模型反推出可用于 AI 绘画的高质量提示词（支持中文段落 / 英文段落 / Stable Diffusion 标签 / Midjourney 风格）。
 
 ## 特性
 
-- **右键即用**：右键任意 `<img>`，弹出浮动结果面板
+- **右键即用**：右键任意 `<img>` / `<video>` / `<canvas>` / 内联 SVG / CSS 背景图都能识别
+- **动图与视频原生支持**：
+  - GIF / APNG / 动画 WebP 自动**扁平化为静态首帧**再送给视觉模型，避免"只看首帧拒收"或动图无法解析的常见失败
+  - `<video>` 元素（含 Twitter / Reddit / Discord 把 GIF 转成的 mp4 假 GIF）通过 canvas 抓取**当前播放帧**为 JPEG 后再送给模型
+  - canvas、内联 SVG、CSS `background-image` / `mask-image` 也都能识别
 - **多模型可选**：
   - OpenAI GPT-4o / GPT-4o-mini
   - Anthropic Claude 3.5
@@ -95,7 +99,7 @@ scripts/           # 图标生成 / zip 打包
 仓库已配置 GitHub Actions（`.github/workflows/auto-release.yml`），**每次 push 到 `main` 分支都会自动发布一次新版**，流程如下：
 
 1. 自动 bump `package.json` 中的 `version`（默认升 patch；commit 信息包含 `[minor]` 升 minor，包含 `[major]` 或 `BREAKING CHANGE` 升 major）
-2. `npm run build` + `npm run zip` 生成 `dist-zip/image-prompt-extractor-vX.Y.Z.zip`
+2. `npm run build` + `npm run zip` 生成 `dist-zip/prompt-extracto-vX.Y.Z.zip`
 3. 把 bump 后的 `package.json` / `package-lock.json` 推回 main，并打上 `vX.Y.Z` tag
 4. 创建 GitHub Release，自动从两次 release 之间的 commits 生成 release notes，并把 zip 作为附件上传
 
@@ -136,7 +140,13 @@ scripts/           # 图标生成 / zip 打包
 A：少数站点对图片做了 hotlink 防盗链或 Referer 校验。可右键"在新标签页打开图片"再重新提取。
 
 **Q：图片太大失败？**
-A：扩展内置 8MB 上限。可右键"图片另存为"压缩后，或使用图片缩略图链接。
+A：扩展内置 8MB 上限。动图 / 视频帧已经在送出前自动缩到最长边 1280~1536px，一般不会触发；如果是超大原图，可右键"图片另存为"压缩后再处理。
+
+**Q：右键视频菜单点不动，或者视频帧抓不到？**
+A：少数情况下视频元素是跨域且没有 `crossorigin="anonymous"`，canvas 会被污染、无法导出帧；这种站点目前抓不到帧。建议把视频暂停在想要识别的画面后再右键。
+
+**Q：Twitter / X 的 GIF 没反应？**
+A：这些"GIF"其实是 `<video>`，请在视频画面上**直接右键**，菜单文案会是"提取视频帧 / 动图提示词"。如果是站点自己劫持了右键（比如某些图片站），可以在视频上单击暂停后再右键。
 
 **Q：可以批量提取吗？**
 A：当前版本聚焦单张图右键体验；后续会加多选 / 当前页一键扫描功能。

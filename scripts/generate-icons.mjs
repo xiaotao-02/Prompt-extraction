@@ -1,6 +1,12 @@
 /**
  * 零依赖生成 PNG 图标（紫色渐变 + 白色 sparkle 简化形）
  * 仅使用 Node 内置 zlib + Buffer 写出 PNG。
+ *
+ * 注意：如果 public/icons-src/source.png 存在（即用户提供了自定义图标源图），
+ * 本脚本会跳过执行，避免覆盖由 scripts/resize-icons.ps1 生成的自定义图标。
+ * 想要重新从源图生成自定义图标，请运行：
+ *   powershell -ExecutionPolicy Bypass -File scripts/resize-icons.ps1
+ *   node scripts/optimize-pngs.mjs
  */
 import { mkdirSync, writeFileSync, existsSync } from 'node:fs';
 import { join, dirname } from 'node:path';
@@ -9,9 +15,18 @@ import { deflateSync } from 'node:zlib';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const outDir = join(__dirname, '..', 'public', 'icons');
+const customSource = join(__dirname, '..', 'public', 'icons-src', 'source.png');
 if (!existsSync(outDir)) mkdirSync(outDir, { recursive: true });
 
 const SIZES = [16, 32, 48, 128];
+
+if (existsSync(customSource)) {
+  const allExist = SIZES.every((s) => existsSync(join(outDir, `icon-${s}.png`)));
+  if (allExist) {
+    console.log('• 检测到自定义图标源 public/icons-src/source.png 且 icons 目录已就绪，跳过程序化生成。');
+    process.exit(0);
+  }
+}
 
 // 颜色（RGB）
 const C_BG_TOP = [99, 102, 241];   // indigo-500

@@ -1,10 +1,17 @@
 import type { AppSettings, OutputStyle, ProviderConfig, ProviderId } from '../types';
 import { STYLE_PROMPTS } from '../storage';
-import { fetchImageAsBase64 } from '../image';
+import { fetchImageAsBase64, type FetchedImage } from '../image';
 
 export interface ExtractParams {
   imageUrl: string;
   settings: AppSettings;
+  /**
+   * 调用方提前下载/规整好的图片。如果传了，extractPrompt 会跳过内部的
+   * {@link fetchImageAsBase64}，直接用这份预处理结果——用来在 background
+   * 里把图片下载和 settings 读取、content script 注入并行起来，节省一次
+   * 串行等待。
+   */
+  prefetched?: FetchedImage;
 }
 
 export interface ExtractResult {
@@ -22,21 +29,23 @@ function buildInstruction(settings: AppSettings): string {
 }
 
 export async function extractPrompt(params: ExtractParams): Promise<ExtractResult> {
-  const { imageUrl, settings } = params;
+  const { imageUrl, settings, prefetched } = params;
   const providerId = settings.activeProvider;
   const cfg = settings.providers[providerId];
   if (!cfg.apiKey) {
     throw new Error(`请先在「设置」中为 ${providerId} 配置 API Key`);
   }
   const instruction = buildInstruction(settings);
+  // 优先用调用方预下载好的图片，避免在 background 里串行两次"下载 + 编码"
+  const img = prefetched ?? (await fetchImageAsBase64(imageUrl));
 
   let prompt: string;
   switch (providerId) {
     case 'anthropic':
-      prompt = await callAnthropic(cfg, imageUrl, instruction);
+      prompt = await callAnthropic(cfg, img, instruction);
       break;
     case 'gemini':
-      prompt = await callGemini(cfg, imageUrl, instruction);
+      prompt = await callGemini(cfg, img, instruction);
       break;
     case 'openai':
     case 'zhipu':
@@ -44,7 +53,7 @@ export async function extractPrompt(params: ExtractParams): Promise<ExtractResul
     case 'siliconflow':
     case 'custom':
     default:
-      prompt = await callOpenAICompatible(cfg, imageUrl, instruction);
+      prompt = await callOpenAICompatible(cfg, img, instruction);
       break;
   }
 
@@ -59,12 +68,11 @@ export async function extractPrompt(params: ExtractParams): Promise<ExtractResul
 // ============ OpenAI 兼容协议（OpenAI / 智谱 / 通义 / SiliconFlow / 自定义） ============
 async function callOpenAICompatible(
   cfg: ProviderConfig,
-  imageUrl: string,
+  img: FetchedImage,
   instruction: string
 ): Promise<string> {
   // 大部分兼容 OpenAI 的服务端都接受 url 形式的 image_url，
   // 但跨域 + 鉴权 + base64 更稳妥，这里统一转 base64。
-  const img = await fetchImageAsBase64(imageUrl);
   const url = `${normalizeOpenAIBase(cfg.baseUrl)}/chat/completions`;
 
   const body = {
@@ -116,10 +124,9 @@ async function callOpenAICompatible(
 // ============ Anthropic Claude ============
 async function callAnthropic(
   cfg: ProviderConfig,
-  imageUrl: string,
+  img: FetchedImage,
   instruction: string
 ): Promise<string> {
-  const img = await fetchImageAsBase64(imageUrl);
   const url = `${trimSlash(cfg.baseUrl)}/messages`;
   const body = {
     model: cfg.model,
@@ -169,10 +176,9 @@ async function callAnthropic(
 // ============ Google Gemini ============
 async function callGemini(
   cfg: ProviderConfig,
-  imageUrl: string,
+  img: FetchedImage,
   instruction: string
 ): Promise<string> {
-  const img = await fetchImageAsBase64(imageUrl);
   const url = `${trimSlash(cfg.baseUrl)}/models/${encodeURIComponent(
     cfg.model
   )}:generateContent?key=${encodeURIComponent(cfg.apiKey)}`;

@@ -1,4 +1,5 @@
 import { extractPrompt, refinePrompt } from '@/lib/api';
+import { fetchImageAsBase64, makeStorageThumbnail } from '@/lib/image';
 import {
   addHistory,
   appendPromptVersion,
@@ -25,17 +26,49 @@ import {
 import { isNewerVersion } from '@/lib/version';
 
 const MENU_ID = 'extract-image-prompt';
+/**
+ * 兜底菜单：当原生 'image' 上下文没被 Chrome 命中时（CSS 背景图、canvas、
+ * 内联 SVG、被遮罩覆盖的图片等），由内容脚本动态把它切到 visible:true。
+ */
+const MENU_ID_FALLBACK = 'extract-image-prompt-fallback';
 const UPDATE_NOTIFICATION_ID = 'image-prompt-update-available';
 
+/**
+ * 最近一次内容脚本探测到的"鼠标位置图片"。每个 tab 一份，避免不同
+ * 标签页相互覆盖。fallback 菜单点击时从这里取 URL。
+ */
+const pendingFallbackImage = new Map<number, { imageUrl: string; at: number }>();
+
+function ensureContextMenus(): void {
+  if (!chrome.contextMenus) return;
+  chrome.contextMenus.removeAll(() => {
+    void chrome.runtime.lastError;
+    chrome.contextMenus.create(
+      {
+        id: MENU_ID,
+        title: '🎨 提取图片 / 动图提示词',
+        contexts: ['image'],
+      },
+      () => void chrome.runtime.lastError
+    );
+    chrome.contextMenus.create(
+      {
+        id: MENU_ID_FALLBACK,
+        // fallback 主要服务于 <video>（含"假 GIF"）、<canvas>、内联 SVG、
+        // CSS 背景图等场景，所以文案要把"视频 / 动图"显式标出来。
+        title: '🎨 提取视频帧 / 动图提示词',
+        // 这里覆盖 image 以外的常见上下文，再用 visible 动态控制显隐，
+        // 避免在普通文本/页面上无脑出现菜单项。
+        contexts: ['page', 'frame', 'link', 'selection', 'editable', 'video', 'audio'],
+        visible: false,
+      },
+      () => void chrome.runtime.lastError
+    );
+  });
+}
+
 chrome.runtime.onInstalled.addListener(async () => {
-  chrome.contextMenus.create(
-    {
-      id: MENU_ID,
-      title: '🎨 提取图片提示词',
-      contexts: ['image'],
-    },
-    () => void chrome.runtime.lastError
-  );
+  ensureContextMenus();
   await rescheduleUpdateAlarm();
   // 安装/更新后清掉旧徽章，并立刻做一次轻量检查（不阻塞）
   await refreshActionBadge();
@@ -43,21 +76,51 @@ chrome.runtime.onInstalled.addListener(async () => {
 });
 
 chrome.runtime.onStartup.addListener(async () => {
+  ensureContextMenus();
   await rescheduleUpdateAlarm();
   await refreshActionBadge();
 });
 
+// 标签关闭时清理待处理的 fallback 图片缓存
+chrome.tabs?.onRemoved.addListener((tabId) => {
+  pendingFallbackImage.delete(tabId);
+});
+
 chrome.contextMenus.onClicked.addListener(async (info, tab) => {
-  if (info.menuItemId !== MENU_ID) return;
   if (!tab?.id) return;
-  const imageUrl = info.srcUrl;
-  if (!imageUrl) return;
-  await runExtraction({
-    tabId: tab.id,
-    imageUrl,
-    pageUrl: tab.url || '',
-    pageTitle: tab.title || '',
-  });
+
+  if (info.menuItemId === MENU_ID) {
+    // 原生 image 上下文 —— info.srcUrl 一定有
+    const imageUrl = info.srcUrl;
+    if (!imageUrl) return;
+    await runExtraction({
+      tabId: tab.id,
+      imageUrl,
+      pageUrl: tab.url || '',
+      pageTitle: tab.title || '',
+    });
+    return;
+  }
+
+  if (info.menuItemId === MENU_ID_FALLBACK) {
+    // 取出内容脚本最近一次探测到的 URL（CSS 背景图 / canvas / svg / …）
+    const cached = pendingFallbackImage.get(tab.id);
+    pendingFallbackImage.delete(tab.id);
+    // 用完立刻把菜单藏回去，避免下次右键到非图片处仍然显示
+    chrome.contextMenus.update(MENU_ID_FALLBACK, { visible: false }, () => {
+      void chrome.runtime.lastError;
+    });
+    // 优先用缓存（带 data:/blob: 等），其次退回 info.srcUrl / linkUrl
+    const imageUrl = cached?.imageUrl || info.srcUrl || info.linkUrl || '';
+    if (!imageUrl) return;
+    await runExtraction({
+      tabId: tab.id,
+      imageUrl,
+      pageUrl: tab.url || '',
+      pageTitle: tab.title || '',
+    });
+    return;
+  }
 });
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
@@ -93,6 +156,28 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     runRefine(historyId, current, instruction).then((res) => sendResponse(res));
     return true;
   }
+  if (message?.type === 'CTX_MENU_PREP') {
+    const tabId = sender.tab?.id;
+    const imageUrl: string = message.payload?.imageUrl || '';
+    if (tabId) {
+      if (imageUrl) {
+        pendingFallbackImage.set(tabId, { imageUrl, at: Date.now() });
+      } else {
+        pendingFallbackImage.delete(tabId);
+      }
+      // 只在"原生 image 上下文未命中"时才需要兜底菜单。
+      // 如果是原生 <img>，Chrome 会同时显示 MENU_ID（image context），
+      // 这里再显示 fallback 就会重复 —— 所以内容脚本只在非原生场景才
+      // 发送非空 imageUrl，下面只需老实根据 imageUrl 是否存在切换 visible。
+      chrome.contextMenus.update(
+        MENU_ID_FALLBACK,
+        { visible: !!imageUrl },
+        () => void chrome.runtime.lastError
+      );
+    }
+    sendResponse({ ok: true });
+    return true;
+  }
   if (message?.type === 'EXTRACT_PROMPT') {
     const { imageUrl, pageUrl, pageTitle, requestId } = message.payload || {};
     const tabId = sender.tab?.id;
@@ -123,16 +208,28 @@ async function runExtraction(params: {
   const { tabId, imageUrl, pageUrl, pageTitle } = params;
   const requestId = params.requestId || crypto.randomUUID();
 
-  await ensureContentScript(tabId);
+  // 把三件互不依赖的耗时事拉到并行——以前是 ensureContentScript →
+  // EXTRACT_PENDING → getSettings → fetchImage 串行执行，其中 fetchImage
+  // （含网络下载 + 解码 + 可能的缩放）经常是几百 ms 起，把它和注入 / 配置
+  // 读取并发起来能把首请求时间打掉一大截。
+  //
+  // 注意 imagePromise 必须挂一个空 .catch() 占位，否则在 ensureContentScript
+  // 完成前如果下载先失败，service worker 会触发 unhandledrejection；真正的
+  // 错误处理仍在下方 try 块里 await imagePromise 时同步抛出。
+  const ensurePromise = ensureContentScript(tabId);
+  const settingsPromise = getSettings();
+  const imagePromise = fetchImageAsBase64(imageUrl);
+  imagePromise.catch(() => undefined);
 
+  await ensurePromise;
   await sendToTab(tabId, {
     type: 'EXTRACT_PENDING',
     payload: { requestId, imageUrl },
   });
 
   try {
-    const settings = await getSettings();
-    const result = await extractPrompt({ imageUrl, settings });
+    const [settings, prefetched] = await Promise.all([settingsPromise, imagePromise]);
+    const result = await extractPrompt({ imageUrl, settings, prefetched });
 
     await sendToTab(tabId, {
       type: 'EXTRACT_RESULT',
@@ -147,29 +244,18 @@ async function runExtraction(params: {
     });
 
     if (settings.saveHistory) {
-      const now = Date.now();
-      const item: HistoryItem = {
-        id: requestId,
+      // 历史落库不阻塞下一次提取：用户连续抽几张图时不再排队，缩略图
+      // 重新编码 + storage 写入都在后台完成。失败只打 debug，不影响 UI。
+      void persistHistory({
+        requestId,
         imageUrl,
-        thumbnail: imageUrl,
         prompt: result.prompt,
         provider: result.provider,
         model: result.model,
         style: result.style,
         pageUrl,
         pageTitle,
-        createdAt: now,
-        updatedAt: now,
-        versions: [
-          {
-            id: requestId + ':v0',
-            prompt: result.prompt,
-            createdAt: now,
-            source: 'extracted',
-          },
-        ],
-      };
-      await addHistory(item);
+      });
     }
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
@@ -177,6 +263,49 @@ async function runExtraction(params: {
       type: 'EXTRACT_ERROR',
       payload: { requestId, ok: false, error: message },
     });
+  }
+}
+
+async function persistHistory(params: {
+  requestId: string;
+  imageUrl: string;
+  prompt: string;
+  provider: HistoryItem['provider'];
+  model: string;
+  style: HistoryItem['style'];
+  pageUrl: string;
+  pageTitle: string;
+}): Promise<void> {
+  try {
+    const now = Date.now();
+    // 视频帧 / canvas / 扁平化动图传过来的 imageUrl 经常是大 dataUrl，
+    // 直接整条塞进 chrome.storage.local 几十条就会撑爆 5MB 配额。
+    // 这里统一压成 ≤32KB 的小缩略图后再入库（http(s) URL 原样保留）。
+    const storedUrl = await makeStorageThumbnail(params.imageUrl);
+    const item: HistoryItem = {
+      id: params.requestId,
+      imageUrl: storedUrl,
+      thumbnail: storedUrl,
+      prompt: params.prompt,
+      provider: params.provider,
+      model: params.model,
+      style: params.style,
+      pageUrl: params.pageUrl,
+      pageTitle: params.pageTitle,
+      createdAt: now,
+      updatedAt: now,
+      versions: [
+        {
+          id: params.requestId + ':v0',
+          prompt: params.prompt,
+          createdAt: now,
+          source: 'extracted',
+        },
+      ],
+    };
+    await addHistory(item);
+  } catch (err) {
+    console.debug('[PromptExtracto] persist history failed', err);
   }
 }
 
@@ -219,7 +348,7 @@ async function ensureContentScript(tabId: number): Promise<void> {
       files: ['src/content/index.ts'],
     });
   } catch (err) {
-    console.warn('[ImagePrompt] inject content script failed', err);
+    console.warn('[PromptExtracto] inject content script failed', err);
   }
 }
 
@@ -227,7 +356,7 @@ async function sendToTab(tabId: number, message: RuntimeMessage): Promise<void> 
   try {
     await chrome.tabs.sendMessage(tabId, message);
   } catch (err) {
-    console.warn('[ImagePrompt] sendToTab failed', err);
+    console.warn('[PromptExtracto] sendToTab failed', err);
   }
 }
 
@@ -325,7 +454,7 @@ async function maybeNotify(result: UpdateCheckResult): Promise<void> {
       {
         type: 'basic',
         iconUrl: chrome.runtime.getURL('icons/icon-128.png'),
-        title: '图片提示词提取器 · 有新版本',
+        title: 'Prompt Extracto · 有新版本',
         message: `新版本 v${latest.version} 已发布。\n当前版本 v${result.current}。`,
         contextMessage: latest.name || '',
         buttons: [{ title: '立即更新' }, { title: '忽略此版本' }],
@@ -335,7 +464,7 @@ async function maybeNotify(result: UpdateCheckResult): Promise<void> {
       () => void chrome.runtime.lastError
     );
   } catch (err) {
-    console.warn('[ImagePrompt] notify failed', err);
+    console.warn('[PromptExtracto] notify failed', err);
   }
 }
 
@@ -352,11 +481,11 @@ async function refreshActionBadge(): Promise<void> {
       await chrome.action.setBadgeText({ text: 'NEW' });
       await chrome.action.setBadgeBackgroundColor({ color: '#7c3aed' });
       await chrome.action.setTitle({
-        title: `图片提示词提取器\n有新版本 v${latest!.version} 可用`,
+        title: `Prompt Extracto\n有新版本 v${latest!.version} 可用`,
       });
     } else {
       await chrome.action.setBadgeText({ text: '' });
-      await chrome.action.setTitle({ title: '图片提示词提取器' });
+      await chrome.action.setTitle({ title: 'Prompt Extracto' });
     }
   } catch {
     /* ignore */
@@ -415,8 +544,11 @@ async function applyUpdate(): Promise<{
   }
 }
 
-// 兜底：service worker 启动时如果没有 alarm，则补建
+// 兜底：service worker 启动时如果没有 alarm / 右键菜单，则补建
 void (async () => {
+  // 即便 chrome.contextMenus.create 在 onInstalled 里失败过，每次 SW 启动
+  // 都重新注册一次，确保「提取图片提示词」菜单一定存在。
+  ensureContextMenus();
   if (!chrome.alarms) return;
   const all = await chrome.alarms.getAll();
   if (!all.find((a) => a.name === UPDATE_ALARM_NAME)) {
