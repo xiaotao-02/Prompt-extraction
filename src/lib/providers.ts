@@ -62,7 +62,7 @@ export const PROVIDERS: Record<ProviderId, ProviderMeta> = {
   },
   shukelongda: {
     id: 'shukelongda',
-    label: '数科隆达 (内置)',
+    label: '数科隆达 中转',
     defaultBaseUrl: 'https://ai.shukelongda.cn/v1',
     defaultModel: 'gpt-4o-mini',
     modelOptions: [
@@ -75,7 +75,7 @@ export const PROVIDERS: Record<ProviderId, ProviderMeta> = {
       'qwen-vl-max-latest',
     ],
     docsUrl: 'https://ai.shukelongda.cn',
-    description: '插件内置中转网关（OpenAI 兼容），开箱即用，无需自行申请 Key',
+    description: '第三方 OpenAI 兼容中转网关，可聚合多家模型；需自行到该站点申请 Key',
   },
   custom: {
     id: 'custom',

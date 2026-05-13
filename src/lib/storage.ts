@@ -16,12 +16,6 @@ const HISTORY_KEY = 'history_v1';
 // 由于 chrome.storage.local 配额为 5MB 且我们已经把缩略图直接复用原图 URL，几乎不会触顶。
 const HISTORY_LIMIT = 300;
 
-// 插件出厂自带的默认 API Key，按 provider 区分。
-// 用户在「设置」里输入的 Key 始终优先于这里的默认值。
-const BUILTIN_API_KEYS: Partial<Record<ProviderId, string>> = {
-  shukelongda: 'sk-Rjr4K7i08ZYOhiSXY1QM4YnTUHuHXeMWcdYIJ0b3nf4TBb27',
-};
-
 export const STYLE_PROMPTS: Record<string, string> = {
   'natural-zh':
     '请用自然流畅的中文段落详细描述这张图片的画面内容、风格、构图、光线、色调、氛围以及主体细节，输出可作为 AI 绘图工具的高质量提示词。只输出提示词正文，不要任何前缀、解释或 Markdown。',
@@ -39,7 +33,7 @@ function defaultSettings(): AppSettings {
       p.id,
       {
         id: p.id,
-        apiKey: BUILTIN_API_KEYS[p.id] ?? '',
+        apiKey: '',
         baseUrl: p.defaultBaseUrl,
         model: p.defaultModel,
       },
@@ -47,7 +41,7 @@ function defaultSettings(): AppSettings {
   ) as AppSettings['providers'];
 
   return {
-    activeProvider: 'shukelongda',
+    activeProvider: 'openai',
     providers,
     outputStyle: 'natural-zh',
     customPromptTemplate: '',

@@ -15,6 +15,7 @@ import { getSettings, saveSettings } from '@/lib/storage';
 import type { AppSettings, OutputStyle, ProviderId } from '@/lib/types';
 import { extractPrompt, listModels } from '@/lib/api';
 import UpdateSection from './UpdateSection';
+import SetupGuide from './SetupGuide';
 
 const STYLE_OPTIONS: { value: OutputStyle; label: string; desc: string }[] = [
   { value: 'natural-zh', label: '自然语言（中文）', desc: '段落式中文描述，适合通用 AI 绘图' },
@@ -151,6 +152,13 @@ export default function SettingsView({ registerSaveHandler }: Props) {
     ? discovered.filter((m) => m.toLowerCase().includes(lowerFilter))
     : discovered;
 
+  const applyConfig = async (next: AppSettings) => {
+    setSettings(next);
+    await saveSettings(next);
+    setSavedAt(Date.now());
+    setTimeout(() => setSavedAt(null), 2000);
+  };
+
   return (
     <div className="space-y-6">
       {savedAt && (
@@ -158,6 +166,9 @@ export default function SettingsView({ registerSaveHandler }: Props) {
           <Check className="w-4 h-4" /> 设置已保存
         </div>
       )}
+
+      {/* 配置指南：去掉内置默认 API 后，引导用户自带 Key 完成配置 */}
+      <SetupGuide settings={settings} applyConfig={applyConfig} />
 
       {/* 模型供应商 */}
       <section className="card">
