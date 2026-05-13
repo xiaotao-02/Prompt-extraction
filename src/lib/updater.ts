@@ -4,9 +4,13 @@ import { isNewerVersion } from './version';
 export const UPDATE_ALARM_NAME = 'image-prompt-update-check';
 export const MIN_INTERVAL_MINUTES = 30;
 
+// 内置默认更新源：插件官方 GitHub 仓库的 Releases。
+// 用户在「设置 → 自动更新」里填写的 feedUrl 仍会覆盖这里的默认值。
+export const DEFAULT_FEED_URL = 'xiaotao-02/Prompt-extraction';
+
 export const DEFAULT_UPDATE_SETTINGS: UpdateSettings = {
   enabled: true,
-  feedUrl: '',
+  feedUrl: DEFAULT_FEED_URL,
   intervalHours: 24,
   notifyDesktop: true,
   lastCheckedAt: 0,

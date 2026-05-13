@@ -80,6 +80,10 @@ export interface HistoryItem {
   createdAt: number;
   updatedAt?: number;
   versions: PromptVersion[];
+  /** 用户置顶收藏，置顶项排在管理后台列表最前面 */
+  pinned?: boolean;
+  /** 用户给这条记录写的备注/标签，便于检索 */
+  note?: string;
 }
 
 // === 消息协议 ===

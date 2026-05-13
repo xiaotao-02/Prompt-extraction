@@ -8,11 +8,13 @@ import type {
   UpdateSettings,
 } from './types';
 import { PROVIDERS } from './providers';
-import { DEFAULT_UPDATE_SETTINGS } from './updater';
+import { DEFAULT_FEED_URL, DEFAULT_UPDATE_SETTINGS } from './updater';
 
 const SETTINGS_KEY = 'app_settings_v1';
 const HISTORY_KEY = 'history_v1';
-const HISTORY_LIMIT = 100;
+// 后台管理页支持的最大记录数。提升到 300 是因为「提示词库」鼓励用户长期保留与整理结果。
+// 由于 chrome.storage.local 配额为 5MB 且我们已经把缩略图直接复用原图 URL，几乎不会触顶。
+const HISTORY_LIMIT = 300;
 
 // 插件出厂自带的默认 API Key，按 provider 区分。
 // 用户在「设置」里输入的 Key 始终优先于这里的默认值。
@@ -66,11 +68,17 @@ export async function getSettings(): Promise<AppSettings> {
       mergedProviders[id] = { ...base.providers[id], ...stored.providers[id] };
     }
   }
+  const mergedUpdates = { ...base.updates, ...(stored.updates || {}) };
+  // 旧版用户存过的 feedUrl 可能是空字符串，统一回落到内置默认仓库，
+  // 保证所有人都能自动收到 Releases 更新提醒。
+  if (!mergedUpdates.feedUrl || !mergedUpdates.feedUrl.trim()) {
+    mergedUpdates.feedUrl = DEFAULT_FEED_URL;
+  }
   return {
     ...base,
     ...stored,
     providers: mergedProviders,
-    updates: { ...base.updates, ...(stored.updates || {}) },
+    updates: mergedUpdates,
   };
 }
 
@@ -135,6 +143,57 @@ export async function removeHistory(id: string): Promise<void> {
   const list = await getHistory();
   const next = list.filter((i) => i.id !== id);
   await chrome.storage.local.set({ [HISTORY_KEY]: next });
+}
+
+/** 批量删除若干条历史项；用于「提示词库」的多选删除。 */
+export async function removeHistoryItems(ids: string[]): Promise<void> {
+  if (ids.length === 0) return;
+  const set = new Set(ids);
+  const list = await getHistory();
+  const next = list.filter((i) => !set.has(i.id));
+  await chrome.storage.local.set({ [HISTORY_KEY]: next });
+}
+
+/**
+ * 局部更新一条 HistoryItem（例如 `pinned`、`note`、`thumbnail` 等只读元数据）。
+ * 注意：不允许通过此方法改写 `versions` / `prompt`，那两者应走 appendPromptVersion / restorePromptVersion。
+ */
+export async function patchHistoryItem(
+  id: string,
+  patch: Partial<Pick<HistoryItem, 'pinned' | 'note' | 'thumbnail' | 'pageTitle'>>
+): Promise<HistoryItem | null> {
+  const list = await getHistory();
+  const idx = list.findIndex((i) => i.id === id);
+  if (idx < 0) return null;
+  const updated: HistoryItem = { ...list[idx], ...patch };
+  list[idx] = updated;
+  await chrome.storage.local.set({ [HISTORY_KEY]: list });
+  return updated;
+}
+
+/**
+ * 删除某条记录中的某个历史版本。
+ *
+ * - 不允许删除「当前版本」（即 `versions[0]`），UI 应禁用该按钮；
+ *   如果误传了当前版本 id，本方法会原样返回。
+ * - 不允许删到 0 条版本：至少保留 1 条。
+ */
+export async function removePromptVersion(
+  itemId: string,
+  versionId: string
+): Promise<HistoryItem | null> {
+  const list = await getHistory();
+  const idx = list.findIndex((i) => i.id === itemId);
+  if (idx < 0) return null;
+  const item = list[idx];
+  if (!item.versions || item.versions.length <= 1) return item;
+  if (item.versions[0]?.id === versionId) return item;
+  const next = item.versions.filter((v) => v.id !== versionId);
+  if (next.length === item.versions.length) return item;
+  const updated: HistoryItem = { ...item, versions: next };
+  list[idx] = updated;
+  await chrome.storage.local.set({ [HISTORY_KEY]: list });
+  return updated;
 }
 
 function newVersionId(): string {

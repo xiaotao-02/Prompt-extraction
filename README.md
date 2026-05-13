@@ -90,12 +90,26 @@ public/icons/      # 自动生成
 scripts/           # 图标生成 / zip 打包
 ```
 
+## 自动发布（CI）
+
+仓库已配置 GitHub Actions（`.github/workflows/auto-release.yml`），**每次 push 到 `main` 分支都会自动发布一次新版**，流程如下：
+
+1. 自动 bump `package.json` 中的 `version`（默认升 patch；commit 信息包含 `[minor]` 升 minor，包含 `[major]` 或 `BREAKING CHANGE` 升 major）
+2. `npm run build` + `npm run zip` 生成 `dist-zip/image-prompt-extractor-vX.Y.Z.zip`
+3. 把 bump 后的 `package.json` / `package-lock.json` 推回 main，并打上 `vX.Y.Z` tag
+4. 创建 GitHub Release，自动从两次 release 之间的 commits 生成 release notes，并把 zip 作为附件上传
+
+跳过发版：在 commit message 里加 `[skip release]` 即可（机器人自己产生的 `chore(release):` commit 也会被自动跳过，不会循环触发）。
+
+> 用户那侧的扩展默认更新源就是这个仓库，因此 Release 一旦发出，所有装了插件的用户在下一次定时检查（默认 24 小时一次）或手动点「立即检查」时就会收到更新。
+
 ## 自动更新
 
-扩展内置了一个轻量更新检查机制：
+扩展内置了一个轻量更新检查机制，**默认更新源已配置为本仓库** [`xiaotao-02/Prompt-extraction`](https://github.com/xiaotao-02/Prompt-extraction)，安装后无需手动填写即可收到 Release 更新通知。
 
-1. 打开 **设置 → 自动更新**，在「更新源」中填入：
-   - GitHub 仓库简写：`your-name/your-repo`（自动转换为 `https://api.github.com/repos/<owner>/<repo>/releases/latest`），或
+1. 如需切换更新源，可打开 **设置 → 自动更新**，在「更新源」中填入：
+   - GitHub 仓库简写：`owner/repo`（自动转换为 `https://api.github.com/repos/<owner>/<repo>/releases/latest`），或
+   - 完整 GitHub 仓库地址（`https://github.com/owner/repo[.git]`，会被识别并转换为同一接口），或
    - 自定义 JSON URL，返回结构如下：
      ```json
      {

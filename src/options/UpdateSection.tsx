@@ -12,6 +12,7 @@ import {
 import { getUpdateSettings, patchUpdateSettings } from '@/lib/storage';
 import {
   clampIntervalHours,
+  DEFAULT_FEED_URL,
   getCurrentVersion,
   normalizeFeedUrl,
 } from '@/lib/updater';
@@ -234,7 +235,7 @@ export default function UpdateSection() {
           <div className="flex gap-2">
             <input
               className="input flex-1"
-              placeholder="如：your-name/image-prompt-extractor"
+              placeholder={`默认：${DEFAULT_FEED_URL}`}
               value={draftFeed}
               onChange={(e) => setDraftFeed(e.target.value)}
               onBlur={onSaveFeed}
