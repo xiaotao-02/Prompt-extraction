@@ -1,6 +1,13 @@
 import { Check, Copy, Layers, RotateCcw, Trash2 } from 'lucide-react';
 import type { HistoryItem, PromptVersion } from '@/lib/types';
+import { getVersionOrdinalLabel, type VersionOrdinalKind } from '@/lib/versionLabel';
 import { SourceTag } from '../SourceTag';
+
+const ORD_TAG_CLASS: Record<VersionOrdinalKind, string> = {
+  current: 'bg-emerald-100 dark:bg-emerald-500/20 text-emerald-700 dark:text-emerald-300',
+  initial: 'bg-sky-100 dark:bg-sky-500/20 text-sky-700 dark:text-sky-300',
+  middle: 'bg-zinc-200/70 dark:bg-zinc-700/70 text-zinc-700 dark:text-zinc-200',
+};
 
 export function VersionsTab({
   item,
@@ -40,12 +47,18 @@ export function VersionsTab({
         {item.versions.map((v, i) => {
           const isCurrent = i === 0;
           const cid = `ver:${item.id}::${v.id}`;
+          const ord = getVersionOrdinalLabel(item.versions.length, i);
           return (
             <li
               key={v.id}
               className={`p-3 ${isCurrent ? 'bg-emerald-50/60 dark:bg-emerald-500/10' : ''}`}
             >
               <div className="flex items-center gap-2 text-[11px] mb-1.5 flex-wrap">
+                <span
+                  className={`px-1.5 py-px rounded font-medium ${ORD_TAG_CLASS[ord.kind]}`}
+                >
+                  {ord.label}
+                </span>
                 <SourceTag source={v.source} />
                 <span className="text-zinc-500">{new Date(v.createdAt).toLocaleString()}</span>
                 {v.meta && (
@@ -59,11 +72,6 @@ export function VersionsTab({
                 )}
                 {v.note && (
                   <span className="text-zinc-500 italic truncate max-w-[260px]">· {v.note}</span>
-                )}
-                {isCurrent && (
-                  <span className="ml-auto px-1.5 py-px rounded bg-emerald-100 dark:bg-emerald-500/20 text-emerald-700 dark:text-emerald-300 font-medium">
-                    当前
-                  </span>
                 )}
               </div>
               <p className="text-xs leading-relaxed text-zinc-700 dark:text-zinc-300 whitespace-pre-wrap break-words">

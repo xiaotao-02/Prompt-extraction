@@ -67,9 +67,22 @@ export function renderPanel(state: PanelState): void {
   shadow.appendChild(next);
   setPanel(next);
   // 应用上一次的位置 / 尺寸（首次渲染会用居中默认值）。
-  // 必须在 bindEvents 之前调用，确保 ResizeObserver 挂载时尺寸已经稳定，
+  // 必须在 bindEvents 之前调用，确保 ResizeObserver 挂载时尺寸已经稳定,
   // 避免拿到瞬时的 0 / 默认值，造成误存。
   applyGeometryToPanel(next, ensureGeometry());
+  // 入场动画 panelIn 跑完后给 panel 打上 .mounted，永久禁用 animation。
+  // 关键作用：之后用户拖动 header / resize 时会反复切换 .dragging / .resizing
+  // class，CSS 里这两个 class 用 `animation: none !important` 强行打断动画；
+  // 一旦松手 class 被移除，浏览器会把恢复有效的 animation 视为「新声明」
+  // 而**重新从 from 状态播放一次**——视觉上就是「窗口闪一下/像被重建」。
+  // 加上 .mounted 后 animation 永远是 none，移除 .dragging 不再触发重播。
+  //
+  // 兜底 setTimeout(260ms)：用户在 panelIn 还没播完（< 220ms）就立刻拖动 header
+  // 会导致 animation 被中断、animationend 永远不触发；这种情况下也要按时挂上
+  // .mounted，否则本次"修复"反而失效。重复 add class 是幂等的，安全。
+  const markMounted = () => next.classList.add('mounted');
+  next.addEventListener('animationend', markMounted, { once: true });
+  setTimeout(markMounted, 260);
   bindEvents(next);
   manageLoadingTicker(state);
   manageRefineTicker(state);

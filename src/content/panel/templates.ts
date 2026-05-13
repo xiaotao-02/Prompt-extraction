@@ -1,4 +1,5 @@
 import type { PromptVersion } from '@/lib/types';
+import { getVersionOrdinalLabel } from '@/lib/versionLabel';
 import type { PanelState } from './state';
 import {
   ICON_CLOSE,
@@ -7,7 +8,6 @@ import {
   ICON_SAVE,
   ICON_HISTORY,
   ICON_RESTORE,
-  ICON_EDIT,
   ICON_SPARK,
   ICON_LIBRARY,
 } from './icons';
@@ -123,6 +123,9 @@ export function panelHtml(state: PanelState): string {
   //
   // 没版本时（versionCount === 0）直接不渲染，等首次保存后 syncVersions 会触发完整
   // 重渲再把节点塞进来。
+  // 列表里"哪一条被高亮"以 editor 当前内容（draft，回落到 prompt）为准，
+  // 这样在 dirty 状态下高亮也是用户**正在看的那条**，而不是被保存的主版本。
+  const editorContent = state.draft ?? state.prompt ?? '';
   const versionsSidebar =
     versionCount > 0
       ? `
@@ -133,7 +136,7 @@ export function panelHtml(state: PanelState): string {
           </div>
           <ul class="versions-list">
             ${versions
-              .map((v, i) => versionItemHtml(v, i === 0, state.prompt || ''))
+              .map((v, i) => versionItemHtml(v, i, versions.length, editorContent))
               .join('')}
           </ul>
         </aside>
@@ -290,17 +293,36 @@ export function panelHtml(state: PanelState): string {
   `;
 }
 
-export function versionItemHtml(v: PromptVersion, isCurrent: boolean, currentPrompt: string): string {
+export function versionItemHtml(
+  v: PromptVersion,
+  index: number,
+  total: number,
+  editorContent: string
+): string {
+  const isCurrent = index === 0;
   const time = formatTime(v.createdAt);
   const tag = sourceLabel(v.source);
+  const ord = getVersionOrdinalLabel(total, index);
   const preview = v.prompt.replace(/\s+/g, ' ').slice(0, 120);
-  const isSameAsCurrent = v.prompt === currentPrompt;
+  // selected：编辑器里显示的就是这条版本（dirty 状态下也成立）。
+  // 视觉高亮 + CSS 同时隐藏行内的"恢复此版本"按钮（再恢复一次没意义）。
+  const selected = v.prompt === editorContent;
+  // 整行作为点击靶子（select-version），让用户像浏览文件那样一行一行切换
+  // 看不同的历史版本。行内的 copy / restore 按钮在 events.ts 里 stop
+  // propagation，不会被这个父级 action 抢走。
   return `
-    <li class="version-item ${isCurrent ? 'current' : ''}">
+    <li
+      class="version-item${isCurrent ? ' current' : ''}${selected ? ' selected' : ''}"
+      data-action="select-version"
+      data-version-id="${escapeAttr(v.id)}"
+      role="button"
+      tabindex="0"
+      title="点击切换到此版本"
+    >
       <div class="version-head">
+        <span class="version-ord ${ord.kind}">${escapeText(ord.label)}</span>
         <span class="version-tag ${v.source}">${tag}</span>
         <span class="version-time">${escapeText(time)}</span>
-        ${isCurrent ? '<span class="version-badge">当前</span>' : ''}
       </div>
       <div class="version-preview">${escapeText(preview)}${
     v.prompt.length > 120 ? '…' : ''
@@ -309,23 +331,18 @@ export function versionItemHtml(v: PromptVersion, isCurrent: boolean, currentPro
         <button class="link-btn" data-action="copy-version" data-version-id="${escapeAttr(
           v.id
         )}">${ICON_COPY}<span>复制</span></button>
-        <button class="link-btn" data-action="load-version" data-version-id="${escapeAttr(
+        <button class="link-btn primary restore-btn" data-action="restore-version" data-version-id="${escapeAttr(
           v.id
-        )}">${ICON_EDIT}<span>载入到编辑器</span></button>
-        ${
-          isSameAsCurrent
-            ? ''
-            : `<button class="link-btn primary" data-action="restore-version" data-version-id="${escapeAttr(
-                v.id
-              )}">${ICON_RESTORE}<span>恢复此版本</span></button>`
-        }
+        )}">${ICON_RESTORE}<span>恢复此版本</span></button>
       </div>
     </li>
   `;
 }
 
 export function sourceLabel(s: PromptVersion['source']): string {
-  if (s === 'extracted') return '初始';
+  // 注意：这里返回"来源"而非"时间序号"。"初始 / 当前 / 版本N"由 getVersionOrdinalLabel
+  // 统一计算并以独立的 .version-ord chip 渲染，不要在这里和它打架。
+  if (s === 'extracted') return '反推';
   if (s === 'edited') return '手动编辑';
   if (s === 'refined') return 'AI 调整';
   return '恢复';

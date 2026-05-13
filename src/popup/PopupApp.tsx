@@ -23,7 +23,14 @@ import {
   restorePromptVersion,
 } from '@/lib/storage';
 import type { HistoryItem, PromptVersion, RefineResponse } from '@/lib/types';
+import { getVersionOrdinalLabel, type VersionOrdinalKind } from '@/lib/versionLabel';
 import { formatTime } from '../options/_shared/time';
+
+const VERSION_ORD_TAG_CLASS: Record<VersionOrdinalKind, string> = {
+  current: 'bg-emerald-100 dark:bg-emerald-500/20 text-emerald-700 dark:text-emerald-300',
+  initial: 'bg-sky-100 dark:bg-sky-500/20 text-sky-700 dark:text-sky-300',
+  middle: 'bg-zinc-200/70 dark:bg-zinc-700/70 text-zinc-700 dark:text-zinc-200',
+};
 
 const REFINE_SUGGESTIONS = [
   '翻译成英文',
@@ -434,9 +441,15 @@ function VersionList({
         {item.versions.map((v, i) => {
           const isCurrent = i === 0;
           const cid = `${item.id}::${v.id}`;
+          const ord = getVersionOrdinalLabel(item.versions.length, i);
           return (
             <li key={v.id} className={`p-2 ${isCurrent ? 'bg-emerald-50/60 dark:bg-emerald-500/10' : ''}`}>
               <div className="flex items-center gap-1.5 text-[10px] mb-1 flex-wrap">
+                <span
+                  className={`px-1.5 py-px rounded font-medium ${VERSION_ORD_TAG_CLASS[ord.kind]}`}
+                >
+                  {ord.label}
+                </span>
                 <SourceTag source={v.source} />
                 <span className="text-zinc-500">{formatTime(v.createdAt)}</span>
                 {v.meta && (
@@ -444,11 +457,6 @@ function VersionList({
                     <span className="font-medium">{v.meta.provider}</span>
                     <span className="text-zinc-300 dark:text-zinc-600">·</span>
                     <span className="font-mono truncate max-w-[110px]">{v.meta.model}</span>
-                  </span>
-                )}
-                {isCurrent && (
-                  <span className="ml-auto px-1.5 py-px rounded bg-emerald-100 dark:bg-emerald-500/20 text-emerald-700 dark:text-emerald-300 font-medium">
-                    当前
                   </span>
                 )}
               </div>
@@ -491,7 +499,9 @@ function VersionList({
 function SourceTag({ source }: { source: PromptVersion['source'] }) {
   const map: Record<PromptVersion['source'], { label: string; className: string }> = {
     extracted: {
-      label: '初始',
+      // "初始"已下放给基于时间顺序的序号标签使用，这里改名"反推"表达"来源 = 一次模型反推"，
+      // 与 SettingsView 的 SourceTag 保持一致，避免一行里出现两个"初始"。
+      label: '反推',
       className: 'bg-emerald-100 dark:bg-emerald-500/20 text-emerald-700 dark:text-emerald-300',
     },
     edited: {

@@ -39,10 +39,15 @@ function safeSendMessage(message: unknown, callback?: (response: any) => void): 
 
 /**
  * 仅刷新和"是否脏"相关的 UI 部分，避免在每次按键时整片重渲染导致 textarea 失焦。
+ *
+ * 顺便同步历史版本列表的 .selected 高亮：editor 改字后，原本被高亮的那条
+ * 可能不再匹配 draft；用户也可能改着改着又改回了某条版本的内容，需要重新
+ * 把高亮挪到那条上。这个同步是纯 DOM 操作，不触发重渲。
  */
 export function updateDirtyChrome(): void {
   if (!panel || !currentState) return;
-  const dirty = (currentState.draft ?? '') !== (currentState.prompt ?? '');
+  const draft = currentState.draft ?? '';
+  const dirty = draft !== (currentState.prompt ?? '');
   const hint = panel.querySelector<HTMLElement>('.dirty-hint');
   if (hint) hint.classList.toggle('show', dirty);
   const setDisabled = (sel: string, disabled: boolean) => {
@@ -57,6 +62,16 @@ export function updateDirtyChrome(): void {
   };
   setDisabled('[data-action="reset"]', !dirty);
   setDisabled('[data-action="save"]', !dirty);
+
+  const versions = currentState.versions || [];
+  const matched = versions.find((v) => v.prompt === draft);
+  const matchedId = matched?.id;
+  panel.querySelectorAll<HTMLElement>('.version-item').forEach((item) => {
+    item.classList.toggle(
+      'selected',
+      !!matchedId && item.dataset.versionId === matchedId
+    );
+  });
 }
 
 export async function syncVersions(requestId: string): Promise<void> {
@@ -296,7 +311,12 @@ export function bindEvents(root: HTMLElement): void {
   }
 
   root.querySelectorAll<HTMLElement>('[data-action]').forEach((el) => {
-    el.addEventListener('click', () => {
+    el.addEventListener('click', (event) => {
+      // 历史版本 li 整行带 data-action="select-version"，行内的"复制 / 恢复"
+      // 按钮也带各自的 data-action。如果按钮的 click 冒泡上去，会同时触发整行
+      // 的"切换版本"动作，导致先恢复一个版本、又被冒泡的 select 把 draft
+      // 切回去这种诡异行为。统一在这里截断冒泡：子元素 action 处理完就停。
+      event.stopPropagation();
       const action = el.dataset.action;
       const state = currentState;
       if (!state) return;
@@ -399,15 +419,19 @@ export function bindEvents(root: HTMLElement): void {
           .catch(() => fallbackCopy(v.prompt, el));
         return;
       }
-      if (action === 'load-version') {
+      if (action === 'load-version' || action === 'select-version') {
+        // 整行点击 = select-version；旧的 load-version 按钮已从模板去掉，
+        // 但 action 名继续兼容（万一有缓存的旧 DOM 还在跑）。
         const vid = el.dataset.versionId;
         const v = state.versions?.find((x) => x.id === vid);
         if (!v || !currentState) return;
-        // 局部更新：把版本内容塞进编辑器 textarea，更新 dirty 视觉。
+        // 局部更新：把版本内容塞进编辑器 textarea，更新 dirty 视觉 + 列表高亮。
         // 不重渲，保留 sidebar 滚动位置、不打断用户视线。
         setCurrentState({ ...currentState, draft: v.prompt });
         const editor = root.querySelector<HTMLTextAreaElement>('[data-role="editor"]');
         if (editor) editor.value = v.prompt;
+        // updateDirtyChrome 内部会 toggle .version-item.selected，
+        // CSS 同时隐藏被选中行的"恢复此版本"按钮，无需手动 sync。
         updateDirtyChrome();
         return;
       }

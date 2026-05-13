@@ -32,6 +32,15 @@ export const STYLE = `
   resize: both;
   animation: panelIn .22s cubic-bezier(.2,.9,.3,1.2);
 }
+/* panelIn 跑完后由 JS 给 panel 加上 .mounted，永久禁用入场动画。
+   这样后续切换 .dragging / .resizing 等 class 时，浏览器不会因为
+   "animation: none" 被移除而把 panelIn 当成新的动画声明重播一次，
+   也就避免了"拖动 header 松手瞬间面板闪一下 / 像被重建"的现象。
+   写在 .dragging / .resizing 之前，由 !important 自身保证胜出。
+   注：这里特意不用反引号，外层 STYLE 是模板字符串，反引号会截断它。 */
+.panel.mounted {
+  animation: none !important;
+}
 .panel.dragging,
 .panel.resizing {
   /* 拖拽 / resize 中关掉动画/过渡，避免位置跳动；并提升一下阴影做拾起效果。 */
@@ -118,9 +127,10 @@ export const STYLE = `
 }
 
 .body {
-  /* success 状态下 .body 处在 .panel-row 内，是它唯一的 flex 子元素（历史
-     版本 sidebar 已改为 position:absolute 的浮层），所以 flex:1 1 auto 让
-     body 占满整个 panel-row 宽度，sidebar 滑出/收起时 body 视觉宽度不变。
+  /* success 状态下 .body 和 .versions-side 并排成为 .panel-row 的两个 flex
+     子项。sidebar 收起时宽度为 0，body 占满整个 panel-row；sidebar 展开时
+     宽度过渡到 280px，body 通过 flex:1 1 auto + min-width:0 自动收窄，**不再
+     被覆盖**，缩略图 / 编辑器 / 按钮全部保留可见与可点击。
      loading/error 状态下 .body 是 panel 的直接子元素，column flex 主轴
      是纵向，flex:1 1 auto 同样让它撑满 panel 剩余高度，行为一致。 */
   flex: 1 1 auto;
@@ -307,56 +317,59 @@ export const STYLE = `
 }
 
 /* panel-row：success 状态下，header 下方的横向容器。
-   - position: relative：给绝对定位的历史版本 overlay 提供定位上下文。
    - flex: 1 1 auto + min-height: 0：占满 panel 剩余高度，超出时由内部
      .body / .versions-list 自己滚动。
-   - overflow: hidden：截断 versions sidebar 滑出动画的左侧"屏外"那部分。 */
+   - overflow: hidden：避免 sidebar width 过渡的中间帧把超出宽度推出去。
+   - sidebar 现在是占布局空间的 flex item，不再是覆盖层，所以这里不需要
+     position: relative 提供定位上下文。 */
 .panel-row {
-  position: relative;
   display: flex;
   flex: 1 1 auto;
   min-height: 0;
   overflow: hidden;
 }
 
-/* 左侧历史版本侧栏：常驻 DOM 的覆盖式 drawer，从面板左侧滑入。
+/* 左侧历史版本侧栏：常驻 DOM 的 flex 列，展开时把 .body 挤窄而不是
+   覆盖在它上面。
    设计要点：
-   - position: absolute 完全脱离布局流 → 切显隐时主面板宽高不动。
-   - transform: translateX 控制滑入滑出，配合 transition 平滑过渡。
-   - pointer-events / visibility 在收起时关闭，避免吃掉主体上的点击。
-   - 自带阴影 + 半透明背景，作为浮层有层次感。 */
+   - 收起时 width: 0 + overflow: hidden，DOM 在但视觉完全消失。
+   - 用 width 过渡做"展开/收起"动画，比 transform 浮层更直观地告诉用户
+     主体内容是被推开了，不会再有"按钮被挡住点不到"的问题。
+   - pointer-events 收起时关掉，万一里面有焦点也接不到键鼠事件。
+   - flex: none 防止它被父级 flex 算法压缩到非 width 设定的尺寸。 */
 .versions-side {
-  position: absolute;
-  top: 0;
-  left: 0;
-  bottom: 0;
-  width: 280px;
-  max-width: 70%;
-  z-index: 2;
+  flex: none;
+  width: 0;
+  max-width: 50%;
   display: flex;
   flex-direction: column;
   overflow: hidden;
   background: rgba(248,248,250,0.98);
-  border-right: 1px solid rgba(0,0,0,0.08);
-  box-shadow: 8px 0 24px -8px rgba(0,0,0,0.18);
-  transform: translateX(-100%);
-  transition: transform .22s cubic-bezier(.2,.9,.3,1.2),
+  border-right: 1px solid transparent;
+  transition: width .22s cubic-bezier(.2,.9,.3,1.2),
+              border-right-color .22s ease,
               opacity .18s ease;
   opacity: 0;
   pointer-events: none;
-  visibility: hidden;
 }
 .panel-row.versions-open .versions-side {
-  transform: translateX(0);
+  width: 280px;
+  border-right-color: rgba(0,0,0,0.08);
   opacity: 1;
   pointer-events: auto;
-  visibility: visible;
+}
+/* sidebar 内部布局始终按 280px 计算，外层 width 在 0 ↔ 280 过渡时，
+   .versions-head 标题 / .version-preview 文本不会跟着挤压换行 → 过渡
+   视觉更稳。外层 overflow:hidden 会把多出来的部分裁掉。 */
+.versions-side > * {
+  min-width: 280px;
 }
 @media (prefers-color-scheme: dark) {
   .versions-side {
     background: rgba(30,30,34,0.98);
+  }
+  .panel-row.versions-open .versions-side {
     border-right-color: rgba(255,255,255,0.10);
-    box-shadow: 8px 0 24px -8px rgba(0,0,0,0.55);
   }
 }
 .versions-head {
@@ -379,12 +392,28 @@ export const STYLE = `
 .version-item {
   padding: 8px 10px;
   border-bottom: 1px solid rgba(0,0,0,0.04);
+  cursor: pointer;
+  transition: background .12s;
 }
 .version-item:last-child { border-bottom: none; }
+.version-item:hover { background: rgba(99,102,241,0.06); }
+.version-item:focus-visible {
+  outline: 2px solid rgba(99,102,241,0.4);
+  outline-offset: -2px;
+}
 .version-item.current { background: rgba(16,185,129,0.06); }
+/* selected：editor 内容匹配的那一条。紫色背景，且把右下的"恢复此版本"
+   按钮直接 CSS 隐藏 —— 已经是当前编辑器内容，再恢复一次没意义。
+   写在 .current 后面，覆盖它的绿色背景，让"选中态"优先于"最新版"。 */
+.version-item.selected { background: rgba(99,102,241,0.12); }
+.version-item.selected:hover { background: rgba(99,102,241,0.16); }
+.version-item.selected .restore-btn { display: none; }
 @media (prefers-color-scheme: dark) {
   .version-item { border-bottom-color: rgba(255,255,255,0.04); }
+  .version-item:hover { background: rgba(139,92,246,0.10); }
   .version-item.current { background: rgba(16,185,129,0.10); }
+  .version-item.selected { background: rgba(139,92,246,0.18); }
+  .version-item.selected:hover { background: rgba(139,92,246,0.22); }
 }
 .version-head {
   display: flex; align-items: center; gap: 6px; font-size: 11px; margin-bottom: 4px;
@@ -404,12 +433,19 @@ export const STYLE = `
   .version-tag.refined { background: rgba(168,85,247,0.25); color: #d8b4fe; }
 }
 .version-time { opacity: 0.65; }
-.version-badge {
-  margin-left: auto; padding: 1px 6px; border-radius: 4px;
-  font-size: 10px; background: rgba(16,185,129,0.18); color: #047857;
+/* 时间序号 chip：与来源 chip 并列在同一行，按"按时间排"的逻辑显示
+   "初始 / 版本N / 当前"。当前 = emerald，初始 = sky 蓝（与 emerald 区分），
+   中间版本 = 中性灰。 */
+.version-ord {
+  padding: 1px 6px; border-radius: 4px; font-size: 10px; font-weight: 600;
+  background: rgba(113,113,122,0.18); color: #3f3f46;
 }
+.version-ord.current { background: rgba(16,185,129,0.18); color: #047857; }
+.version-ord.initial { background: rgba(14,165,233,0.18); color: #0369a1; }
 @media (prefers-color-scheme: dark) {
-  .version-badge { background: rgba(16,185,129,0.25); color: #6ee7b7; }
+  .version-ord { background: rgba(161,161,170,0.20); color: #e4e4e7; }
+  .version-ord.current { background: rgba(16,185,129,0.25); color: #6ee7b7; }
+  .version-ord.initial { background: rgba(56,189,248,0.25); color: #7dd3fc; }
 }
 .version-preview {
   font-size: 12px; line-height: 1.5; opacity: 0.85;

@@ -3,7 +3,10 @@ import type { PromptVersionSource } from '@/lib/types';
 export function SourceTag({ source }: { source: PromptVersionSource }) {
   const map: Record<PromptVersionSource, { label: string; className: string }> = {
     extracted: {
-      label: '初始',
+      // 之前叫"初始"，但同一张图被多个模型反推会产生多条 extracted，导致一条记录里
+      // 出现一堆"初始"标签，用户分不清前后；改名"反推"以表达"来源 = 一次模型反推"，
+      // 真正的"第几版"由 VersionsTab 里基于时间顺序的序号标签来表达。
+      label: '反推',
       className: 'bg-emerald-100 dark:bg-emerald-500/20 text-emerald-700 dark:text-emerald-300',
     },
     edited: {
