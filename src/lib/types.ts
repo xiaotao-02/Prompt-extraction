@@ -283,6 +283,31 @@ export type RuntimeMessage =
        */
       type: 'CTX_MENU_PREP';
       payload: { imageUrl: string };
+    }
+  | {
+      /**
+       * 由 popup（小列表）/ options 提示词库发起，请求 background 把一条
+       * 历史记录"召回"到当前活跃的普通网页 tab 的浮动面板里继续编辑。
+       *
+       * background 收到后会：
+       *   1. 找一个能注入 content script 的普通网页 tab（http/https/file 等）
+       *   2. 激活该 tab + 聚焦其 window
+       *   3. 向该 tab 转发 PANEL_FROM_HISTORY，由 content script 渲染面板
+       *
+       * 响应：{ ok: true, tabId } 或 { ok: false, error }。前端用于
+       * 决定要不要关 popup / 弹错误提示。
+       */
+      type: 'OPEN_IN_PANEL';
+      payload: { historyId: string };
+    }
+  | {
+      /**
+       * background 转发给 content script，要求把指定 history 渲染到浮动面板。
+       * content script 从 storage 读取后直接进入 success 态（带 prompt /
+       * 版本 / provider 等），用户可立即编辑、AI 调整、恢复历史版本。
+       */
+      type: 'PANEL_FROM_HISTORY';
+      payload: { historyId: string };
     };
 
 export interface RefineResponseOk {

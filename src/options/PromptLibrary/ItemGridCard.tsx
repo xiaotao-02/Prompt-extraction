@@ -6,6 +6,7 @@ import {
   Pencil,
   ChevronUp,
   Trash2,
+  PanelTopOpen,
 } from 'lucide-react';
 import type { HistoryItem } from '@/lib/types';
 import { formatTime } from '../_shared/time';
@@ -24,6 +25,7 @@ export function ItemGridCard({
   onTogglePin,
   onExpand,
   onDelete,
+  onRecallToPanel,
 }: {
   item: HistoryItem;
   checked: boolean;
@@ -34,6 +36,8 @@ export function ItemGridCard({
   onTogglePin: () => void;
   onExpand: () => void;
   onDelete: () => void;
+  /** 把这条记录召回到当前活跃网页 tab 的浮动面板里继续编辑 */
+  onRecallToPanel?: () => void;
 }) {
   const versionCount = item.versions?.length || 0;
   // 网格卡片整卡可点击：和列表行一致，避免划选文本时误触发
@@ -103,6 +107,15 @@ export function ItemGridCard({
           <IconBtn onClick={onTogglePin} title={item.pinned ? '取消置顶' : '置顶'} active={item.pinned} activeColor="amber">
             <Pin className="w-3.5 h-3.5" />
           </IconBtn>
+          {onRecallToPanel && (
+            <IconBtn
+              onClick={onRecallToPanel}
+              title="召回到当前网页的悬浮编辑窗，继续手动调整 / AI 调整"
+              hoverColor="indigo"
+            >
+              <PanelTopOpen className="w-3.5 h-3.5" />
+            </IconBtn>
+          )}
           <IconBtn onClick={onDelete} title="删除" hoverColor="rose">
             <Trash2 className="w-3.5 h-3.5" />
           </IconBtn>

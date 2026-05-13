@@ -1,4 +1,5 @@
 import type { RuntimeMessage } from '@/lib/types';
+import { getHistoryItem } from '@/lib/storage';
 import { renderPanel, updatePanel, closePanel, applyHistoryReady } from './panel';
 
 function isContextValid(): boolean {
@@ -79,6 +80,39 @@ try {
         message.payload.versions,
         message.payload.prompt
       );
+      return false;
+    }
+    if (message.type === 'PANEL_FROM_HISTORY') {
+      // 从 popup / 提示词库「召回到悬浮窗」走的入口：直接读 storage 渲染成 success 态。
+      // 不复用 EXTRACT_PENDING/RESULT 那条流式链路，避免把"提取中→提取完成"的
+      // loading 文案再放一遍；这条记录早就提取完成、版本都齐了，进面板就该是
+      // 可编辑的成品状态。
+      const { historyId } = message.payload;
+      void (async () => {
+        try {
+          const item = await getHistoryItem(historyId);
+          if (!item) {
+            console.warn('[PromptExtracto] PANEL_FROM_HISTORY: history not found', historyId);
+            return;
+          }
+          renderPanel({
+            requestId: item.id,
+            imageUrl: item.thumbnail || item.imageUrl,
+            status: 'success',
+            prompt: item.prompt,
+            // draft 留空 → updateDirtyChrome 会把保存/撤销按钮置灰；不是 dirty。
+            // 用户开始编辑时由 editor 的 input 事件接管 draft 的写入。
+            draft: item.prompt,
+            provider: item.provider,
+            model: item.model,
+            versions: item.versions,
+            // 召回时不预先展开版本侧栏；如果用户想看，左下角"历史版本"按钮一键即可。
+            versionsOpen: false,
+          });
+        } catch (err) {
+          console.warn('[PromptExtracto] PANEL_FROM_HISTORY failed', err);
+        }
+      })();
       return false;
     }
     if (message.type === 'REFINE_PROGRESS') {

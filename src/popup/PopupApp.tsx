@@ -13,6 +13,7 @@ import {
   RotateCcw,
   Wand2,
   Loader2,
+  PanelTopOpen,
 } from 'lucide-react';
 import {
   appendPromptVersion,
@@ -154,6 +155,32 @@ export default function PopupApp() {
     chrome.runtime.openOptionsPage();
   };
 
+  // 「在悬浮窗中编辑」：把这一条记录召回到当前活跃网页 tab 的浮动面板里继续编辑。
+  // background 负责挑 tab + 激活 + 转发；这里只关心 sendResponse 成败：
+  //   - ok=true → 用户视线已经被切到目标 tab，popup 自己再留着没意义，直接关掉
+  //   - ok=false → 多半是因为 active tab 是 chrome:// / 设置页 / 新标签页等
+  //     不能注入的内部页，把后台返回的 error 提示出来让用户先去打开普通网页
+  const [recallTip, setRecallTip] = useState<string | null>(null);
+  const recallToPanel = (item: HistoryItem) => {
+    setRecallTip(null);
+    chrome.runtime.sendMessage(
+      { type: 'OPEN_IN_PANEL', payload: { historyId: item.id } },
+      (resp: { ok: boolean; error?: string } | undefined) => {
+        if (chrome.runtime.lastError || !resp) {
+          setRecallTip(chrome.runtime.lastError?.message || '后台未响应');
+          return;
+        }
+        if (!resp.ok) {
+          setRecallTip(resp.error || '召回失败');
+          return;
+        }
+        // 关 popup 之前留 60ms 让 tab 激活动画完成，避免在某些 Chrome 版本上
+        // popup 关得太快导致 windows.update(focused) 还没生效。
+        setTimeout(() => window.close(), 60);
+      }
+    );
+  };
+
   return (
     <div className="flex flex-col max-h-[600px]">
       <header className="flex items-center justify-between px-4 py-3 border-b border-zinc-200 dark:border-zinc-800">
@@ -187,6 +214,19 @@ export default function PopupApp() {
           </button>
         </div>
       </header>
+
+      {recallTip && (
+        <div className="px-4 py-2 text-[11px] leading-snug bg-rose-50 dark:bg-rose-500/15 text-rose-700 dark:text-rose-300 border-b border-rose-200/60 dark:border-rose-500/30 flex items-start gap-2">
+          <X className="w-3 h-3 mt-0.5 flex-none" />
+          <span className="flex-1">{recallTip}</span>
+          <button
+            onClick={() => setRecallTip(null)}
+            className="p-0.5 rounded hover:bg-rose-100 dark:hover:bg-rose-500/20"
+          >
+            <X className="w-3 h-3" />
+          </button>
+        </div>
+      )}
 
       <div className="flex-1 overflow-y-auto">
         {list.length === 0 ? (
@@ -285,6 +325,13 @@ export default function PopupApp() {
                               }`}
                             >
                               <Wand2 className="w-3 h-3" /> AI 调整
+                            </button>
+                            <button
+                              onClick={() => recallToPanel(item)}
+                              className="inline-flex items-center gap-1 px-2 py-1 rounded-md hover:bg-indigo-50 dark:hover:bg-indigo-500/10 text-indigo-600 dark:text-indigo-300"
+                              title="把这条提示词召回到当前网页的悬浮编辑窗，继续手动调整 / AI 调整"
+                            >
+                              <PanelTopOpen className="w-3 h-3" /> 悬浮窗编辑
                             </button>
                             {versionCount > 1 && (
                               <button

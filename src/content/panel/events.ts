@@ -129,8 +129,23 @@ function bindHeaderDrag(root: HTMLElement): void {
       window.removeEventListener('mouseup', onUp);
       root.classList.remove('dragging');
       const r = root.getBoundingClientRect();
-      // 只 commit 位置；尺寸不主动写 —— 拖拽 header 不应固化用户没动过的尺寸。
-      updateGeometry({ left: r.left, top: r.top });
+      // 默认只 commit 位置，不动尺寸 —— 拖拽 header 不应固化用户没动过的尺寸。
+      const patch: { left: number; top: number; width?: number; height?: number } = {
+        left: r.left,
+        top: r.top,
+      };
+      // 防御性接管：如果 panel 上有 inline width/height（一般是 Chrome 原生 resize
+      // 写进去的）但 panelGeometry 还没记录到，把当前实际尺寸一并固化进 geometry。
+      // 否则下一次 updateGeometry → applyGeometryToPanel 会因为 panelGeometry.width
+      // 还是 undefined 而 removeProperty('width')，把用户拖出来的尺寸抹回 CSS 默认值
+      // —— 这就是"拖动窗口松手后窗口被重置大小"的根因之一。
+      if (root.style.width && panelGeometry?.width === undefined) {
+        patch.width = Math.round(r.width);
+      }
+      if (root.style.height && panelGeometry?.height === undefined) {
+        patch.height = Math.round(r.height);
+      }
+      updateGeometry(patch);
     };
     window.addEventListener('mousemove', onMove);
     window.addEventListener('mouseup', onUp);
@@ -154,15 +169,26 @@ function ensureGlobalResizeListeners(): void {
   if (globalResizeListenersInstalled) return;
   globalResizeListenersInstalled = true;
 
-  // mousedown 落在右下角约 18x18 的 resize 拉手区域、且 target 就是 panel
-  // 本身（不是子元素）时，判定为开始调整尺寸。这两个条件一起看才稳：
-  //   - 仅看 target===panel 不够：右下角 actions 行的"复制"按钮 target 是它自己
-  //   - 仅看坐标不够：actions 行的最右按钮 X 也接近 rect.right
+  // mousedown 落在 panel 右下角约 18x18 的 resize 拉手区域时，判定为开始
+  // 调整尺寸。这里**不能**再加 `e.target === panel` 限制 —— 因为 .body / .panel-row
+  // 在 success 状态下铺满 panel header 以下的整片区域，resize 拉手的视觉位置
+  // 实际是落在 .body（或它的子元素）上面，e.target 几乎永远不会是 panel 自身。
+  // 如果加这个限制，结果就是：Chrome 视觉上完成了 resize，但 ResizeObserver
+  // 因为 userResizingPanel 还是 false 直接 bail，panelGeometry.width/height
+  // 永远拿不到新尺寸 → 用户随后任何会触发 applyGeometryToPanel 的动作
+  // （拖动 header、切换状态等）都会把 inline width/height 抹掉、窗口"还原大小"。
+  //
+  // 只看坐标也是安全的：18x18 角是 Chrome 原生 resize 拉手专属区域，actions
+  // 行最右侧的按钮（"复制"）X 接近 rect.right，但 Y 在 rect.bottom - 16~50 之间，
+  // 进不了 y >= rect.bottom - 18 的范围。
   window.addEventListener('mousedown', (e) => {
     if (!panel) return;
-    if (e.target !== panel) return;
     const rect = panel.getBoundingClientRect();
-    const NEAR = 18;
+    // NEAR 控制 resize 拉手判定半径。Chrome 的 resize 拉手实际只有 7~10px，
+    // 给一点冗余取 14；再大就可能误判 .actions 行最右下角按钮的边缘像素。
+    // .body 的 padding-bottom = 16，所以按钮底端最低在 rect.bottom - 16，
+    // 用 14 刚好避开。
+    const NEAR = 14;
     if (
       e.clientX >= rect.right - NEAR &&
       e.clientX <= rect.right + 4 &&
@@ -434,9 +460,11 @@ export function bindEvents(root: HTMLElement): void {
         if (refineInput) {
           if (!opening) {
             refineInput.value = '';
-            // 关闭时同步清掉视觉残留：错误提示 / 进度块 / 流式预览
+            // 关闭时同步清掉视觉残留：错误提示 / 进度块。
+            // 注意：流式回复现在直接刷到主编辑器（不再有副 .stream-preview 节点），
+            // 由 refine 成功 / 失败的 setCurrentState + renderPanel 自然还原。
             slot
-              ?.querySelectorAll('.refine-error, .refine-progress, .stream-preview')
+              ?.querySelectorAll('.refine-error, .refine-progress')
               .forEach((n) => n.remove());
           } else {
             // 打开时把当前 state 中的 instruction 回填，并自动聚焦

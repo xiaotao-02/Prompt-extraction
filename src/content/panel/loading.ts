@@ -190,9 +190,13 @@ export function stopRefineTicker(): void {
 
 /**
  * refine 阶段下的"轻量刷新"：不替换面板节点，只改进度条宽度、hint 文案、
- * elapsed 计时和流式预览 textarea。和 applyLoadingPatch 是两条独立路径，
- * 因为 refine 发生在 success 状态而不是 loading 状态，复用同一组 data-role
- * 选择器会和成功页的 editor textarea 冲突。
+ * elapsed 计时，**并把流式累计的 partial 直接写进主编辑器 textarea**（不再
+ * 渲染单独的副预览框）。这样用户视线无需在「主输入框 / 副预览框」之间来回切，
+ * 体验上更接近 ChatGPT 那种「就地刷新」的感觉。
+ *
+ * 注意：写入主 editor 时不会触发 input 事件（直接赋值 .value），所以 events
+ * 层的 input handler 不会把 partial 误塞进 currentState.draft；refine 完成
+ * 后由 renderPanel 把 editor 恢复到 readonly=false + value=resp.prompt。
  */
 export function applyRefinePatch(state: PanelState): void {
   if (!panel) return;
@@ -210,25 +214,14 @@ export function applyRefinePatch(state: PanelState): void {
     elapsedEl.textContent = formatElapsed(Date.now() - state.refineStartedAt);
   }
 
-  const previewBox = panel.querySelector<HTMLElement>('[data-role="refine-stream-preview"]');
-  if (previewBox) {
-    if (hasPartial) {
-      previewBox.classList.remove('hidden');
-      let ta = previewBox.querySelector<HTMLTextAreaElement>('textarea');
-      if (!ta) {
-        ta = document.createElement('textarea');
-        ta.className = 'prompt-text streaming refine-streaming';
-        ta.setAttribute('readonly', 'true');
-        ta.setAttribute('spellcheck', 'false');
-        previewBox.appendChild(ta);
-      }
+  if (hasPartial) {
+    const editor = panel.querySelector<HTMLTextAreaElement>('[data-role="editor"]');
+    if (editor) {
+      // 用户没主动滚动时跟随到底部；如果用户向上看历史内容，保留滚动位置。
       const atBottom =
-        Math.abs(ta.scrollHeight - ta.clientHeight - ta.scrollTop) < 8;
-      ta.value = state.refinePartial || '';
-      if (atBottom) ta.scrollTop = ta.scrollHeight;
-    } else {
-      previewBox.classList.add('hidden');
-      previewBox.innerHTML = '';
+        Math.abs(editor.scrollHeight - editor.clientHeight - editor.scrollTop) < 8;
+      editor.value = state.refinePartial || '';
+      if (atBottom) editor.scrollTop = editor.scrollHeight;
     }
   }
 }

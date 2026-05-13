@@ -180,6 +180,45 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     sendResponse({ ok: true });
     return true;
   }
+  if (message?.type === 'OPEN_IN_PANEL') {
+    const { historyId } = (message.payload || {}) as { historyId?: string };
+    if (!historyId) {
+      sendResponse({ ok: false, error: '缺少 historyId' });
+      return true;
+    }
+    void (async () => {
+      try {
+        const target = await pickPanelTargetTab();
+        if (!target?.id) {
+          sendResponse({
+            ok: false,
+            error: '未找到可注入悬浮窗的网页标签页，请先打开任意普通网页（http/https/file）',
+          });
+          return;
+        }
+        // 把目标 tab 激活并聚焦其窗口，确保用户的视线落到悬浮窗即将出现的那张页面。
+        // 失败（比如 tab 在用户点击和我们 update 之间被关掉了）也不致命，下面 postToTab
+        // 会再 catch 一次，最终通过 sendResponse 把错误反馈给前端。
+        try {
+          await chrome.tabs.update(target.id, { active: true });
+          if (target.windowId != null) {
+            await chrome.windows.update(target.windowId, { focused: true });
+          }
+        } catch {
+          /* ignore: tab/window 可能瞬时不可用 */
+        }
+        postToTab(target.id, {
+          type: 'PANEL_FROM_HISTORY',
+          payload: { historyId },
+        });
+        sendResponse({ ok: true, tabId: target.id, windowId: target.windowId });
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        sendResponse({ ok: false, error: msg });
+      }
+    })();
+    return true;
+  }
   if (message?.type === 'EXTRACT_PROMPT') {
     const { imageUrl, pageUrl, pageTitle, requestId } = message.payload || {};
     const tabId = sender.tab?.id;
@@ -458,6 +497,53 @@ function postToTab(tabId: number, message: RuntimeMessage): void {
     });
   } catch (err) {
     console.warn('[PromptExtracto] postToTab threw synchronously', err);
+  }
+}
+
+/**
+ * 给「召回到悬浮窗」流程挑选一个能注入 content script 的目标 tab。
+ *
+ * 选择优先级：
+ *   1. 当前 active tab（如果是普通网页）—— popup 发起的最常见情况
+ *   2. 全部 tab 里按 lastAccessed 倒序找第一个普通网页 tab —— options 页
+ *      自己是 chrome-extension://，active tab 落在它身上无法注入，
+ *      此时找用户上一秒还在看的那张普通网页就是最自然的目标
+ *   3. 都没有 → 返回 null，让上层提示用户先打开一个普通网页
+ *
+ * "普通网页" = url 协议是 http(s)/file/ftp。明确排除 chrome:// /
+ * chrome-extension:// / edge:// / about: / view-source: / devtools://
+ * 等扩展无法注入的内部页。
+ */
+async function pickPanelTargetTab(): Promise<chrome.tabs.Tab | null> {
+  const isInjectable = (url?: string): boolean => {
+    if (!url) return false;
+    return /^(https?:|file:|ftp:)/.test(url);
+  };
+
+  try {
+    const [activeTab] = await chrome.tabs.query({
+      active: true,
+      lastFocusedWindow: true,
+    });
+    if (activeTab && isInjectable(activeTab.url)) return activeTab;
+  } catch {
+    /* ignore */
+  }
+
+  try {
+    const all = await chrome.tabs.query({});
+    const candidates = all
+      .filter((t) => isInjectable(t.url))
+      // chrome.tabs.Tab.lastAccessed 在 Chrome 121+ 上可用；旧版本上拿不到
+      // 字段时 fallback 到 0，让排序退化为"以查询返回顺序大致接近最近"。
+      .sort((a, b) => {
+        const la = (a as chrome.tabs.Tab & { lastAccessed?: number }).lastAccessed || 0;
+        const lb = (b as chrome.tabs.Tab & { lastAccessed?: number }).lastAccessed || 0;
+        return lb - la;
+      });
+    return candidates[0] || null;
+  } catch {
+    return null;
   }
 }
 

@@ -369,6 +369,28 @@ export default function PromptLibrary({ focusId, onConsumeFocus }: PromptLibrary
     showTip(true, `已复制 ${target.length} 条提示词`);
   };
 
+  // 「召回到悬浮窗」：把这条记录扔到当前活跃网页 tab 的浮动面板里继续编辑。
+  // 因为 options 自己就是一个 tab，用户在这里点的瞬间 active tab = options 页本身，
+  // 没法注入 content script。background 的 pickPanelTargetTab 会自动挑一个最近
+  // 访问过的"普通网页 tab"作为目标，并把那张 tab 切到前台 —— 这条链路用户视线
+  // 会从 options 切走，所以这里仅在失败时弹一条 actionTip，让用户知道为啥没召回。
+  const onRecallToPanel = (item: HistoryItem) => {
+    chrome.runtime.sendMessage(
+      { type: 'OPEN_IN_PANEL', payload: { historyId: item.id } },
+      (resp: { ok: boolean; error?: string } | undefined) => {
+        if (chrome.runtime.lastError || !resp) {
+          showTip(false, chrome.runtime.lastError?.message || '后台未响应');
+          return;
+        }
+        if (!resp.ok) {
+          showTip(false, resp.error || '召回失败');
+          return;
+        }
+        showTip(true, '已召回到悬浮窗');
+      }
+    );
+  };
+
   const runRefine = (item: HistoryItem) => {
     const instruction = refineInput.trim();
     if (!instruction) {
@@ -579,6 +601,7 @@ export default function PromptLibrary({ focusId, onConsumeFocus }: PromptLibrary
               onTogglePin={() => onTogglePin(item)}
               onExpand={() => onExpand(item.id)}
               onDelete={() => onDeleteItem(item)}
+              onRecallToPanel={() => onRecallToPanel(item)}
             />
           ))}
         </div>
@@ -610,6 +633,7 @@ export default function PromptLibrary({ focusId, onConsumeFocus }: PromptLibrary
                   onTogglePin={() => onTogglePin(item)}
                   onExpand={() => onExpand(item.id)}
                   onDelete={() => onDeleteItem(item)}
+                  onRecallToPanel={() => onRecallToPanel(item)}
                 />
                 {expanded && (
                   <ExpandedPanel

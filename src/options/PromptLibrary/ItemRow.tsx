@@ -9,6 +9,7 @@ import {
   ExternalLink,
   Trash2,
   StickyNote,
+  PanelTopOpen,
 } from 'lucide-react';
 import type { HistoryItem } from '@/lib/types';
 import { formatTime } from '../_shared/time';
@@ -26,6 +27,7 @@ export function ItemRow({
   onTogglePin,
   onExpand,
   onDelete,
+  onRecallToPanel,
 }: {
   item: HistoryItem;
   checked: boolean;
@@ -36,6 +38,8 @@ export function ItemRow({
   onTogglePin: () => void;
   onExpand: () => void;
   onDelete: () => void;
+  /** 把这条记录召回到当前活跃网页 tab 的浮动面板里继续编辑 */
+  onRecallToPanel?: () => void;
 }) {
   const versionCount = item.versions?.length || 0;
   // 让用户点击整行任意空白处都能 toggle 展开/收起；同时仍要支持划选 prompt 文本
@@ -177,6 +181,18 @@ export function ItemRow({
             >
               <ExternalLink className="w-3 h-3" /> 来源
             </a>
+          )}
+          {onRecallToPanel && (
+            <button
+              onClick={(e) => {
+                stop(e);
+                onRecallToPanel();
+              }}
+              className="inline-flex items-center gap-1 px-2 py-1 rounded-md hover:bg-indigo-50 dark:hover:bg-indigo-500/10 text-indigo-600 dark:text-indigo-300 transition"
+              title="把这条提示词召回到当前网页的悬浮编辑窗，继续手动调整 / AI 调整"
+            >
+              <PanelTopOpen className="w-3 h-3" /> 悬浮窗编辑
+            </button>
           )}
           <button
             onClick={(e) => {
