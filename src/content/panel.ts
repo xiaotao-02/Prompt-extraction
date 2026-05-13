@@ -46,7 +46,7 @@ function ensureHost(): { host: HTMLDivElement; shadow: ShadowRoot } {
   host = document.createElement('div');
   host.id = HOST_ID;
   host.style.cssText = `
-    position: fixed; right: 24px; bottom: 24px;
+    position: fixed; inset: 0;
     z-index: 2147483647; width: 0; height: 0;
     color-scheme: light dark;
   `;
@@ -605,31 +605,32 @@ const ICON_SPARK = `<svg viewBox="0 0 24 24" width="14" height="14" fill="none" 
 const STYLE = `
 :host, * { box-sizing: border-box; }
 .panel {
-  position: fixed; right: 24px; bottom: 24px;
-  width: 400px; max-width: calc(100vw - 32px);
+  position: fixed; top: 50%; left: 50%;
+  transform: translate(-50%, -50%);
+  width: min(720px, calc(100vw - 48px));
   max-height: calc(100vh - 48px);
   display: flex; flex-direction: column;
-  background: rgba(255,255,255,0.95);
-  backdrop-filter: blur(16px) saturate(140%);
-  -webkit-backdrop-filter: blur(16px) saturate(140%);
+  background: rgba(255,255,255,0.96);
+  backdrop-filter: blur(20px) saturate(140%);
+  -webkit-backdrop-filter: blur(20px) saturate(140%);
   color: #111;
   border: 1px solid rgba(0,0,0,0.08);
-  border-radius: 14px;
-  box-shadow: 0 20px 48px -12px rgba(0,0,0,0.25), 0 4px 12px rgba(0,0,0,0.08);
+  border-radius: 16px;
+  box-shadow: 0 32px 80px -16px rgba(0,0,0,0.35), 0 8px 24px rgba(0,0,0,0.12);
   font: 13px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
   overflow: hidden;
-  animation: slideIn .25s cubic-bezier(.2,.9,.3,1.2);
+  animation: panelIn .25s cubic-bezier(.2,.9,.3,1.2);
 }
 @media (prefers-color-scheme: dark) {
   .panel {
-    background: rgba(24,24,27,0.92);
+    background: rgba(24,24,27,0.94);
     color: #f4f4f5;
     border-color: rgba(255,255,255,0.08);
   }
 }
-@keyframes slideIn {
-  from { transform: translateY(12px); opacity: 0; }
-  to { transform: translateY(0); opacity: 1; }
+@keyframes panelIn {
+  from { transform: translate(-50%, calc(-50% + 12px)); opacity: 0; }
+  to { transform: translate(-50%, -50%); opacity: 1; }
 }
 .header {
   display: flex; align-items: center; justify-content: space-between;
@@ -667,22 +668,22 @@ const STYLE = `
 }
 
 .body {
-  padding: 12px; display: flex; flex-direction: column; gap: 10px;
+  padding: 16px; display: flex; flex-direction: column; gap: 12px;
   overflow-y: auto;
 }
 .thumb {
-  width: 100%; height: 120px; border-radius: 10px; overflow: hidden;
+  width: 100%; height: 220px; border-radius: 12px; overflow: hidden;
   background: rgba(0,0,0,0.04); display: flex; align-items: center; justify-content: center;
   flex: none;
 }
 .thumb img { width: 100%; height: 100%; object-fit: contain; }
 
 .prompt-text {
-  width: 100%; min-height: 110px; max-height: 240px; resize: vertical;
-  padding: 10px 12px; border-radius: 10px;
+  width: 100%; min-height: 180px; max-height: 360px; resize: vertical;
+  padding: 12px 14px; border-radius: 10px;
   border: 1px solid rgba(0,0,0,0.1);
   background: rgba(0,0,0,0.02);
-  color: inherit; font-size: 13px; line-height: 1.55;
+  color: inherit; font-size: 13px; line-height: 1.6;
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", sans-serif;
   outline: none;
   transition: border-color .15s, box-shadow .15s;
@@ -745,7 +746,7 @@ const STYLE = `
   .refine-head { color: #c4b5fd; }
 }
 .refine-input {
-  width: 100%; min-height: 64px; max-height: 180px; resize: vertical;
+  width: 100%; min-height: 80px; max-height: 220px; resize: vertical;
   padding: 8px 10px; border-radius: 8px;
   border: 1px solid rgba(99,102,241,0.25);
   background: rgba(255,255,255,0.7);
@@ -833,7 +834,7 @@ const STYLE = `
   border: 1px solid rgba(0,0,0,0.08);
   border-radius: 10px;
   background: rgba(0,0,0,0.02);
-  max-height: 240px;
+  max-height: 320px;
   overflow-y: auto;
 }
 @media (prefers-color-scheme: dark) {
