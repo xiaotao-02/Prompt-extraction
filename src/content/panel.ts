@@ -8,7 +8,7 @@ import {
   getHistoryItem,
   restorePromptVersion,
 } from '@/lib/storage';
-import type { PromptVersion, RefineResponse } from '@/lib/types';
+import type { ExtractStage, PromptVersion, RefineResponse } from '@/lib/types';
 
 interface PanelState {
   requestId: string;
@@ -32,6 +32,15 @@ interface PanelState {
   refineError?: string;
   /** AI 调整输入框的内容（不在每次按键重渲染，仅在重新渲染时回填） */
   refineInstruction?: string;
+  /**
+   * 反推进度阶段。loading 状态下用来切换"下载图片 / 调用模型 / 接收回复"
+   * 三段文案，success/error 时被清成 undefined。
+   */
+  stage?: ExtractStage;
+  /** 流式阶段累积到的提示词文本（loading 时实时显示）。 */
+  partial?: string;
+  /** loading 开始时间戳，用于 UI 上显示 "已用时 xx s"。 */
+  startedAt?: number;
 }
 
 const HOST_ID = '__image_prompt_extractor_host__';
@@ -40,6 +49,11 @@ let host: HTMLDivElement | null = null;
 let shadow: ShadowRoot | null = null;
 let panel: HTMLDivElement | null = null;
 let currentState: PanelState | null = null;
+/**
+ * loading 状态下每 200ms 跑一次的"已用时"刷新句柄。
+ * 只更新 DOM 文本节点，不重渲整片面板，以免抖动。
+ */
+let loadingTickHandle: number | null = null;
 
 function ensureHost(): { host: HTMLDivElement; shadow: ShadowRoot } {
   if (host && shadow) return { host, shadow };
@@ -67,24 +81,134 @@ export function renderPanel(state: PanelState): void {
   panel.innerHTML = panelHtml(state);
   shadow.appendChild(panel);
   bindEvents(panel);
+  manageLoadingTicker(state);
 }
 
 export function updatePanel(requestId: string, patch: Partial<PanelState>): void {
   if (!currentState || currentState.requestId !== requestId) return;
-  currentState = { ...currentState, ...patch } as PanelState;
+  const prev = currentState;
+  currentState = { ...prev, ...patch } as PanelState;
+
   // 当我们把 status 切到 success 时，触发一次版本同步
   if (patch.status === 'success') {
     void syncVersions(requestId);
+  }
+
+  // loading 阶段如果只是 stage / partial 增量更新，做"轻量刷新"：只改
+  // 阶段文案、进度条、流式 textarea，避免 200ms 一次的整面板重渲让
+  // 用户感觉抖。其他情况（status 切换 / error / success）走完整重渲。
+  const lightUpdate =
+    prev.status === 'loading' &&
+    currentState.status === 'loading' &&
+    patch.status === undefined &&
+    (patch.stage !== undefined || patch.partial !== undefined);
+
+  if (lightUpdate && panel) {
+    applyLoadingPatch(currentState);
+    manageLoadingTicker(currentState);
+    return;
   }
   renderPanel(currentState);
 }
 
 export function closePanel(): void {
+  stopLoadingTicker();
   if (panel) {
     panel.remove();
     panel = null;
   }
   currentState = null;
+}
+
+// 已用时计时：loading 中每 200ms 更新一次 .elapsed 文本节点。
+function manageLoadingTicker(state: PanelState): void {
+  if (state.status !== 'loading' || !state.startedAt) {
+    stopLoadingTicker();
+    return;
+  }
+  if (loadingTickHandle !== null) return;
+  loadingTickHandle = window.setInterval(() => {
+    if (!panel || !currentState || currentState.status !== 'loading') {
+      stopLoadingTicker();
+      return;
+    }
+    const el = panel.querySelector<HTMLElement>('[data-role="elapsed"]');
+    if (el && currentState.startedAt) {
+      el.textContent = formatElapsed(Date.now() - currentState.startedAt);
+    }
+  }, 200);
+}
+
+function stopLoadingTicker(): void {
+  if (loadingTickHandle !== null) {
+    window.clearInterval(loadingTickHandle);
+    loadingTickHandle = null;
+  }
+}
+
+function formatElapsed(ms: number): string {
+  const s = ms / 1000;
+  if (s < 10) return `${s.toFixed(1)}s`;
+  return `${Math.floor(s)}s`;
+}
+
+function stageLabel(_stage: ExtractStage | undefined): string {
+  // 标题统一显示"正在反推图片提示词…"，不再随阶段切换。
+  // 真正的阶段信息靠下方的进度条和底部 hint 表达。
+  return '正在反推图片提示词…';
+}
+
+/** loading 阶段下，进度条对应的「视觉百分比」。纯心理安抚，不代表真实进度。 */
+function stageProgress(stage: ExtractStage | undefined, hasPartial: boolean): number {
+  if (stage === 'fetching') return 0.18;
+  if (stage === 'streaming' || hasPartial) return 0.78;
+  if (stage === 'finalizing') return 0.95;
+  return 0.42; // calling
+}
+
+/**
+ * loading 状态下的"轻量刷新"：只改阶段文案、计时、进度条宽度、流式预览
+ * 的 textarea 内容，不替换 DOM 节点。
+ */
+function applyLoadingPatch(state: PanelState): void {
+  if (!panel) return;
+  const stageEl = panel.querySelector<HTMLElement>('[data-role="stage-label"]');
+  if (stageEl) stageEl.textContent = stageLabel(state.stage);
+
+  const hasPartial = !!state.partial;
+  const barEl = panel.querySelector<HTMLElement>('[data-role="bar-fill"]');
+  if (barEl) {
+    barEl.style.width = `${Math.round(stageProgress(state.stage, hasPartial) * 100)}%`;
+  }
+
+  const elapsedEl = panel.querySelector<HTMLElement>('[data-role="elapsed"]');
+  if (elapsedEl && state.startedAt) {
+    elapsedEl.textContent = formatElapsed(Date.now() - state.startedAt);
+  }
+
+  // 流式预览：如果还没有 partial，则隐藏整块；有了就 lazy 渲染一个 textarea
+  const previewBox = panel.querySelector<HTMLElement>('[data-role="stream-preview"]');
+  if (previewBox) {
+    if (hasPartial) {
+      previewBox.classList.remove('hidden');
+      let ta = previewBox.querySelector<HTMLTextAreaElement>('textarea');
+      if (!ta) {
+        ta = document.createElement('textarea');
+        ta.className = 'prompt-text streaming';
+        ta.setAttribute('readonly', 'true');
+        ta.setAttribute('spellcheck', 'false');
+        previewBox.appendChild(ta);
+      }
+      // 用户没主动滚动时自动跟随；否则保持滚动位置
+      const atBottom =
+        Math.abs(ta.scrollHeight - ta.clientHeight - ta.scrollTop) < 8;
+      ta.value = state.partial || '';
+      if (atBottom) ta.scrollTop = ta.scrollHeight;
+    } else {
+      previewBox.classList.add('hidden');
+      previewBox.innerHTML = '';
+    }
+  }
 }
 
 async function syncVersions(requestId: string): Promise<void> {
@@ -108,19 +232,36 @@ async function syncVersions(requestId: string): Promise<void> {
 function panelHtml(state: PanelState): string {
   const safeImg = escapeAttr(state.imageUrl);
   if (state.status === 'loading') {
+    const hasPartial = !!state.partial;
+    const pct = Math.round(stageProgress(state.stage, hasPartial) * 100);
+    const elapsed =
+      state.startedAt != null ? formatElapsed(Date.now() - state.startedAt) : '0.0s';
+    const previewHtml = hasPartial
+      ? `<textarea class="prompt-text streaming" readonly spellcheck="false">${escapeText(
+          state.partial || ''
+        )}</textarea>`
+      : '';
     return `
       <div class="header">
         <div class="title">
           <span class="dot loading"></span>
-          <span>正在反推图片提示词…</span>
+          <span data-role="stage-label">${escapeText(stageLabel(state.stage))}</span>
         </div>
         <button class="icon-btn" data-action="close" title="关闭">${ICON_CLOSE}</button>
       </div>
       <div class="body">
         <div class="thumb"><img src="${safeImg}" alt="" /></div>
         <div class="loader-wrap">
-          <div class="bar"><span></span></div>
-          <div class="hint">调用大模型中，第一次可能略慢…</div>
+          <div class="bar progress">
+            <span data-role="bar-fill" style="width:${pct}%"></span>
+          </div>
+          <div class="hint hint-row">
+            <span>调用大模型中，第一次可能略慢…</span>
+            <span class="elapsed" data-role="elapsed">${escapeText(elapsed)}</span>
+          </div>
+        </div>
+        <div class="stream-preview ${hasPartial ? '' : 'hidden'}" data-role="stream-preview">
+          ${previewHtml}
         </div>
       </div>
     `;
@@ -360,6 +501,9 @@ function bindEvents(root: HTMLElement): void {
           draft: undefined,
           versions: undefined,
           versionsOpen: false,
+          stage: 'calling',
+          partial: undefined,
+          startedAt: Date.now(),
         });
         chrome.runtime.sendMessage({
           type: 'EXTRACT_PROMPT',
@@ -679,7 +823,7 @@ const STYLE = `
 .thumb img { width: 100%; height: 100%; object-fit: contain; }
 
 .prompt-text {
-  width: 100%; min-height: 180px; max-height: 360px; resize: vertical;
+  width: 100%; min-height: 240px; max-height: 480px; resize: vertical;
   padding: 12px 14px; border-radius: 10px;
   border: 1px solid rgba(0,0,0,0.1);
   background: rgba(0,0,0,0.02);
@@ -929,10 +1073,14 @@ const STYLE = `
 
 .loader-wrap { padding: 8px 0; }
 .bar {
-  position: relative; width: 100%; height: 4px; border-radius: 4px;
+  position: relative; width: 100%; height: 6px; border-radius: 4px;
   overflow: hidden; background: rgba(0,0,0,0.06);
 }
-.bar span {
+@media (prefers-color-scheme: dark) {
+  .bar { background: rgba(255,255,255,0.08); }
+}
+/* 旧的"无方向滑块"：仅在没设 progress 时 fallback，目前不再使用。 */
+.bar:not(.progress) span {
   position: absolute; left: -40%; top: 0; width: 40%; height: 100%;
   background: linear-gradient(90deg,#6366f1,#8b5cf6);
   animation: slide 1.4s infinite;
@@ -941,5 +1089,63 @@ const STYLE = `
   0% { left: -40%; }
   100% { left: 100%; }
 }
+/* 阶段映射出的"确定性进度条"。宽度由 JS 控制，只用 transition 平滑。 */
+.bar.progress { background: rgba(99,102,241,0.10); }
+.bar.progress span {
+  display: block; height: 100%;
+  background: linear-gradient(90deg,#6366f1,#8b5cf6);
+  width: 0%;
+  transition: width .35s cubic-bezier(.4,.0,.2,1);
+  position: relative;
+}
+/* 在确定性进度条上叠一层"流动光"，让用户知道还在持续工作中。 */
+.bar.progress span::after {
+  content: '';
+  position: absolute; top: 0; right: 0; bottom: 0;
+  width: 40px;
+  background: linear-gradient(90deg, rgba(255,255,255,0) 0%, rgba(255,255,255,0.5) 100%);
+  filter: blur(2px);
+  animation: shimmer 1.6s ease-in-out infinite;
+}
+@keyframes shimmer {
+  0%, 100% { opacity: 0.25; transform: translateX(0); }
+  50% { opacity: 0.85; transform: translateX(-6px); }
+}
+
 .hint { margin-top: 8px; font-size: 11px; opacity: 0.6; }
+.hint-row {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+}
+.hint-row .elapsed {
+  font-variant-numeric: tabular-nums;
+  opacity: 0.8;
+  font-weight: 500;
+  color: #4f46e5;
+}
+@media (prefers-color-scheme: dark) {
+  .hint-row .elapsed { color: #c4b5fd; }
+}
+
+.stream-preview {
+  display: flex;
+  flex-direction: column;
+  animation: fadeIn .2s ease-out;
+}
+.stream-preview.hidden { display: none; }
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(-4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.prompt-text.streaming {
+  min-height: 220px; max-height: 460px;
+  background: linear-gradient(180deg, rgba(99,102,241,0.04), rgba(139,92,246,0.03));
+  border-color: rgba(99,102,241,0.25);
+  cursor: default;
+}
+@media (prefers-color-scheme: dark) {
+  .prompt-text.streaming {
+    background: linear-gradient(180deg, rgba(139,92,246,0.08), rgba(99,102,241,0.04));
+    border-color: rgba(139,92,246,0.30);
+  }
+}
 `;
