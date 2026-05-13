@@ -1,0 +1,68 @@
+/**
+ * api 内部共享的类型与回调签名。
+ *
+ * 这些类型同时被 extract / refine / provider 各实现使用，
+ * 抽到独立文件避免循环依赖。
+ */
+import type { AppSettings, ExtractStage, OutputStyle, ProviderId } from '../types';
+import type { FetchedImage } from '../image';
+
+/**
+ * 反推过程中的进度事件。stage 表示当前阶段，partial 表示流式阶段已经
+ * 累积到的提示词文本（每一条都是"到目前为止的全文"，不是 delta）。
+ */
+export interface ExtractProgressEvent {
+  stage: ExtractStage;
+  partial?: string;
+}
+
+export type ExtractProgressFn = (ev: ExtractProgressEvent) => void;
+
+export interface ExtractParams {
+  imageUrl: string;
+  settings: AppSettings;
+  /**
+   * 调用方提前下载/规整好的图片。如果传了，extractPrompt 会跳过内部的
+   * {@link import('../image').fetchImageAsBase64}，直接用这份预处理结果——用来在
+   * background 里把图片下载和 settings 读取、content script 注入并行起来，节
+   * 省一次串行等待。
+   */
+  prefetched?: FetchedImage;
+  /**
+   * 反推进度回调。流式阶段会被节流到约 80ms 一次，避免给 content script
+   * 发太多 chrome.tabs.sendMessage。回调里抛错不影响主流程。
+   */
+  onProgress?: ExtractProgressFn;
+}
+
+export interface ExtractResult {
+  prompt: string;
+  provider: ProviderId;
+  model: string;
+  style: OutputStyle;
+}
+
+export interface RefineParams {
+  settings: AppSettings;
+  current: string;
+  instruction: string;
+}
+
+export interface RefineResult {
+  prompt: string;
+  provider: ProviderId;
+  model: string;
+}
+
+/** 安全调用 onProgress：回调里抛错不影响主流程。 */
+export function safeProgress(
+  onProgress: ExtractProgressFn | undefined,
+  ev: ExtractProgressEvent
+): void {
+  if (!onProgress) return;
+  try {
+    onProgress(ev);
+  } catch (err) {
+    console.debug('[PromptExtracto] onProgress threw', err);
+  }
+}
