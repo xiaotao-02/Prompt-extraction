@@ -6,7 +6,7 @@ import { getStrategy } from '../strategies';
 import { callOpenAICompatibleText } from './providers/openai';
 import { callAnthropicText } from './providers/anthropic';
 import { callGeminiText } from './providers/gemini';
-import type { RefineParams, RefineResult } from './types';
+import { safeRefineProgress, type RefineParams, type RefineResult } from './types';
 
 const REFINE_SYSTEM_PROMPT = (styleHint: string) =>
   `你是 AI 绘图提示词的资深编辑助手。用户会给你一段已有的提示词，以及他希望对其进行的调整。请输出修改后的【完整】提示词。规则：
@@ -21,7 +21,7 @@ const REFINE_USER_PROMPT = (current: string, instruction: string) =>
   `【当前提示词】\n${current}\n\n【修改要求】\n${instruction}`;
 
 export async function refinePrompt(params: RefineParams): Promise<RefineResult> {
-  const { settings, current, instruction } = params;
+  const { settings, current, instruction, onProgress } = params;
   const providerId = settings.activeProvider;
   const cfg = settings.providers[providerId];
   if (!cfg.apiKey) {
@@ -34,13 +34,17 @@ export async function refinePrompt(params: RefineParams): Promise<RefineResult> 
   const system = REFINE_SYSTEM_PROMPT(styleHint);
   const user = REFINE_USER_PROMPT(current, instruction);
 
+  // 在请求真正发出之前先吼一声 'calling'，让面板进度条立刻动起来。
+  // provider 拿到首 token 后会自己再 emit 'streaming'，无缝衔接。
+  safeRefineProgress(onProgress, { stage: 'calling' });
+
   let prompt: string;
   switch (providerId) {
     case 'anthropic':
-      prompt = await callAnthropicText(cfg, system, user);
+      prompt = await callAnthropicText(cfg, system, user, onProgress);
       break;
     case 'gemini':
-      prompt = await callGeminiText(cfg, system, user);
+      prompt = await callGeminiText(cfg, system, user, onProgress);
       break;
     case 'openai':
     case 'zhipu':
@@ -48,7 +52,7 @@ export async function refinePrompt(params: RefineParams): Promise<RefineResult> 
     case 'siliconflow':
     case 'custom':
     default:
-      prompt = await callOpenAICompatibleText(cfg, system, user);
+      prompt = await callOpenAICompatibleText(cfg, system, user, onProgress);
       break;
   }
 

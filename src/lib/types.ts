@@ -18,22 +18,26 @@ export type OutputStyle = 'natural-zh' | 'natural-en' | 'sd-tags' | 'midjourney'
  *   - sampling       : { temperature, maxTokens } 一对采样参数的版本号
  *   - customJoin     : 用户自定义模板拼接位置的版本号
  *
- * 具体的版本注册表与策略 → 组件版本的映射在 {@link ./strategies.ts}。这里只保留
- * id 类型，避免 types.ts 反向依赖 strategies.ts。
+ * **真正的字面量定义 = `keyof typeof STRATEGIES_INTERNAL`（在 strategies-meta.ts）**。
+ * 这里只是把它 type-only re-export 给 types.ts 的消费方，让 AppSettings、运行时
+ * 消息协议这些纯类型场景照旧能 import {@link StrategyId}，又不会因此把 strategies.ts
+ * 的运行时代码（含 STYLE_PROMPT_SETS 等几 KB 字符串）拉进 bundle。
  *
- *   - 'classic'  : UI 显示为 "v0.1.5 策略"。全部组件取 v0.1.0（温度 0.4 / 上限 1024 /
- *                  custom 尾部追加 / 经典指令）。id 保持英文 'classic' 是为了不让
- *                  老用户 settings 里持久化的字段因重命名而失效。
- *   - 'v016'     : UI 显示为 "v0.1.6 策略"。全部组件也取 v0.1.0 —— 因为 v0.1.1~v0.1.6
- *                  这 6 个版本里 stylePrompts/temperature/maxTokens/customPosition 一字
- *                  未改，v0.1.6 那套行为本质就是 v0.1.0 那组组件版本。保留独立档位是
- *                  为了给习惯按版本号回滚的用户一个显式入口，并方便后续在不动
- *                  classic 的前提下把它换成新组件版本单独迭代。
+ * 由于这是 `export type ... from`，编译产物里完全消失，不存在循环依赖问题：
+ * strategies.ts 仍然可以 `import type { OutputStyle } from './types'`。
  *
- * 历史上还存在过 'fidelity' (v0.1.7 高保真档)，已下线；老 settings 里如果还存着这个
- * 值，会在 getStrategy 里安全回退到 DEFAULT_STRATEGY_ID。
+ * **加 / 删一档策略只在 strategies-meta.ts 里改 STRATEGIES_INTERNAL 一处**，这个
+ * 类型自动跟随，不用手动维护字面量联合（避免出现"types 里写了 'v030' 但 STRATEGIES
+ * 漏加"或反之的不一致）。
+ *
+ * 历史上还存在过 'fidelity' (v0.1.7 高保真档)，已下线；老 settings 里如果还存着
+ * 这个值，会在 getStrategy 里安全回退到 DEFAULT_STRATEGY_ID。
  */
-export type StrategyId = 'classic' | 'v016' | 'v010' | 'v022';
+// 同时本地绑定（types.ts 内部要在 AppSettings / 消息协议里直接当类型用）和
+// 对外 re-export。`export type { ... } from` 本身只做"转发"，不会把 StrategyId
+// 作为本地标识符可见，所以必须 import-then-export 两步走。
+import type { StrategyId } from './strategies-meta';
+export type { StrategyId };
 
 export interface ProviderConfig {
   id: ProviderId;
@@ -99,6 +103,15 @@ export interface AppSettings {
  *   finalizing → 流式结束，正在保存历史/收尾
  */
 export type ExtractStage = 'fetching' | 'calling' | 'streaming' | 'finalizing';
+
+/**
+ * AI 调整（refine）流程的阶段。比反推少了 fetching / finalizing：
+ *   calling    → 已把指令发给大模型，等待首 token
+ *   streaming  → 模型已经开始吐字，正在流式接收
+ *
+ * UI 上 refine 进度条只用 calling / streaming 两档，配文案 "正在调用大模型 / 正在接收模型回复"。
+ */
+export type RefineStage = 'calling' | 'streaming';
 
 export type PromptVersionSource = 'extracted' | 'edited' | 'restored' | 'refined';
 
@@ -207,11 +220,53 @@ export type RuntimeMessage =
       };
     }
   | {
+      /**
+       * 历史落库完成通知。
+       *
+       * 背景：runExtraction 为了让面板尽快看到结果，会先发 EXTRACT_RESULT，
+       * 然后异步走 persistHistory。但 addHistory 对「同一张图」会自动合并到
+       * 旧记录上 → storage 里真实存在的 id 不一定等于 content 此刻持有的
+       * `requestId`。如果 content 用过期的 requestId 去 save / restore /
+       * syncVersions，会因 findIndex<0 静默失败。
+       *
+       * 因此 background 在落库结束后通过这条消息把「真实 id + 当前版本数组」
+       * 喂回 content，让浮窗把 currentState.requestId 切换到真实 id，并立刻
+       * 填充 versions（不再需要 content 自己读 storage 排查 race）。
+       */
+      type: 'HISTORY_READY';
+      payload: {
+        /** content 当前 panel 持有的 requestId（用于路由到对应 panel） */
+        requestId: string;
+        /** storage 里实际落地的 HistoryItem id —— 同图合并时会和 requestId 不同 */
+        actualId: string;
+        /** 最新版本数组（含本次反推产生的版本） */
+        versions: PromptVersion[];
+        /** 真实落库后的当前 prompt，作为防御性兜底 */
+        prompt: string;
+      };
+    }
+  | {
       type: 'REFINE_PROMPT';
       payload: {
         historyId: string;
         instruction: string;
         current: string;
+      };
+    }
+  | {
+      /**
+       * AI 调整流式进度。仅当请求来源是 content script 浮动面板时，
+       * 后台会回放给该 tab；popup / options 页面发起的 refine 不会收到，
+       * 它们目前仍按"等结果就行"的非流式模式工作。
+       */
+      type: 'REFINE_PROGRESS';
+      payload: {
+        /** 对应 panel 的 requestId / 历史记录 id（与 REFINE_PROMPT 的 historyId 一致） */
+        historyId: string;
+        /** 当前 refine 阶段；和 partial 至少有一个会带上 */
+        stage?: RefineStage;
+        /** 已收到的累计部分文本（每次都是全文，不是 delta） */
+        partial?: string;
       };
     }
   | {

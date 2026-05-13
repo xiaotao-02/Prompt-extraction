@@ -9,7 +9,7 @@
  * 使用 `export let` + 显式 setter 函数模式，
  * 让所有子模块都能读到同一份单例，避免重复挂载 Shadow DOM。
  */
-import type { ExtractStage, PromptVersion, StrategyId } from '@/lib/types';
+import type { ExtractStage, PromptVersion, RefineStage, StrategyId } from '@/lib/types';
 
 export interface PanelState {
   requestId: string;
@@ -34,6 +34,15 @@ export interface PanelState {
   /** AI 调整输入框的内容（不在每次按键重渲染，仅在重新渲染时回填） */
   refineInstruction?: string;
   /**
+   * AI 调整流式进度：当前阶段。仅在 refineLoading 期间有效，
+   * 完成后由 events 层清空，避免下一次 refine 复用残值。
+   */
+  refineStage?: RefineStage;
+  /** AI 调整流式累积到的文本（每次都是全文，不是 delta）。 */
+  refinePartial?: string;
+  /** AI 调整开始时间戳，用于 UI 上显示 "已用时 xx s"。 */
+  refineStartedAt?: number;
+  /**
    * 反推进度阶段。loading 状态下用来切换"下载图片 / 调用模型 / 接收回复"
    * 三段文案，success/error 时被清成 undefined。
    */
@@ -55,6 +64,23 @@ export interface PanelState {
 
 export const HOST_ID = '__image_prompt_extractor_host__';
 
+/**
+ * 浮动面板的位置 + 尺寸。
+ *
+ * - left/top：必填，视口坐标（px）。
+ * - width：可选；用户没动过 resize 时为 undefined，让 CSS 默认值生效。
+ * - height：可选；同上，默认 auto，由内容决定。
+ *
+ * 用户拖动 header 时会更新 left/top；用户拖右下角 resize 时会更新 width/height。
+ * 跨 renderPanel 重渲染时这块状态不变，确保面板"哪儿就停哪儿"。
+ */
+export interface PanelGeometry {
+  left: number;
+  top: number;
+  width?: number;
+  height?: number;
+}
+
 export let host: HTMLDivElement | null = null;
 export let shadow: ShadowRoot | null = null;
 export let panel: HTMLDivElement | null = null;
@@ -64,6 +90,20 @@ export let currentState: PanelState | null = null;
  * 只更新 DOM 文本节点，不重渲整片面板，以免抖动。
  */
 export let loadingTickHandle: number | null = null;
+/**
+ * AI 调整中的"已用时"刷新句柄。和 loadingTickHandle 互不重叠 ——
+ * loading 状态没有 refine 框，refine 只在 success 状态下出现。
+ */
+export let refineTickHandle: number | null = null;
+/**
+ * 当前面板的几何快照。null 表示尚未初始化（首次 ensureHost 时会设上）。
+ * 这是模块级单例，跨 renderPanel 重渲染保留。
+ */
+export let panelGeometry: PanelGeometry | null = null;
+/**
+ * 用户拖右下角调整尺寸的 ResizeObserver 句柄。每次 setPanel 时重新挂载。
+ */
+export let panelResizeObserver: ResizeObserver | null = null;
 
 export function setHost(v: HTMLDivElement | null) {
   host = v;
@@ -79,6 +119,15 @@ export function setCurrentState(v: PanelState | null) {
 }
 export function setLoadingTickHandle(v: number | null) {
   loadingTickHandle = v;
+}
+export function setRefineTickHandle(v: number | null) {
+  refineTickHandle = v;
+}
+export function setPanelGeometry(v: PanelGeometry | null) {
+  panelGeometry = v;
+}
+export function setPanelResizeObserver(v: ResizeObserver | null) {
+  panelResizeObserver = v;
 }
 
 export const panelActions = {

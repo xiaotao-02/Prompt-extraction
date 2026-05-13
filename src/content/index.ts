@@ -1,5 +1,5 @@
 import type { RuntimeMessage } from '@/lib/types';
-import { renderPanel, updatePanel, closePanel } from './panel';
+import { renderPanel, updatePanel, closePanel, applyHistoryReady } from './panel';
 
 function isContextValid(): boolean {
   try {
@@ -70,6 +70,25 @@ try {
       });
       return false;
     }
+    if (message.type === 'HISTORY_READY') {
+      // 把面板持有的 requestId 切到 storage 真实落地的 actualId（同图反推时它们会不同），
+      // 同步填充 versions 和 prompt，从根上消灭 "save / restore 静默失败" 这类竞态 bug。
+      applyHistoryReady(
+        message.payload.requestId,
+        message.payload.actualId,
+        message.payload.versions,
+        message.payload.prompt
+      );
+      return false;
+    }
+    if (message.type === 'REFINE_PROGRESS') {
+      // historyId 在面板里就是 requestId；只更新 refine 相关字段，保持 status='success' 不变。
+      const patch: Parameters<typeof updatePanel>[1] = {};
+      if (message.payload.stage !== undefined) patch.refineStage = message.payload.stage;
+      if (message.payload.partial !== undefined) patch.refinePartial = message.payload.partial;
+      updatePanel(message.payload.historyId, patch);
+      return false;
+    }
     return false;
   });
 } catch {
@@ -123,6 +142,7 @@ function captureMediaUrlAtPoint(ev: MouseEvent): string {
   const x = ev.clientX;
   const y = ev.clientY;
   const stack = elementsAtPoint(x, y);
+  const target = ev.target instanceof Element ? ev.target : null;
 
   // <video> 优先：现代站点的"假 GIF"几乎全是 <video>。
   for (const el of stack) {
@@ -134,16 +154,29 @@ function captureMediaUrlAtPoint(ev: MouseEvent): string {
     }
   }
 
-  // GIF / APNG / WebP 这类动图通常是 <img>，原生 image 菜单本来就能命中，
-  // 这里只在 *动图扩展名* 时主动接管 —— 因为我们后续会做"扁平化"，
-  // 视觉模型对静态首帧的识别比动图本体可靠得多。
+  // <img> 分两种命中模式：
+  //
+  //   A. 右键直接命中 <img>（event.target 本身是 img，或是 <picture> 里的 <source>
+  //      ——后者 Chrome 仍会按图像上下文菜单处理）→ 原生 image 菜单会自动弹出，
+  //      返回空串让 fallback 菜单保持隐藏，避免和原生菜单重复。
+  //
+  //   B. <img> 被透明 overlay 罩住 ——
+  //      Behance / Pinterest / Dribbble / Unsplash / 各种作品集站点惯用做法：
+  //      在 <img> 之上盖一个吃指针事件的 <div>，目的是拦截"另存为/拖拽下载"。
+  //      这种情况下 contextmenu 的 target 是上层 div，Chrome 不会判定为 image
+  //      上下文，原生菜单不出；如果我们这里再傻乎乎返回空串，fallback 菜单也
+  //      被藏起来，用户就什么入口都看不到（这就是"Behance 上右键失效"的根因）。
+  //      所以这里主动把被覆盖的 <img> 的 currentSrc 抛给后台，让 fallback 菜单
+  //      显示。currentSrc 比 src 更准确——能拿到 srcset 实际选中的那张分辨率。
+  const targetIsImage =
+    target instanceof HTMLImageElement || (target instanceof Element && target.tagName === 'SOURCE');
+  if (targetIsImage) return '';
   for (const el of stack) {
     if (el instanceof HTMLImageElement) {
-      // 让原生 image 菜单自己处理（返回空字符串 → fallback 隐藏）。
-      // 不在 content 里 dataUrl 化，因为同源 <img> 的 srcUrl 后端再 fetch 即可，
-      // 反而能保留原始动图供后台扁平化。
-      void el; // 触发 lint，无副作用
-      return '';
+      // 不在 content 里 dataUrl 化：让后台 fetch 拿原图（多半命中浏览器缓存，
+      // 比把整张图序列化进 message 倒一遍快得多），动图原始字节也得以保留。
+      const src = el.currentSrc || el.src || '';
+      if (src) return src;
     }
   }
 
@@ -168,14 +201,6 @@ function captureMediaUrlAtPoint(ev: MouseEvent): string {
       } catch {
         // ignore
       }
-    }
-  }
-
-  // <picture> 内的 <source>，元素栈中通常已经有 <img>，这里兜底。
-  for (const el of stack) {
-    if (el instanceof HTMLElement && el.tagName === 'PICTURE') {
-      const img = el.querySelector('img');
-      if (img?.currentSrc || img?.src) return ''; // 同上，交给原生菜单
     }
   }
 

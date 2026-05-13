@@ -4,7 +4,7 @@
  * 这些类型同时被 extract / refine / provider 各实现使用，
  * 抽到独立文件避免循环依赖。
  */
-import type { AppSettings, ExtractStage, OutputStyle, ProviderId } from '../types';
+import type { AppSettings, ExtractStage, OutputStyle, ProviderId, RefineStage } from '../types';
 import type { FetchedImage } from '../image';
 
 /**
@@ -17,6 +17,17 @@ export interface ExtractProgressEvent {
 }
 
 export type ExtractProgressFn = (ev: ExtractProgressEvent) => void;
+
+/**
+ * AI 调整（refine）过程中的进度事件。和反推共用相同的 partial 语义
+ * （累计全文，不是 delta），只是阶段集更小（calling / streaming）。
+ */
+export interface RefineProgressEvent {
+  stage: RefineStage;
+  partial?: string;
+}
+
+export type RefineProgressFn = (ev: RefineProgressEvent) => void;
 
 export interface ExtractParams {
   imageUrl: string;
@@ -46,6 +57,12 @@ export interface RefineParams {
   settings: AppSettings;
   current: string;
   instruction: string;
+  /**
+   * 调整进度回调。和反推一样，流式阶段会被节流到约 80ms 一次。
+   * 调用方（background）通过它把 stage / partial 转发给 panel。
+   * 不传则走老的"非流式静默"路径。
+   */
+  onProgress?: RefineProgressFn;
 }
 
 export interface RefineResult {
@@ -64,5 +81,18 @@ export function safeProgress(
     onProgress(ev);
   } catch (err) {
     console.debug('[PromptExtracto] onProgress threw', err);
+  }
+}
+
+/** safeProgress 的 refine 版，签名不同（stage 取值范围更窄），逻辑一致。 */
+export function safeRefineProgress(
+  onProgress: RefineProgressFn | undefined,
+  ev: RefineProgressEvent
+): void {
+  if (!onProgress) return;
+  try {
+    onProgress(ev);
+  } catch (err) {
+    console.debug('[PromptExtracto] refine onProgress threw', err);
   }
 }

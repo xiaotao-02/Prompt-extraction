@@ -45,6 +45,7 @@ export function ItemGridCard({
   };
   return (
     <div
+      data-history-id={item.id}
       className={`group card !p-0 overflow-hidden flex flex-col transition-all duration-200 cursor-pointer ${
         expanded ? 'ring-2 ring-violet-500/40 shadow-lg shadow-violet-500/5' : 'hover:shadow-md hover:-translate-y-0.5'
       } ${item.pinned ? 'border-amber-300 dark:border-amber-500/40' : ''}`}

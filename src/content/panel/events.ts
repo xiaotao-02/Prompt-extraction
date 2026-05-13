@@ -1,6 +1,15 @@
 import { appendPromptVersion, getHistoryItem, restorePromptVersion } from '@/lib/storage';
 import type { RefineResponse } from '@/lib/types';
-import { currentState, setCurrentState, panel, panelActions } from './state';
+import {
+  currentState,
+  setCurrentState,
+  panel,
+  panelActions,
+  panelGeometry,
+  panelResizeObserver,
+  setPanelResizeObserver,
+} from './state';
+import { updateGeometry, clampGeometry } from './geometry';
 
 function renderPanel(...args: Parameters<typeof panelActions.renderPanel>) {
   return panelActions.renderPanel(...args);
@@ -68,7 +77,169 @@ export async function syncVersions(requestId: string): Promise<void> {
   }
 }
 
+/**
+ * 在 header 上挂 mousedown，拖动时改写 panel 的 left/top（视口坐标）。
+ *
+ * - 只在 header 空白区起拖（按到 button / textarea / .icon-btn 不算）
+ * - 拖拽期间给 panel 加 .dragging，关闭动画 / 过渡，提升阴影
+ * - mouseup 时把最终 left/top 写回 panelGeometry + sessionStorage
+ *
+ * 不监听 touchstart：MV3 内容脚本里浮动面板主要给桌面用，移动端 Chrome
+ * 上右键扩展菜单的入口几乎没人用。如果以后要支持，再加 pointer events。
+ */
+function bindHeaderDrag(root: HTMLElement): void {
+  const header = root.querySelector<HTMLElement>('.header');
+  if (!header) return;
+
+  header.addEventListener('mousedown', (e) => {
+    if (e.button !== 0) return;
+    const target = e.target as HTMLElement | null;
+    // 按到 header 内的可交互控件时，让原本的点击 / 选择行为优先。
+    if (target && target.closest('.icon-btn, button, a, input, textarea')) return;
+
+    const startX = e.clientX;
+    const startY = e.clientY;
+    const rect = root.getBoundingClientRect();
+    const startLeft = rect.left;
+    const startTop = rect.top;
+    // 用拖拽起始时刻的真实尺寸做 clamp 计算 —— panelGeometry 里的 width/height
+    // 在用户没主动拖右下角 resize 之前是 undefined，那时面板由 CSS 自适应宽高，
+    // 必须用真实尺寸才能算出正确的 maxLeft / maxTop，否则面板会被 clamp 到错位置。
+    const lockedWidth = rect.width;
+    const lockedHeight = rect.height;
+
+    e.preventDefault();
+    root.classList.add('dragging');
+
+    const onMove = (mv: MouseEvent) => {
+      const next = clampGeometry({
+        left: startLeft + (mv.clientX - startX),
+        top: startTop + (mv.clientY - startY),
+        width: panelGeometry?.width ?? lockedWidth,
+        height: panelGeometry?.height ?? lockedHeight,
+      });
+      // mousemove 不走 updateGeometry（不写 sessionStorage / setState），
+      // 直接改 inline style 走最快路径；松手时再 commit 一次最终位置。
+      root.style.left = `${next.left}px`;
+      root.style.top = `${next.top}px`;
+    };
+
+    const onUp = () => {
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+      root.classList.remove('dragging');
+      const r = root.getBoundingClientRect();
+      // 只 commit 位置；尺寸不主动写 —— 拖拽 header 不应固化用户没动过的尺寸。
+      updateGeometry({ left: r.left, top: r.top });
+    };
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+  });
+}
+
+/**
+ * 标记用户当前是否正在通过 CSS `resize: both` 的右下角拉手调整尺寸。
+ *
+ * 这是判断 ResizeObserver 触发原因的关键：
+ *   - true：用户在拉拽 → 把新尺寸固化为 `width/height`
+ *   - false：内容自然变化（loading → success / 历史版本展开）→ 忽略，
+ *     保留"按内容自适应"的能力
+ *
+ * 模块级单例 + 一次性 window 监听，避免每次 renderPanel 都重复挂载。
+ */
+let userResizingPanel = false;
+let globalResizeListenersInstalled = false;
+
+function ensureGlobalResizeListeners(): void {
+  if (globalResizeListenersInstalled) return;
+  globalResizeListenersInstalled = true;
+
+  // mousedown 落在右下角约 18x18 的 resize 拉手区域、且 target 就是 panel
+  // 本身（不是子元素）时，判定为开始调整尺寸。这两个条件一起看才稳：
+  //   - 仅看 target===panel 不够：右下角 actions 行的"复制"按钮 target 是它自己
+  //   - 仅看坐标不够：actions 行的最右按钮 X 也接近 rect.right
+  window.addEventListener('mousedown', (e) => {
+    if (!panel) return;
+    if (e.target !== panel) return;
+    const rect = panel.getBoundingClientRect();
+    const NEAR = 18;
+    if (
+      e.clientX >= rect.right - NEAR &&
+      e.clientX <= rect.right + 4 &&
+      e.clientY >= rect.bottom - NEAR &&
+      e.clientY <= rect.bottom + 4
+    ) {
+      userResizingPanel = true;
+      // 加 .resizing class：让 styles.ts 关掉 backdrop-filter / 动画，
+      // 给浏览器一个"用户在主动操作几何"的明确提示，避免毛玻璃 reflow 卡顿。
+      panel.classList.add('resizing');
+      // 用户首次按下 resize 拉手时，把当前自适应尺寸固化进 geometry。
+      // 这样即便用户只小拖一下也不会回到 auto 状态，下次切 tab / 切版本
+      // 不会"尺寸还原"。RO 的 firstFire 检查会跳过这次写入触发的回调。
+      updateGeometry({
+        width: Math.round(rect.width),
+        height: Math.round(rect.height),
+      });
+    }
+  });
+
+  // 不管 mouseup 在哪里发生，都让"用户在 resize"的状态收尾：commit 当前
+  // 实际尺寸到 geometry，并清旗。setTimeout(0) 是为了让最后一帧 RO 回调
+  // 也命中 userResizingPanel=true 的分支。
+  window.addEventListener('mouseup', () => {
+    if (!userResizingPanel) return;
+    if (panel) {
+      const r = panel.getBoundingClientRect();
+      updateGeometry({
+        width: Math.round(r.width),
+        height: Math.round(r.height),
+      });
+      panel.classList.remove('resizing');
+    }
+    setTimeout(() => {
+      userResizingPanel = false;
+    }, 0);
+  });
+}
+
+/**
+ * 监听用户从右下角 resize 拉手拖动 panel 调整大小。
+ *
+ * CSS 的 `resize: both` 会让浏览器原生处理拉拽，没有 mouseup 事件能挂；
+ * 用 ResizeObserver 在尺寸变化后把最终值写回几何状态。
+ *
+ * 重要：必须配合 `userResizingPanel` 一起判断，否则 loading→success
+ * 这种"内容自适应"导致的高度变化也会被错误地固化下来。
+ */
+function bindPanelResizeObserver(root: HTMLElement): void {
+  ensureGlobalResizeListeners();
+  if (typeof ResizeObserver === 'undefined') return;
+  if (panelResizeObserver) {
+    panelResizeObserver.disconnect();
+    setPanelResizeObserver(null);
+  }
+  let firstFire = true;
+  const ro = new ResizeObserver((entries) => {
+    if (firstFire) {
+      // 第一次回调是 RO 挂上时拿到的初始尺寸（applyGeometry 后的状态），
+      // 跳过即可，避免误把它当成用户调整。
+      firstFire = false;
+      return;
+    }
+    if (!userResizingPanel) return;
+    for (const entry of entries) {
+      const w = Math.round(entry.contentRect.width);
+      const h = Math.round(entry.contentRect.height);
+      updateGeometry({ width: w, height: h });
+    }
+  });
+  ro.observe(root);
+  setPanelResizeObserver(ro);
+}
+
 export function bindEvents(root: HTMLElement): void {
+  bindHeaderDrag(root);
+  bindPanelResizeObserver(root);
   const editor = root.querySelector<HTMLTextAreaElement>('[data-role="editor"]');
   if (editor) {
     editor.addEventListener('input', () => {
@@ -143,14 +314,36 @@ export function bindEvents(root: HTMLElement): void {
         safeSendMessage({ type: 'OPEN_OPTIONS' });
         return;
       }
+      if (action === 'open-in-library') {
+        if (!isContextValid()) return;
+        safeSendMessage({
+          type: 'OPEN_OPTIONS',
+          payload: { tab: 'library', focusId: state.requestId },
+        });
+        return;
+      }
       if (action === 'toggle-versions') {
-        setCurrentState({ ...state, versionsOpen: !state.versionsOpen });
-        renderPanel(currentState!);
+        // 不重渲整面板：只切 .panel-row.versions-open，sidebar 用 CSS transform
+        // 滑入/滑出。这样面板尺寸保持不变，编辑器 textarea 不丢焦点、不丢滚动。
+        const next = !state.versionsOpen;
+        setCurrentState({ ...state, versionsOpen: next });
+        const row = root.querySelector<HTMLElement>('.panel-row');
+        if (row) row.classList.toggle('versions-open', next);
+        // 同步左下角"历史版本"link-btn 的 active 视觉
+        const versionsBtn = root.querySelector<HTMLElement>(
+          '.meta-left [data-action="toggle-versions"]'
+        );
+        if (versionsBtn) versionsBtn.classList.toggle('active', next);
         return;
       }
       if (action === 'reset') {
-        setCurrentState({ ...state, draft: state.prompt });
-        renderPanel(currentState!);
+        // 撤销编辑：把 editor textarea 的值改回 prompt，更新 dirty 视觉，
+        // 不重渲面板，避免 sidebar 状态、滚动位置等 UI 一起被推平。
+        const restored = state.prompt ?? '';
+        setCurrentState({ ...state, draft: restored });
+        const editor = root.querySelector<HTMLTextAreaElement>('[data-role="editor"]');
+        if (editor) editor.value = restored;
+        updateDirtyChrome();
         return;
       }
       if (action === 'save') {
@@ -184,8 +377,12 @@ export function bindEvents(root: HTMLElement): void {
         const vid = el.dataset.versionId;
         const v = state.versions?.find((x) => x.id === vid);
         if (!v || !currentState) return;
+        // 局部更新：把版本内容塞进编辑器 textarea，更新 dirty 视觉。
+        // 不重渲，保留 sidebar 滚动位置、不打断用户视线。
         setCurrentState({ ...currentState, draft: v.prompt });
-        renderPanel(currentState);
+        const editor = root.querySelector<HTMLTextAreaElement>('[data-role="editor"]');
+        if (editor) editor.value = v.prompt;
+        updateDirtyChrome();
         return;
       }
       if (action === 'restore-version') {
@@ -206,24 +403,65 @@ export function bindEvents(root: HTMLElement): void {
         return;
       }
       if (action === 'toggle-refine') {
+        // 不重渲：refine-box 是常驻 DOM 的（templates.ts 里的 .refine-slot），
+        // 只切 .hidden 类即可滑入/滑出。这样面板尺寸保持稳定，编辑器和滚动
+        // 都不会被影响。
+        const opening = !state.refineOpen;
+        // 关闭时清掉上一轮的进度残留 / 错误提示 / 输入内容
+        const nextInstruction = opening ? state.refineInstruction || '' : '';
         setCurrentState({
           ...state,
-          refineOpen: !state.refineOpen,
+          refineOpen: opening,
           refineError: undefined,
-          // 关闭时清空输入；打开时保留之前的
-          refineInstruction: state.refineOpen ? '' : state.refineInstruction || '',
+          refineInstruction: nextInstruction,
+          refineStage: opening ? state.refineStage : undefined,
+          refinePartial: opening ? state.refinePartial : undefined,
+          refineStartedAt: opening ? state.refineStartedAt : undefined,
         });
-        renderPanel(currentState!);
+
+        const slot = root.querySelector<HTMLElement>('[data-role="refine-slot"]');
+        if (slot) slot.classList.toggle('hidden', !opening);
+
+        // 同步左下角"AI 调整"link-btn 的 active 视觉
+        const refineBtn = root.querySelector<HTMLElement>(
+          '.meta-left [data-action="toggle-refine"]'
+        );
+        if (refineBtn) refineBtn.classList.toggle('active', opening);
+
+        const refineInput = root.querySelector<HTMLTextAreaElement>(
+          '[data-role="refine-input"]'
+        );
+        if (refineInput) {
+          if (!opening) {
+            refineInput.value = '';
+            // 关闭时同步清掉视觉残留：错误提示 / 进度块 / 流式预览
+            slot
+              ?.querySelectorAll('.refine-error, .refine-progress, .stream-preview')
+              .forEach((n) => n.remove());
+          } else {
+            // 打开时把当前 state 中的 instruction 回填，并自动聚焦
+            refineInput.value = nextInstruction;
+            setTimeout(() => refineInput.focus(), 0);
+          }
+        }
         return;
       }
       if (action === 'refine-suggest') {
         const text = el.dataset.text || '';
         if (!currentState) return;
-        // 把建议追加到输入框（如果已有内容则用顿号连接）
+        // 把建议追加到输入框（如果已有内容则用顿号连接），仅做局部更新：
+        // 直接改 refine-input 的 value + 同步 state，不重渲面板。
         const prev = (currentState.refineInstruction || '').trim();
         const next = prev ? `${prev}；${text}` : text;
         setCurrentState({ ...currentState, refineInstruction: next });
-        renderPanel(currentState);
+        const refineInput = root.querySelector<HTMLTextAreaElement>(
+          '[data-role="refine-input"]'
+        );
+        if (refineInput) {
+          refineInput.value = next;
+          refineInput.focus();
+          refineInput.setSelectionRange(next.length, next.length);
+        }
         return;
       }
       if (action === 'run-refine') {
@@ -238,10 +476,22 @@ export function bindEvents(root: HTMLElement): void {
           refineLoading: true,
           refineError: undefined,
           refineInstruction: instruction,
+          // 进度相关字段全部初始化：'calling' + 起始时间，让进度条在按下按钮的
+          // 瞬间就能跑出来（不必等首个 REFINE_PROGRESS 到达）。
+          refineStage: 'calling',
+          refinePartial: undefined,
+          refineStartedAt: Date.now(),
         });
         renderPanel(currentState!);
         if (!isContextValid()) {
-          setCurrentState({ ...currentState!, refineLoading: false, refineError: '扩展已更新，请刷新页面' });
+          setCurrentState({
+            ...currentState!,
+            refineLoading: false,
+            refineError: '扩展已更新，请刷新页面',
+            refineStage: undefined,
+            refinePartial: undefined,
+            refineStartedAt: undefined,
+          });
           renderPanel(currentState!);
           return;
         }
@@ -264,6 +514,9 @@ export function bindEvents(root: HTMLElement): void {
                   refineLoading: false,
                   refineError:
                     chrome.runtime.lastError?.message || '后台未响应，请稍后再试',
+                  refineStage: undefined,
+                  refinePartial: undefined,
+                  refineStartedAt: undefined,
                 });
                 renderPanel(currentState);
                 return;
@@ -273,6 +526,9 @@ export function bindEvents(root: HTMLElement): void {
                   ...currentState,
                   refineLoading: false,
                   refineError: resp.error,
+                  refineStage: undefined,
+                  refinePartial: undefined,
+                  refineStartedAt: undefined,
                 });
                 renderPanel(currentState);
                 return;
@@ -283,6 +539,9 @@ export function bindEvents(root: HTMLElement): void {
                 refineError: undefined,
                 refineInstruction: '',
                 refineOpen: false,
+                refineStage: undefined,
+                refinePartial: undefined,
+                refineStartedAt: undefined,
                 prompt: resp.prompt,
                 draft: resp.prompt,
                 versionsOpen: true,
@@ -292,7 +551,14 @@ export function bindEvents(root: HTMLElement): void {
             }
           );
         } catch {
-          setCurrentState({ ...currentState!, refineLoading: false, refineError: '扩展已更新，请刷新页面' });
+          setCurrentState({
+            ...currentState!,
+            refineLoading: false,
+            refineError: '扩展已更新，请刷新页面',
+            refineStage: undefined,
+            refinePartial: undefined,
+            refineStartedAt: undefined,
+          });
           renderPanel(currentState!);
         }
         return;

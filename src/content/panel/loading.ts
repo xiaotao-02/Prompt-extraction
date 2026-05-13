@@ -1,31 +1,33 @@
-import type { ExtractStage, StrategyId } from '@/lib/types';
+import type { ExtractStage, RefineStage, StrategyId } from '@/lib/types';
+import { STRATEGY_LABELS, DEFAULT_STRATEGY_ID } from '@/lib/strategies-meta';
 import {
   panel,
   currentState,
   loadingTickHandle,
   setLoadingTickHandle,
+  refineTickHandle,
+  setRefineTickHandle,
 } from './state';
 import type { PanelState } from './state';
 
 /**
  * 策略 id → loading 面板上显示的简短中文 label。
  *
- * 这里不直接 import `STRATEGIES` 是为了避免 content script 把 `strategies.ts`
- * 的 4 套 stylePrompts 字符串（几 KB）一起打进 bundle —— 这块代码只需要"档位名"。
- * 如果以后新增了 strategy id，这里加一行即可；未命中走 'classic' 兜底（也是
- * DEFAULT_STRATEGY_ID）。历史上短暂存在过 'fidelity' (v0.1.7) 已下线，老用户
- * 还存着这个值时会落到 fallback 分支。
+ * 直接复用 `strategies.ts` 的 `STRATEGY_LABELS`（顶层纯派生：只读 STRATEGIES
+ * 的 label 字段，不会触发 STYLE_PROMPT_SETS 等几 KB 字符串的引用）。content
+ * script 这里只 import `STRATEGY_LABELS` / `DEFAULT_STRATEGY_ID`，加上
+ * `STRATEGY_LIST` 已改成 lazy 函数 `getStrategyList()`、模块顶层不再 evaluate
+ * 重对象，tree-shaking 会把 STYLE_PROMPT_SETS / SAMPLING_PROFILES / CUSTOM_JOINS
+ * 从 content chunk 里 drop 掉，不会因为这次改动让 content bundle 变胖。
+ *
+ * 加 / 删一档策略时这里**完全不需要同步**：strategies.ts 改完 STRATEGIES_INTERNAL
+ * 即可，TS 会通过 StrategyId 类型变更自动让所有引用点跟上。
+ *
+ * 老 settings 里残留的已下线 id（如 'fidelity'）走 DEFAULT_STRATEGY_ID 兜底。
  */
-export const STRATEGY_LABEL: Record<StrategyId, string> = {
-  classic: 'v0.1.5 策略',
-  v010: 'v0.1.0 策略',
-  v016: 'v0.1.6 策略',
-  v022: 'v0.2.2 策略',
-};
-
 export function strategyLabel(id: StrategyId | undefined): string {
   if (!id) return '';
-  return STRATEGY_LABEL[id] || STRATEGY_LABEL.classic;
+  return STRATEGY_LABELS[id] || STRATEGY_LABELS[DEFAULT_STRATEGY_ID];
 }
 
 // 已用时计时：loading 中每 200ms 更新一次 .elapsed 文本节点。
@@ -136,6 +138,93 @@ export function applyLoadingPatch(state: PanelState): void {
       const atBottom =
         Math.abs(ta.scrollHeight - ta.clientHeight - ta.scrollTop) < 8;
       ta.value = state.partial || '';
+      if (atBottom) ta.scrollTop = ta.scrollHeight;
+    } else {
+      previewBox.classList.add('hidden');
+      previewBox.innerHTML = '';
+    }
+  }
+}
+
+// =================== AI 调整（refine）的进度辅助 ===================
+
+/** refine 阶段下进度条的视觉百分比。比 extract 短一档，所以直接给两个固定值。 */
+export function refineStageProgress(stage: RefineStage | undefined, hasPartial: boolean): number {
+  if (stage === 'streaming' || hasPartial) return 0.78;
+  return 0.42; // calling / 还没收到首 token
+}
+
+/** refine 阶段下进度条下方的 hint 文案。 */
+export function refineStageHint(stage: RefineStage | undefined, hasPartial: boolean): string {
+  if (stage === 'streaming' || hasPartial) return '正在接收模型回复…';
+  return '正在调用大模型…';
+}
+
+/** refine 中每 200ms 更新一次 [data-role="refine-elapsed"]。 */
+export function manageRefineTicker(state: PanelState): void {
+  if (!state.refineLoading || !state.refineStartedAt) {
+    stopRefineTicker();
+    return;
+  }
+  if (refineTickHandle !== null) return;
+  setRefineTickHandle(
+    window.setInterval(() => {
+      if (!panel || !currentState || !currentState.refineLoading) {
+        stopRefineTicker();
+        return;
+      }
+      const el = panel.querySelector<HTMLElement>('[data-role="refine-elapsed"]');
+      if (el && currentState.refineStartedAt) {
+        el.textContent = formatElapsed(Date.now() - currentState.refineStartedAt);
+      }
+    }, 200)
+  );
+}
+
+export function stopRefineTicker(): void {
+  if (refineTickHandle !== null) {
+    window.clearInterval(refineTickHandle);
+    setRefineTickHandle(null);
+  }
+}
+
+/**
+ * refine 阶段下的"轻量刷新"：不替换面板节点，只改进度条宽度、hint 文案、
+ * elapsed 计时和流式预览 textarea。和 applyLoadingPatch 是两条独立路径，
+ * 因为 refine 发生在 success 状态而不是 loading 状态，复用同一组 data-role
+ * 选择器会和成功页的 editor textarea 冲突。
+ */
+export function applyRefinePatch(state: PanelState): void {
+  if (!panel) return;
+  const hasPartial = !!state.refinePartial;
+  const barEl = panel.querySelector<HTMLElement>('[data-role="refine-bar-fill"]');
+  if (barEl) {
+    barEl.style.width = `${Math.round(refineStageProgress(state.refineStage, hasPartial) * 100)}%`;
+  }
+
+  const hintEl = panel.querySelector<HTMLElement>('[data-role="refine-stage-hint"]');
+  if (hintEl) hintEl.textContent = refineStageHint(state.refineStage, hasPartial);
+
+  const elapsedEl = panel.querySelector<HTMLElement>('[data-role="refine-elapsed"]');
+  if (elapsedEl && state.refineStartedAt) {
+    elapsedEl.textContent = formatElapsed(Date.now() - state.refineStartedAt);
+  }
+
+  const previewBox = panel.querySelector<HTMLElement>('[data-role="refine-stream-preview"]');
+  if (previewBox) {
+    if (hasPartial) {
+      previewBox.classList.remove('hidden');
+      let ta = previewBox.querySelector<HTMLTextAreaElement>('textarea');
+      if (!ta) {
+        ta = document.createElement('textarea');
+        ta.className = 'prompt-text streaming refine-streaming';
+        ta.setAttribute('readonly', 'true');
+        ta.setAttribute('spellcheck', 'false');
+        previewBox.appendChild(ta);
+      }
+      const atBottom =
+        Math.abs(ta.scrollHeight - ta.clientHeight - ta.scrollTop) < 8;
+      ta.value = state.refinePartial || '';
       if (atBottom) ta.scrollTop = ta.scrollHeight;
     } else {
       previewBox.classList.add('hidden');

@@ -47,7 +47,21 @@ import { NoMatchState } from './parts/NoMatchState';
  * - 多选时底部出现批量操作浮条，支持批量删除 / 导出 / 复制
  * - 与 popup 共享同一份 history（chrome.storage.local），任何变更都通过 storage 层完成
  */
-export default function PromptLibrary() {
+/**
+ * `focusId`：浮动面板点「在提示词库中编辑」时传过来的目标记录 id。
+ *
+ * 加载完成后会自动展开这一条、切到"编辑器" Tab、滚动到视口中央，并清掉所有
+ * 当前筛选避免目标条目被过滤掉看不到。
+ *
+ * 处理完后通过 `onConsumeFocus` 回调通知父组件清空 focusId，
+ * 否则用户每次切 Tab 回来都会被反复重定位，会很烦。
+ */
+interface PromptLibraryProps {
+  focusId?: string | null;
+  onConsumeFocus?: () => void;
+}
+
+export default function PromptLibrary({ focusId, onConsumeFocus }: PromptLibraryProps) {
   const [list, setList] = useState<HistoryItem[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -98,6 +112,33 @@ export default function PromptLibrary() {
       /* ignore */
     }
   }, [view]);
+
+  // deep-link：父组件传来 focusId 时，等首批 list 加载完后自动展开 + 滚动到目标。
+  // - 用 list/loading 联合监听，避免 list 还没就绪就尝试聚焦。
+  // - 清掉所有筛选，否则目标条目可能被 keyword / provider / style filter 隐藏。
+  // - 处理完调用 onConsumeFocus 释放 focusId，防止反复触发。
+  useEffect(() => {
+    if (!focusId || loading) return;
+    const target = list.find((i) => i.id === focusId);
+    if (!target) {
+      // 目标不存在（被删了？），直接消费掉避免死循环
+      onConsumeFocus?.();
+      return;
+    }
+    setKeyword('');
+    setFilterProvider('all');
+    setFilterStyle('all');
+    setShowPinnedOnly(false);
+    setExpandedId(focusId);
+    setExpandedTab('editor');
+    // 等一帧让上面的 state 渲染到 DOM 后再滚动定位
+    const t = window.setTimeout(() => {
+      const el = document.querySelector<HTMLElement>(`[data-history-id="${focusId}"]`);
+      el?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      onConsumeFocus?.();
+    }, 80);
+    return () => window.clearTimeout(t);
+  }, [focusId, loading, list, onConsumeFocus]);
 
   // 当展开切换时，把编辑草稿同步到当前展开项
   useEffect(() => {
@@ -548,6 +589,7 @@ export default function PromptLibrary() {
             return (
               <li
                 key={item.id}
+                data-history-id={item.id}
                 className={`card !p-0 overflow-hidden transition-all duration-200 ${
                   expanded
                     ? 'ring-2 ring-violet-500/40 shadow-lg shadow-violet-500/5'

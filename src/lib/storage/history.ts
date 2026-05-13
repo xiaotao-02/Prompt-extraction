@@ -217,7 +217,16 @@ export async function writeHistory(list: HistoryItem[]): Promise<void> {
  *   2. 历史里第一条版本永远是"最新一次反推"，符合 popup 列表"最新在上"的直觉。
  *   3. 不同 provider/model 的结果都以版本形式保存下来，可在版本列表里通过 meta 区分。
  */
-export async function addHistory(item: HistoryItem): Promise<void> {
+/**
+ * 返回值是「最终落库的那条 HistoryItem」——可能是新插入的 incoming 本身，
+ * 也可能是合并到旧记录后产生的 merged（id 还是 existing 的 id）。
+ *
+ * 调用方（background.runExtraction）需要拿到这个返回值来通知 content：
+ * 「你手里那个 requestId 在 storage 里实际对应的是哪条 id / 此刻的 versions」，
+ * 否则同图反推时 content 会一直拿着一个 storage 里不存在的 id 去 save / restore
+ * / syncVersions，全部 findIndex<0 静默失败 → 用户看到「编辑后历史版本没更新」。
+ */
+export async function addHistory(item: HistoryItem): Promise<HistoryItem> {
   const list = await getHistory();
   const incoming = migrateItem(item);
   const existingIdx = list.findIndex((it) => isSameImage(it, incoming));
@@ -270,7 +279,7 @@ export async function addHistory(item: HistoryItem): Promise<void> {
     list.unshift(merged);
     if (list.length > HISTORY_LIMIT) list.length = HISTORY_LIMIT;
     await writeHistory(list);
-    return;
+    return merged;
   }
   // 没找到同图记录：走老路径。同时给首条 version 也补上 meta，方便后续展示一致。
   if (incoming.versions[0] && !incoming.versions[0].meta) {
@@ -286,6 +295,7 @@ export async function addHistory(item: HistoryItem): Promise<void> {
   list.unshift(incoming);
   if (list.length > HISTORY_LIMIT) list.length = HISTORY_LIMIT;
   await writeHistory(list);
+  return incoming;
 }
 
 export async function clearHistory(): Promise<void> {

@@ -19,8 +19,33 @@ const TAB_STORAGE_KEY = 'options_active_tab_v1';
  *
  * 通过 sessionStorage 记忆上次停留的 Tab，方便用户在两个视图之间反复切换。
  */
+/**
+ * 解析 options 页 URL 的 hash 参数。content script 浮动面板点击「在提示词库中编辑」
+ * 时由 background 把目标 tab / focusId 拼到 hash 上传过来。
+ * 形如 `#tab=library&focus=abc123`。
+ */
+function readHashParams(): { tab: Tab | null; focusId: string | null } {
+  try {
+    const hash = window.location.hash.replace(/^#/, '');
+    if (!hash) return { tab: null, focusId: null };
+    const params = new URLSearchParams(hash);
+    const t = params.get('tab');
+    const focus = params.get('focus');
+    return {
+      tab: t === 'library' || t === 'settings' ? (t as Tab) : null,
+      focusId: focus || null,
+    };
+  } catch {
+    return { tab: null, focusId: null };
+  }
+}
+
 export default function OptionsApp() {
+  // hash 参数只在初始 mount 时消费一次：URL hash > sessionStorage > 默认 'settings'。
+  // 消费完后清掉 hash，避免用户刷新页面又跳回 library 干扰正常浏览。
+  const initialHash = readHashParams();
   const [tab, setTab] = useState<Tab>(() => {
+    if (initialHash.tab) return initialHash.tab;
     try {
       const saved = sessionStorage.getItem(TAB_STORAGE_KEY);
       return saved === 'library' || saved === 'settings' ? saved : 'settings';
@@ -28,6 +53,19 @@ export default function OptionsApp() {
       return 'settings';
     }
   });
+  const [libraryFocusId, setLibraryFocusId] = useState<string | null>(initialHash.focusId);
+
+  // 把 deep-link 消费掉：清掉 hash，并在 PromptLibrary 收到 focusId 后由它再调用
+  // onConsumeFocus 把这里的 focusId 也清掉，避免组件被反复触发自动展开。
+  useEffect(() => {
+    if (!initialHash.tab && !initialHash.focusId) return;
+    try {
+      history.replaceState(null, '', window.location.pathname + window.location.search);
+    } catch {
+      /* ignore */
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   /**
    * 设置面板「未保存的修改」标志。
    * - true：用户在 SettingsView 改过字段但还没落盘 → 顶部按钮显示「保存设置」
@@ -142,7 +180,10 @@ export default function OptionsApp() {
             onDirtyChange={handleDirtyChange}
           />
         ) : (
-          <PromptLibrary />
+          <PromptLibrary
+            focusId={libraryFocusId}
+            onConsumeFocus={() => setLibraryFocusId(null)}
+          />
         )}
       </main>
     </div>

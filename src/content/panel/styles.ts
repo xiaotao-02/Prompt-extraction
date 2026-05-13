@@ -8,10 +8,16 @@
 export const STYLE = `
 :host, * { box-sizing: border-box; }
 .panel {
-  position: fixed; top: 50%; left: 50%;
-  transform: translate(-50%, -50%);
+  /* 位置和尺寸由 JS 写入到 inline style（top/left/width/height），
+     这里只给一组兜底默认值。height 不写死，让面板按内容自适应；
+     用户从右下角拖拽 resize 之后会被 JS 写成固定 px。 */
+  position: fixed;
+  top: 24px; left: 24px;
   width: min(720px, calc(100vw - 48px));
-  max-height: calc(100vh - 48px);
+  min-width: 360px;
+  min-height: 220px;
+  max-width: calc(100vw - 16px);
+  max-height: calc(100vh - 16px);
   display: flex; flex-direction: column;
   background: rgba(255,255,255,0.96);
   backdrop-filter: blur(20px) saturate(140%);
@@ -22,7 +28,31 @@ export const STYLE = `
   box-shadow: 0 32px 80px -16px rgba(0,0,0,0.35), 0 8px 24px rgba(0,0,0,0.12);
   font: 13px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
   overflow: hidden;
-  animation: panelIn .25s cubic-bezier(.2,.9,.3,1.2);
+  /* resize: both 允许用户从右下角拖动调整宽高。配合 overflow:hidden 才能生效。 */
+  resize: both;
+  animation: panelIn .22s cubic-bezier(.2,.9,.3,1.2);
+}
+.panel.dragging,
+.panel.resizing {
+  /* 拖拽 / resize 中关掉动画/过渡，避免位置跳动；并提升一下阴影做拾起效果。 */
+  animation: none !important;
+  transition: none !important;
+  box-shadow: 0 40px 90px -16px rgba(0,0,0,0.45), 0 12px 28px rgba(0,0,0,0.18);
+  user-select: none;
+  /* 关掉 backdrop-filter：拖动 / resize 期间每帧重新对整个视口做高斯模糊
+     +饱和度运算，是主线程卡顿的最大元凶。换成接近不透明的纯色背景就行，
+     mouseup 后恢复毛玻璃。 */
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+  background: rgba(255,255,255,0.99);
+  /* will-change 告诉合成器为这个层准备好独立合成，避免 reflow 时重新提层。 */
+  will-change: left, top, width, height;
+}
+@media (prefers-color-scheme: dark) {
+  .panel.dragging,
+  .panel.resizing {
+    background: rgba(24,24,27,0.99);
+  }
 }
 @media (prefers-color-scheme: dark) {
   .panel {
@@ -32,14 +62,19 @@ export const STYLE = `
   }
 }
 @keyframes panelIn {
-  from { transform: translate(-50%, calc(-50% + 12px)); opacity: 0; }
-  to { transform: translate(-50%, -50%); opacity: 1; }
+  from { opacity: 0; transform: translateY(8px) scale(0.98); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
 }
 .header {
   display: flex; align-items: center; justify-content: space-between;
   padding: 10px 12px;
   border-bottom: 1px solid rgba(0,0,0,0.06);
   flex: none;
+  /* header 整条作为拖拽把手；内部 icon-btn 会单独覆盖回 pointer。 */
+  cursor: move;
+  user-select: none;
+  -webkit-user-select: none;
+  touch-action: none;
 }
 @media (prefers-color-scheme: dark) {
   .header { border-bottom-color: rgba(255,255,255,0.06); }
@@ -71,9 +106,11 @@ export const STYLE = `
 @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: .35; } }
 
 .icon-btn {
-  background: transparent; border: none; cursor: pointer; padding: 4px;
+  background: transparent; border: none; padding: 4px;
   border-radius: 6px; color: inherit; opacity: 0.6;
   display: inline-flex; align-items: center; justify-content: center;
+  /* header 整条 cursor:move，按钮单独恢复成手型，不让人误以为按钮也是拖拽区。 */
+  cursor: pointer;
 }
 .icon-btn:hover { opacity: 1; background: rgba(0,0,0,0.05); }
 @media (prefers-color-scheme: dark) {
@@ -81,6 +118,13 @@ export const STYLE = `
 }
 
 .body {
+  /* success 状态下 .body 处在 .panel-row 内，是它唯一的 flex 子元素（历史
+     版本 sidebar 已改为 position:absolute 的浮层），所以 flex:1 1 auto 让
+     body 占满整个 panel-row 宽度，sidebar 滑出/收起时 body 视觉宽度不变。
+     loading/error 状态下 .body 是 panel 的直接子元素，column flex 主轴
+     是纵向，flex:1 1 auto 同样让它撑满 panel 剩余高度，行为一致。 */
+  flex: 1 1 auto;
+  min-width: 0;
   padding: 16px; display: flex; flex-direction: column; gap: 12px;
   overflow-y: auto;
 }
@@ -130,6 +174,12 @@ export const STYLE = `
 @media (prefers-color-scheme: dark) {
   .dirty-hint { color: #fbbf24; }
 }
+
+/* refine-slot：常驻 DOM 的容器，靠 .hidden 控制 AI 调整框的显隐。
+   不用 display:none 直接作用在 .refine-box 上，是为了将来可以加滑入动画
+   而不需要管 refine-box 自身的布局类型。 */
+.refine-slot { display: contents; }
+.refine-slot.hidden { display: none; }
 
 .refine-box {
   border: 1px solid rgba(99,102,241,0.25);
@@ -213,6 +263,19 @@ export const STYLE = `
 .refine-actions {
   display: flex; justify-content: flex-end; gap: 6px;
 }
+/* refine 流式进度块。和顶部 loading 状态共用 .bar.progress / .hint-row 的样式，
+   这里只负责给一个内边距和淡入动画。 */
+.refine-progress {
+  padding: 4px 0 0;
+  animation: fadeIn .2s ease-out;
+}
+.refine-progress .hint-row { margin-top: 6px; }
+/* refine 流式预览的 textarea：比顶部 loading 那个矮一点，省得在面板里把
+   底部按钮挤下去。 */
+.prompt-text.streaming.refine-streaming {
+  min-height: 120px; max-height: 280px;
+  font-size: 12px; line-height: 1.55;
+}
 .spinner {
   display: inline-block; width: 12px; height: 12px;
   border: 2px solid rgba(255,255,255,0.4);
@@ -243,25 +306,75 @@ export const STYLE = `
   .link-btn.primary:hover { background: rgba(139,92,246,0.18); }
 }
 
-.versions {
-  border: 1px solid rgba(0,0,0,0.08);
-  border-radius: 10px;
-  background: rgba(0,0,0,0.02);
-  max-height: 320px;
-  overflow-y: auto;
+/* panel-row：success 状态下，header 下方的横向容器。
+   - position: relative：给绝对定位的历史版本 overlay 提供定位上下文。
+   - flex: 1 1 auto + min-height: 0：占满 panel 剩余高度，超出时由内部
+     .body / .versions-list 自己滚动。
+   - overflow: hidden：截断 versions sidebar 滑出动画的左侧"屏外"那部分。 */
+.panel-row {
+  position: relative;
+  display: flex;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
+}
+
+/* 左侧历史版本侧栏：常驻 DOM 的覆盖式 drawer，从面板左侧滑入。
+   设计要点：
+   - position: absolute 完全脱离布局流 → 切显隐时主面板宽高不动。
+   - transform: translateX 控制滑入滑出，配合 transition 平滑过渡。
+   - pointer-events / visibility 在收起时关闭，避免吃掉主体上的点击。
+   - 自带阴影 + 半透明背景，作为浮层有层次感。 */
+.versions-side {
+  position: absolute;
+  top: 0;
+  left: 0;
+  bottom: 0;
+  width: 280px;
+  max-width: 70%;
+  z-index: 2;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: rgba(248,248,250,0.98);
+  border-right: 1px solid rgba(0,0,0,0.08);
+  box-shadow: 8px 0 24px -8px rgba(0,0,0,0.18);
+  transform: translateX(-100%);
+  transition: transform .22s cubic-bezier(.2,.9,.3,1.2),
+              opacity .18s ease;
+  opacity: 0;
+  pointer-events: none;
+  visibility: hidden;
+}
+.panel-row.versions-open .versions-side {
+  transform: translateX(0);
+  opacity: 1;
+  pointer-events: auto;
+  visibility: visible;
 }
 @media (prefers-color-scheme: dark) {
-  .versions { border-color: rgba(255,255,255,0.08); background: rgba(255,255,255,0.03); }
+  .versions-side {
+    background: rgba(30,30,34,0.98);
+    border-right-color: rgba(255,255,255,0.10);
+    box-shadow: 8px 0 24px -8px rgba(0,0,0,0.55);
+  }
 }
 .versions-head {
-  padding: 8px 10px; font-size: 11px; font-weight: 600; opacity: 0.65;
-  border-bottom: 1px solid rgba(0,0,0,0.05);
+  padding: 10px 12px;
+  font-size: 11px; font-weight: 600;
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 6px;
+  border-bottom: 1px solid rgba(0,0,0,0.06);
+  flex: none;
+  opacity: 0.85;
 }
 @media (prefers-color-scheme: dark) {
   .versions-head { border-bottom-color: rgba(255,255,255,0.06); }
 }
 .versions-list {
   list-style: none; margin: 0; padding: 0;
+  flex: 1 1 auto; min-height: 0;
+  overflow-y: auto;
 }
 .version-item {
   padding: 8px 10px;

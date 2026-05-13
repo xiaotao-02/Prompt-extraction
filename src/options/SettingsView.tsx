@@ -12,7 +12,7 @@ import {
 } from 'lucide-react';
 import { PROVIDER_LIST, PROVIDERS } from '@/lib/providers';
 import { getSettings, saveSettings } from '@/lib/storage';
-import { STRATEGY_LIST } from '@/lib/strategies';
+import { getStrategyList } from '@/lib/strategies';
 import type { AppSettings, OutputStyle, ProviderConfig, ProviderId } from '@/lib/types';
 import { extractPrompt, listModels } from '@/lib/api';
 import UpdateSection from './UpdateSection';
@@ -62,6 +62,12 @@ export default function SettingsView({ registerSaveHandler, onDirtyChange }: Pro
   const [fetchingModels, setFetchingModels] = useState(false);
   const [fetchModelsError, setFetchModelsError] = useState<string | null>(null);
   const [modelFilter, setModelFilter] = useState('');
+  /**
+   * 策略选择器的渲染数据。`getStrategyList()` 内部会逐档解析组件版本（读
+   * STYLE_PROMPT_SETS 等大对象），整页只算一次就够了，所以用 useMemo 钉死 ——
+   * useMemo 的零依赖 deps 数组保证它只在组件挂载时跑一次。
+   */
+  const strategyList = useMemo(() => getStrategyList(), []);
 
   /**
    * 记录每个 provider 在「当前会话」里已经自动拉取过的签名（apiKey|baseUrl）。
@@ -522,7 +528,7 @@ export default function SettingsView({ registerSaveHandler, onDirtyChange }: Pro
           一档策略 = <b>指令集 / 采样 / 拼接</b> 三个组件各自挑一个版本号的组合。切档其实是同时换这 3 个组件，对比效果时可以随时切回旧版本。
         </p>
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-          {STRATEGY_LIST.map((s) => {
+          {strategyList.map((s) => {
             const active = settings.promptStrategy === s.id;
             return (
               <button

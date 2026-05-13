@@ -24,7 +24,7 @@ function ensureContextMenus(): void {
     chrome.contextMenus.create(
       {
         id: MENU_ID,
-        title: '🎨 提取图片 / 动图提示词',
+        title: '提取图片提示词',
         contexts: ['image'],
       },
       () => void chrome.runtime.lastError
@@ -34,7 +34,7 @@ function ensureContextMenus(): void {
         id: MENU_ID_FALLBACK,
         // fallback 主要服务于 <video>（含"假 GIF"）、<canvas>、内联 SVG、
         // CSS 背景图等场景，所以文案要把"视频 / 动图"显式标出来。
-        title: '🎨 提取视频帧 / 动图提示词',
+        title: '提取图片提示词',
         // 这里覆盖 image 以外的常见上下文，再用 visible 动态控制显隐，
         // 避免在普通文本/页面上无脑出现菜单项。
         contexts: ['page', 'frame', 'link', 'selection', 'editable', 'video', 'audio'],
@@ -107,7 +107,35 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message?.type === 'OPEN_OPTIONS') {
-    chrome.runtime.openOptionsPage();
+    const { tab, focusId } = (message.payload || {}) as {
+      tab?: 'settings' | 'library';
+      focusId?: string;
+    };
+    // 没有 deep-link 参数时直接走原生 API，保留默认行为
+    if (!tab && !focusId) {
+      chrome.runtime.openOptionsPage();
+      sendResponse({ ok: true });
+      return true;
+    }
+    // 构造带 hash 的 options URL；OptionsApp 会在 mount 时读取 hash 并消费
+    const params = new URLSearchParams();
+    if (tab) params.set('tab', tab);
+    if (focusId) params.set('focus', focusId);
+    const optionsPath = 'src/options/index.html';
+    const targetUrl = chrome.runtime.getURL(optionsPath) + '#' + params.toString();
+    // 已经打开过 options 页时，复用那个 tab 并刷新到目标 url，避免开一堆重复 tab
+    const existingMatch = chrome.runtime.getURL(optionsPath) + '*';
+    chrome.tabs.query({ url: existingMatch }, (tabs) => {
+      const found = tabs[0];
+      if (found?.id != null) {
+        chrome.tabs.update(found.id, { url: targetUrl, active: true });
+        if (found.windowId != null) {
+          chrome.windows.update(found.windowId, { focused: true });
+        }
+      } else {
+        chrome.tabs.create({ url: targetUrl });
+      }
+    });
     sendResponse({ ok: true });
     return true;
   }
@@ -123,7 +151,11 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       sendResponse({ ok: false, error: '参数缺失' } satisfies RefineResponse);
       return true;
     }
-    runRefine(historyId, current, instruction).then((res) => sendResponse(res));
+    // sender.tab?.id 仅在 content script 浮动面板发起时存在；popup / options
+    // 没有 tab，progress 直接 fire-and-forget 丢弃即可。
+    runRefine(historyId, current, instruction, sender.tab?.id).then((res) =>
+      sendResponse(res)
+    );
     return true;
   }
   if (message?.type === 'CTX_MENU_PREP') {
@@ -264,6 +296,11 @@ async function runExtraction(params: {
     if (settings.saveHistory) {
       // 历史落库不阻塞下一次提取：用户连续抽几张图时不再排队，缩略图
       // 重新编码 + storage 写入都在后台完成。失败只打 debug，不影响 UI。
+      //
+      // 落库完成后必须把「storage 里真实落地的 id + versions」回传给 content，
+      // 因为 addHistory 对同图会合并到旧记录上、真实 id 可能与 requestId 不同。
+      // 这条 HISTORY_READY 是浮窗后续 save / restore / syncVersions 不出 race
+      // 的关键 —— content 收到后会把 panel.requestId 切到 actualId。
       void persistHistory({
         requestId,
         imageUrl,
@@ -273,6 +310,17 @@ async function runExtraction(params: {
         style: result.style,
         pageUrl,
         pageTitle,
+      }).then((stored) => {
+        if (!stored) return;
+        postToTab(tabId, {
+          type: 'HISTORY_READY',
+          payload: {
+            requestId,
+            actualId: stored.id,
+            versions: stored.versions,
+            prompt: stored.prompt,
+          },
+        });
       });
     }
   } catch (err) {
@@ -293,7 +341,7 @@ async function persistHistory(params: {
   style: HistoryItem['style'];
   pageUrl: string;
   pageTitle: string;
-}): Promise<void> {
+}): Promise<HistoryItem | undefined> {
   try {
     const now = Date.now();
     // 视频帧 / canvas / 扁平化动图传过来的 imageUrl 经常是大 dataUrl，
@@ -326,20 +374,37 @@ async function persistHistory(params: {
         },
       ],
     };
-    await addHistory(item);
+    // addHistory 返回「真正落库的那条」—— 同图反推时会是合并后的旧记录（id 不变），
+    // 调用方据此把 content 那边的 requestId 切到真实 id。
+    return await addHistory(item);
   } catch (err) {
     console.debug('[PromptExtracto] persist history failed', err);
+    return undefined;
   }
 }
 
 async function runRefine(
   historyId: string,
   current: string,
-  instruction: string
+  instruction: string,
+  tabId?: number
 ): Promise<RefineResponse> {
   try {
     const settings = await getSettings();
-    const result = await refinePrompt({ settings, current, instruction });
+    // 只有在面板里发起 refine（带 tabId）的场景才订阅流式进度——避免给 popup /
+    // options 这类无面板的调用方发无人接收的 REFINE_PROGRESS。同时 onProgress
+    // 自身被传入会触发 provider 切到 stream:true，所以这里"不传 onProgress"也
+    // 顺带保住了非面板路径继续走老的非流式 JSON 接口，行为零变化。
+    const onProgress =
+      tabId != null
+        ? (ev: { stage: 'calling' | 'streaming'; partial?: string }) => {
+            postToTab(tabId, {
+              type: 'REFINE_PROGRESS',
+              payload: { historyId, stage: ev.stage, partial: ev.partial },
+            });
+          }
+        : undefined;
+    const result = await refinePrompt({ settings, current, instruction, onProgress });
     if (!result.prompt) {
       return { ok: false, error: '模型返回了空提示词' };
     }

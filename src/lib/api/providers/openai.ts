@@ -15,7 +15,12 @@ import {
   readSseDataChunks,
 } from '../http';
 import { normalizeOpenAIBase } from '../url';
-import { safeProgress, type ExtractProgressFn } from '../types';
+import {
+  safeProgress,
+  safeRefineProgress,
+  type ExtractProgressFn,
+  type RefineProgressFn,
+} from '../types';
 
 export async function callOpenAICompatible(
   cfg: ProviderConfig,
@@ -117,15 +122,20 @@ export async function callOpenAICompatible(
  *
  * 与 callOpenAICompatible 区别：
  *   - 不带 image_url
- *   - stream: false，直接整段 JSON 拿回，refine 阶段对流式没需求
  *   - temperature 固定 0.7，强度无关 strategy（refine 的"调子"由 prompt 控制）
+ *
+ * onProgress 传入时启用流式（stream:true，SSE 累积），否则保持老的非流式行为。
+ * 这样 popup / options 那种"无 panel"调用方继续按非流式跑，content panel 走流式
+ * 体验进度条 + 实时回显。
  */
 export async function callOpenAICompatibleText(
   cfg: ProviderConfig,
   system: string,
-  user: string
+  user: string,
+  onProgress?: RefineProgressFn
 ): Promise<string> {
   const url = `${normalizeOpenAIBase(cfg.baseUrl)}/chat/completions`;
+  const stream = !!onProgress;
   const body = {
     model: cfg.model,
     messages: [
@@ -134,32 +144,69 @@ export async function callOpenAICompatibleText(
     ],
     temperature: 0.7,
     max_tokens: 1024,
-    stream: false,
+    stream,
   };
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+    Authorization: `Bearer ${cfg.apiKey}`,
+  };
+  if (stream) headers.Accept = 'text/event-stream';
   const resp = await fetch(url, {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${cfg.apiKey}`,
-    },
+    headers,
     body: JSON.stringify(body),
   });
   if (!resp.ok) {
     throw new Error(await describeRespFailure(resp, 'API'));
   }
-  const json = await parseJsonResponse<{
-    choices?: Array<{ message?: { content?: string | Array<{ type?: string; text?: string }> } }>;
-  }>(resp, 'API');
-  const content = json?.choices?.[0]?.message?.content;
-  if (typeof content === 'string') return content;
-  if (Array.isArray(content)) {
-    return content
-      .map((c: { type?: string; text?: string }) =>
-        c?.type === 'text' && c?.text ? c.text : ''
-      )
-      .join('');
+
+  // 非流式 / 中转节点忽略 stream:true 的退化场景：直接 JSON 解析。
+  if (!stream || !isSseResponse(resp)) {
+    const json = await parseJsonResponse<{
+      choices?: Array<{
+        message?: { content?: string | Array<{ type?: string; text?: string }> };
+      }>;
+    }>(resp, 'API');
+    const content = json?.choices?.[0]?.message?.content;
+    const final = extractOpenAIContent(content);
+    if (!final) throw new Error('返回内容为空');
+    return final;
   }
-  throw new Error('返回内容为空');
+
+  let acc = '';
+  let lastFlushAt = 0;
+  let sawFirstChunk = false;
+  for await (const data of readSseDataChunks(resp)) {
+    if (data === '[DONE]') break;
+    let json: {
+      choices?: Array<{
+        delta?: { content?: string | Array<{ type?: string; text?: string }> };
+      }>;
+    };
+    try {
+      json = JSON.parse(data);
+    } catch {
+      continue;
+    }
+    const delta = json.choices?.[0]?.delta?.content;
+    const chunk = extractOpenAIContent(delta);
+    if (!chunk) continue;
+    acc += chunk;
+    if (!sawFirstChunk) {
+      sawFirstChunk = true;
+      safeRefineProgress(onProgress, { stage: 'streaming', partial: acc });
+      lastFlushAt = Date.now();
+      continue;
+    }
+    const now = Date.now();
+    if (now - lastFlushAt >= STREAM_FLUSH_INTERVAL_MS) {
+      lastFlushAt = now;
+      safeRefineProgress(onProgress, { stage: 'streaming', partial: acc });
+    }
+  }
+  if (!acc) throw new Error('返回内容为空');
+  safeRefineProgress(onProgress, { stage: 'streaming', partial: acc });
+  return acc;
 }
 
 /**

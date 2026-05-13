@@ -9,6 +9,7 @@ import {
   ICON_RESTORE,
   ICON_EDIT,
   ICON_SPARK,
+  ICON_LIBRARY,
 } from './icons';
 import {
   stageLabel,
@@ -16,6 +17,8 @@ import {
   stageProgress,
   formatElapsed,
   strategyLabel,
+  refineStageHint,
+  refineStageProgress,
 } from './loading';
 
 export function escapeText(s: string): string {
@@ -114,64 +117,121 @@ export function panelHtml(state: PanelState): string {
   const refining = !!state.refineLoading;
   const refineInstruction = state.refineInstruction ?? '';
 
-  const versionsBlock =
-    state.versionsOpen && versionCount > 0
+  // 历史版本侧栏：始终渲染在 DOM 里（只要有版本数据），用 .panel-row.versions-open
+  // 这个 class 控制滑入/滑出。这样 toggle 的时候不需要 renderPanel，避免主面板尺寸
+  // 还原、编辑器失焦、动画重放等问题。
+  //
+  // 没版本时（versionCount === 0）直接不渲染，等首次保存后 syncVersions 会触发完整
+  // 重渲再把节点塞进来。
+  const versionsSidebar =
+    versionCount > 0
       ? `
-        <div class="versions">
+        <aside class="versions-side" data-role="versions-side">
           <div class="versions-head">
-            <span>历史版本（共 ${versionCount} 条）</span>
+            <span>历史版本 · ${versionCount}</span>
+            <button class="icon-btn" data-action="toggle-versions" title="收起">${ICON_CLOSE}</button>
           </div>
           <ul class="versions-list">
             ${versions
               .map((v, i) => versionItemHtml(v, i === 0, state.prompt || ''))
               .join('')}
           </ul>
-        </div>
+        </aside>
       `
       : '';
 
-  const refineBlock = state.refineOpen
+  // refine 进度块：仅在 refineLoading 时插入到 actions 上方，让用户清楚地看到
+  // "现在到哪一步 / 已经用了多久"。和 extract 的 loading 视觉保持一致
+  // （同一根 .bar.progress + .hint-row 结构），data-role 都换成了 refine- 前缀。
+  //
+  // 流式回复**不再渲染独立的副 textarea** —— 模型吐出的 partial 直接写进上方
+  // 主编辑器 textarea（loading.ts:applyRefinePatch 负责）。这样用户视线不需要
+  // 在"主输入框 / 副预览框"两个位置之间来回切换，体验更像 ChatGPT 那种「就地刷新」。
+  const refineHasPartial = !!state.refinePartial;
+  const refinePct = Math.round(
+    refineStageProgress(state.refineStage, refineHasPartial) * 100
+  );
+  const refineElapsed =
+    state.refineStartedAt != null
+      ? formatElapsed(Date.now() - state.refineStartedAt)
+      : '0.0s';
+  const refineProgressBlock = refining
     ? `
-        <div class="refine-box ${refining ? 'loading' : ''}">
-          <div class="refine-head">
-            <span>${ICON_SPARK}<span>告诉我怎么调整这条提示词</span></span>
-            <button class="icon-btn" data-action="toggle-refine" title="收起">${ICON_CLOSE}</button>
+        <div class="refine-progress" data-role="refine-progress">
+          <div class="bar progress">
+            <span data-role="refine-bar-fill" style="width:${refinePct}%"></span>
           </div>
-          <textarea
-            class="refine-input"
-            data-role="refine-input"
-            spellcheck="false"
-            placeholder="例如：改得更电影感、翻译成英文、删掉色调、加上 8k 高清等参数…"
-            ${refining ? 'disabled' : ''}
-          >${escapeText(refineInstruction)}</textarea>
-          ${
-            state.refineError
-              ? `<div class="refine-error">${escapeText(state.refineError)}</div>`
-              : ''
-          }
-          <div class="refine-suggest">
-            ${SUGGESTIONS.map(
-              (s) =>
-                `<button class="chip" data-action="refine-suggest" data-text="${escapeAttr(
-                  s
-                )}" ${refining ? 'disabled' : ''}>${escapeText(s)}</button>`
-            ).join('')}
-          </div>
-          <div class="refine-actions">
-            <button class="btn ghost" data-action="toggle-refine" ${
-              refining ? 'disabled' : ''
-            }>取消</button>
-            <button class="btn primary" data-action="run-refine" ${refining ? 'disabled' : ''}>
-              ${
-                refining
-                  ? `<span class="spinner"></span><span>调整中…</span>`
-                  : `${ICON_SPARK}<span>让 AI 调整</span>`
-              }
-            </button>
+          <div class="hint hint-row">
+            <span data-role="refine-stage-hint">${escapeText(
+              refineStageHint(state.refineStage, refineHasPartial)
+            )}</span>
+            <span class="elapsed" data-role="refine-elapsed">${escapeText(refineElapsed)}</span>
           </div>
         </div>
       `
     : '';
+
+  // refine-box 始终渲染在 DOM 里（用 .refine-slot.hidden 控制显隐），
+  // 这样 toggle-refine 时只需要切 class，不必整面板重渲 → 不会 reset 几何、
+  // 不会让编辑器失焦、不会重放 panelIn 动画。
+  //
+  // 注意：refining 状态下的内部结构变化（progress block 显隐、suggest chips
+  // 隐藏、按钮换 spinner 等）仍然走 renderPanel，因为那是用户主动确认操作
+  // 后的"语义变化"，重渲一次是符合预期的。
+  const refineSlotHidden = state.refineOpen ? '' : ' hidden';
+  const refineBlock = `
+        <div class="refine-slot${refineSlotHidden}" data-role="refine-slot">
+          <div class="refine-box ${refining ? 'loading' : ''}">
+            <div class="refine-head">
+              <span>${ICON_SPARK}<span>告诉我怎么调整这条提示词</span></span>
+              <button class="icon-btn" data-action="toggle-refine" title="收起">${ICON_CLOSE}</button>
+            </div>
+            <textarea
+              class="refine-input"
+              data-role="refine-input"
+              spellcheck="false"
+              placeholder="例如：改得更电影感、翻译成英文、删掉色调、加上 8k 高清等参数…"
+              ${refining ? 'disabled' : ''}
+            >${escapeText(refineInstruction)}</textarea>
+            ${
+              state.refineError
+                ? `<div class="refine-error">${escapeText(state.refineError)}</div>`
+                : ''
+            }
+            ${
+              refining
+                ? ''
+                : `<div class="refine-suggest">
+              ${SUGGESTIONS.map(
+                (s) =>
+                  `<button class="chip" data-action="refine-suggest" data-text="${escapeAttr(
+                    s
+                  )}">${escapeText(s)}</button>`
+              ).join('')}
+            </div>`
+            }
+            ${refineProgressBlock}
+            <div class="refine-actions">
+              <button class="btn ghost" data-action="toggle-refine" ${
+                refining ? 'disabled' : ''
+              }>取消</button>
+              <button class="btn primary" data-action="run-refine" ${refining ? 'disabled' : ''}>
+                ${
+                  refining
+                    ? `<span class="spinner"></span><span>调整中…</span>`
+                    : `${ICON_SPARK}<span>让 AI 调整</span>`
+                }
+              </button>
+            </div>
+          </div>
+        </div>
+      `;
+
+  // panel-row 的初始 class：版本侧栏的可见状态完全由 .versions-open 决定，
+  // 当用户没版本数据可看时（versionCount===0）也不要给开关 class，
+  // 避免出现"按钮看着是激活的，但 sidebar 空着滑出来"。
+  const versionsOpenClass =
+    state.versionsOpen && versionCount > 0 ? ' versions-open' : '';
 
   return `
     <div class="header">
@@ -184,36 +244,47 @@ export function panelHtml(state: PanelState): string {
       </div>
       <button class="icon-btn" data-action="close" title="关闭">${ICON_CLOSE}</button>
     </div>
-    <div class="body">
-      <div class="thumb"><img src="${safeImg}" alt="" /></div>
-      <textarea class="prompt-text" data-role="editor" spellcheck="false" placeholder="可在此修改提示词…">${escapeText(
-        draft
-      )}</textarea>
-      <div class="meta-row">
-        <div class="meta-left">
-          <button
-            class="link-btn ${state.versionsOpen ? 'active' : ''}"
-            data-action="toggle-versions"
-            ${versionCount === 0 ? 'disabled' : ''}
-          >${ICON_HISTORY}<span>历史版本 · ${versionCount}</span></button>
-          <button
-            class="link-btn ${state.refineOpen ? 'active' : ''}"
-            data-action="toggle-refine"
-          >${ICON_SPARK}<span>AI 调整</span></button>
+    <div class="panel-row${versionsOpenClass}">
+      ${versionsSidebar}
+      <div class="body">
+        <div class="thumb"><img src="${safeImg}" alt="" /></div>
+        <textarea
+          class="prompt-text${refining ? ' streaming' : ''}"
+          data-role="editor"
+          spellcheck="false"
+          placeholder="${refining ? '正在接收 AI 调整后的提示词…' : '可在此修改提示词…'}"
+          ${refining ? 'readonly' : ''}
+        >${escapeText(refining && refineHasPartial ? state.refinePartial || '' : draft)}</textarea>
+        <div class="meta-row">
+          <div class="meta-left">
+            <button
+              class="link-btn ${state.versionsOpen ? 'active' : ''}"
+              data-action="toggle-versions"
+              ${versionCount === 0 ? 'disabled' : ''}
+            >${ICON_HISTORY}<span>历史版本 · ${versionCount}</span></button>
+            <button
+              class="link-btn ${state.refineOpen ? 'active' : ''}"
+              data-action="toggle-refine"
+            >${ICON_SPARK}<span>AI 调整</span></button>
+            <button
+              class="link-btn"
+              data-action="open-in-library"
+              title="跳转到提示词库，进行更完整的编辑、备注、版本管理"
+            >${ICON_LIBRARY}<span>在提示词库中编辑</span></button>
+          </div>
+          <span class="dirty-hint ${!refining && dirty ? 'show' : ''}">已修改，未保存</span>
         </div>
-        <span class="dirty-hint ${dirty ? 'show' : ''}">已修改，未保存</span>
-      </div>
-      ${refineBlock}
-      ${versionsBlock}
-      <div class="actions">
-        <button class="btn ghost" data-action="retry">${ICON_REFRESH}<span>重新生成</span></button>
-        <button class="btn ghost ${dirty ? '' : 'disabled'}" data-action="reset" ${
+        ${refineBlock}
+        <div class="actions">
+          <button class="btn ghost" data-action="retry">${ICON_REFRESH}<span>重新生成</span></button>
+          <button class="btn ghost ${dirty ? '' : 'disabled'}" data-action="reset" ${
     dirty ? '' : 'disabled'
   }>撤销修改</button>
-        <button class="btn ${dirty ? 'primary' : 'ghost disabled'}" data-action="save" ${
+          <button class="btn ${dirty ? 'primary' : 'ghost disabled'}" data-action="save" ${
     dirty ? '' : 'disabled'
   }>${ICON_SAVE}<span>保存为新版本</span></button>
-        <button class="btn primary" data-action="copy">${ICON_COPY}<span>复制</span></button>
+          <button class="btn primary" data-action="copy">${ICON_COPY}<span>复制</span></button>
+        </div>
       </div>
     </div>
   `;

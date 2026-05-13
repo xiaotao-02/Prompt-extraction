@@ -1,7 +1,23 @@
 /**
- * 提示词「策略档位」—— 组件 + 版本两层模型。
+ * 提示词「策略档位」—— 组件 + 版本两层模型的**重对象层 + 解析层**。
  *
- * ──────────────── 设计动机 ────────────────
+ * ──────────────── 文件分工 ────────────────
+ * 这一层的内容**重**：4 套 OutputStyle 指令文本（每套几 KB 中英文 prompt）、
+ * 采样参数注册表、自定义模板拼接策略注册表，加起来 ~26KB；外加把组件版本
+ * 引用展开成扁平 ResolvedStrategy 的解析函数。
+ *
+ * 真正的"档位元信息"——`StrategyId` 字面量联合 / `STRATEGIES` 映射 /
+ * `STRATEGY_LABELS` / `DEFAULT_STRATEGY_ID` / `StrategyDefinition` 等接口——全部
+ * 物理迁到 `./strategies-meta`。**content script 只 import strategies-meta**，
+ * 这样 Vite/Rollup 不会把这里几 KB 的 STYLE_PROMPT_SETS 通过 shared chunk
+ * 顺手打进 content bundle。详细的拆分动机见 `strategies-meta.ts` 顶部注释。
+ *
+ * 对外门面：本文件 re-export 了 strategies-meta 的所有 type / value，所以
+ * service worker / SettingsView / api/extract.ts 等仍可继续
+ * `import { STRATEGIES, getStrategy, ... } from '@/lib/strategies'`，迁移成本为零。
+ * 只有对 bundle 体积敏感的 content script 改为直接 import strategies-meta。
+ *
+ * ──────────────── 设计动机（保留作为档位结构的设计文档） ────────────────
  * 早期版本里一档「策略」是一坨硬绑死的配置：
  *   { 4 套 stylePrompts, temperature, maxTokens, customPosition }
  * 每加一档就得把这 4 项整体复制一遍。两个直接后果：
@@ -28,30 +44,47 @@
  * - 加新版本（比如 v0.1.x 起把 Midjourney 指令改成 v7）只需要往
  *   STYLE_PROMPT_SETS 加一条；想让某档跟进就把它的引用换掉，老的版本永远
  *   停在原处，历史档不会被污染。
- * - 加新策略（如 "ocr-strict"）只需在 STRATEGIES 写一条引用组合，无需粘贴
- *   字符串，避免漂移。
+ * - **加 / 删一档策略只改 1 处**：在 `strategies-meta.ts` 的 STRATEGIES_INTERNAL
+ *   里加 / 删一个 key 即可。StrategyId 类型由 `keyof typeof STRATEGIES_INTERNAL`
+ *   自动派生；STRATEGY_LIST 由 `getStrategyList()` 按声明顺序自动产出；
+ *   STRATEGY_LABELS 由对象遍历自动派生；types.ts / SettingsView / loading
+ *   面板的 strategy badge 全部跟随，不再分别去 4 个文件改 5 处再担心漏改一个
+ *   就静默走默认值。
  * - 后续如果开放高级用户「自由组合」入口，UI 层只需要照着这 3 张版本表渲染
  *   下拉，存进 settings 时也就是 3 个字符串，结构天然就支持了。
- *
- * 当前内置两档（行为完全等价 —— v0.1.1 ~ v0.1.6 这 6 个版本里 4 项配置一字未改）：
- *   - classic  : "v0.1.5 策略"——指令 v0.1.0 / 采样 v0.1.0 / 拼接 v0.1.0
- *   - v016     : "v0.1.6 策略"——同样引用 v0.1.0 那组组件，独立列出只是给习惯
- *                按版本号回滚的用户一个显式入口。如果将来想单独迭代某一档，
- *                只需把它的 components 引用换成新版本号，不影响另一档。
  */
 
-import type { OutputStyle, StrategyId } from './types';
+import type { OutputStyle } from './types';
+import {
+  STRATEGIES,
+  DEFAULT_STRATEGY_ID,
+  type StrategyId,
+  type StrategyDefinition,
+  type StylePromptSetVersion,
+  type SamplingVersion,
+  type CustomJoinVersion,
+  type CustomJoinPosition,
+} from './strategies-meta';
+
+// 把 meta 层全部对外 re-export，让消费方继续 `from '@/lib/strategies'` 拿全套 API。
+// content script 那一侧（loading.ts）改为直接 import strategies-meta 是性能优化，
+// 不是 API 拆分——逻辑上 meta 仍然是 strategies 命名空间的一部分。
+export {
+  STRATEGIES,
+  DEFAULT_STRATEGY_ID,
+  STRATEGY_LABELS,
+  type StrategyId,
+  type StrategyDefinition,
+  type StrategyComponents,
+  type StylePromptSetVersion,
+  type SamplingVersion,
+  type CustomJoinVersion,
+  type CustomJoinPosition,
+} from './strategies-meta';
 
 // ============================================================
 // 1. 组件版本注册表
 // ============================================================
-
-/** stylePromptSet 组件的版本号。新增版本时只追加，不改老版本（历史档要靠它锚定）。 */
-export type StylePromptSetVersion = 'v0.1.0' | 'v0.1.1' | 'v0.2.2';
-/** sampling 组件的版本号。 */
-export type SamplingVersion = 'v0.1.0' | 'v0.2.2';
-/** customJoin 组件的版本号。 */
-export type CustomJoinVersion = 'v0.1.0' | 'v0.2.2';
 
 // ----- stylePromptSet 各版本 -----
 
@@ -171,13 +204,6 @@ export const SAMPLING_PROFILES: Record<SamplingVersion, SamplingProfile> = {
 
 // ----- customJoin 各版本 -----
 
-/**
- * 用户在「额外提示词」里填的内容如何与 base 拼接：
- *   - 'prepend' = `${custom}\n\n${base}`           —— 让自定义当一等公民
- *   - 'append'  = `${base}\n\n额外要求：${custom}` —— 经典版兼容写法
- */
-export type CustomJoinPosition = 'prepend' | 'append';
-
 export const CUSTOM_JOINS: Record<CustomJoinVersion, CustomJoinPosition> = {
   'v0.1.0': 'append',
   // v0.2.2：从 v0.1.0 的 append 切换到 prepend。
@@ -190,46 +216,19 @@ export const CUSTOM_JOINS: Record<CustomJoinVersion, CustomJoinPosition> = {
 };
 
 // ============================================================
-// 2. 策略 = 组件版本组合
+// 2. 策略 = 组件版本组合（resolve 层）
 // ============================================================
-
-/**
- * 一档策略选用的 3 个组件版本。
- *
- * 把它独立成一个 interface 而不是直接展开到 StrategyDefinition，是为了在 UI 上
- * 用一行紧凑的"指纹"显示出来（如 `指令集@v0.1.0 · 采样@v0.1.0 · 拼接@v0.1.0`），
- * 让用户一眼看出"我现在选的这档由哪 3 个版本组成"，对比不同策略时也能一眼看到差异点。
- */
-export interface StrategyComponents {
-  stylePromptSet: StylePromptSetVersion;
-  sampling: SamplingVersion;
-  customJoin: CustomJoinVersion;
-}
-
-/**
- * 内部存储：一档策略 = id + 元信息（label/description）+ 它选用的组件版本组合。
- *
- * 没有任何具体的 stylePrompts / temperature / maxTokens 字段——这些都从
- * `components` 里 resolve 出来，保证"一处修改组件版本，所有引用它的策略同步生效"。
- */
-export interface StrategyDefinition {
-  id: StrategyId;
-  /** UI 上显示的简短名 */
-  label: string;
-  /** UI 上显示的一句话说明，告诉用户切到这档大概会有什么不同 */
-  description: string;
-  /** 这档策略选用的 3 个组件版本组合。 */
-  components: StrategyComponents;
-}
 
 /**
  * 对外暴露给消费侧（api/index.ts、SettingsView 等）的扁平化结果。
  *
- * = StrategyDefinition + 由 components 解析出来的 4 个具体值。下游代码只读这 4 个
- * 字段时和重构前的 PromptStrategy 完全一致，迁移成本为零。需要展示组件版本指纹时
- * 再额外读 `components` 字段。
+ * = id（来自 STRATEGIES 的 key）+ StrategyDefinition 内容 + 由 components 解析
+ * 出来的 4 个具体值。下游代码读 stylePrompts / temperature / maxTokens /
+ * customPosition 这 4 个字段的写法和重构前的 PromptStrategy 完全一致，迁移成本为零。
+ * 需要展示组件版本指纹时再额外读 `components` 字段。
  */
 export interface ResolvedStrategy extends StrategyDefinition {
+  id: StrategyId;
   stylePrompts: Record<OutputStyle, string>;
   temperature: number;
   maxTokens: number;
@@ -245,113 +244,33 @@ export interface ResolvedStrategy extends StrategyDefinition {
 export type PromptStrategy = ResolvedStrategy;
 
 // ============================================================
-// 3. 内置策略：2 个 id × 各自的组件版本引用
-// ============================================================
-
-export const STRATEGIES: Record<StrategyId, StrategyDefinition> = {
-  // classic 在 UI 上显示为 "v0.1.5 策略" —— 因为查 git tag v0.1.1 ~ v0.1.6 的源码，
-  // stylePrompts/temperature/maxTokens/customPosition 这 4 项一字未改，v0.1.5
-  // 那一版的行为本质就是 v0.1.0 那组组件版本。这里 id 仍叫 'classic' 是为了
-  // 兼容老用户 settings 里持久化的字段（旧值不会因为重命名而失效）。
-  classic: {
-    id: 'classic',
-    label: 'v0.1.5 策略',
-    description:
-      '温度 0.4 · 上限 1024 token · 自定义模板尾部追加。完整复刻 v0.1.5 那一版的提示词与采样参数，输出短而稳，套话偏多，对早期用户语感最熟悉。',
-    components: {
-      stylePromptSet: 'v0.1.0',
-      sampling: 'v0.1.0',
-      customJoin: 'v0.1.0',
-    },
-  },
-  // v010：v0.1.1 初始版的显式回滚入口。数值上和 classic 完全等价（因为 v0.1.1 ~
-  // v0.1.6 这 6 个版本里这套配置一字未改），独立列出只是给"按版本号回滚"的
-  // 用户一个无歧义入口。物料零成本——3 个组件版本都指 v0.1.0。
-  v010: {
-    id: 'v010',
-    label: 'v0.1.0 策略',
-    description:
-      '温度 0.4 · 上限 1024 token · 自定义模板尾部追加。完整复刻 v0.1.1 初始版的行为（与"v0.1.5 策略"在数值上等价，因为 v0.1.1 ~ v0.1.6 期间这套配置未变）。用于按版本号回到最早一版的输出感。',
-    components: {
-      stylePromptSet: 'v0.1.0',
-      sampling: 'v0.1.0',
-      customJoin: 'v0.1.0',
-    },
-  },
-  // v016：本次升级 —— 指令层换上 v0.1.1（覆盖率清单 + 去模板句 + 去主观词），
-  // 采样与拼接保持 v0.1.0 不变。同温度同 token 上限下输出更紧、更有结构、更少
-  // 水词，总响应时长基本与 classic 持平。老用户 settings 里持久化的 'v016'
-  // 字段无需迁移，行为静默升级。
-  v016: {
-    id: 'v016',
-    label: 'v0.1.6 策略',
-    description:
-      '温度 0.4 · 上限 1024 token · 自定义模板尾部追加。v0.1.6 优化版：指令层加入覆盖率清单、禁模板句、禁主观词，采样参数与 v0.1.5 一致，速度不变但输出更紧凑、更有结构。',
-    components: {
-      stylePromptSet: 'v0.1.1',
-      sampling: 'v0.1.0',
-      customJoin: 'v0.1.0',
-    },
-  },
-  // v022：直接从 v0.1.0 演化的"v0.1.0 增强版"。设计思路只针对 v0.1.0 本身的 6
-  // 个具体短板做最小手术，未参考其它中间版本（v0.1.1 / v0.2.0 / v0.2.1）：
-  //   - 指令层：把 v0.1.0 的 7 个抽象方面换成 10 维度显式清单（主体类型 / 外貌 /
-  //     表情 / 姿态 / 服饰逐层 / 配饰 / 场景前中背景 / 光照四项 / 具体色名 / 画风
-  //     镜头），并加入"三禁 + 空槽位跳过 + 维度名不打印"4 条硬约束，把 v0.1.0
-  //     实测最常见的"模板开头 / 主观水词 / 脑补图外 / 凑词"4 类废 token 一次性
-  //     堵掉；
-  //   - 采样层：温度 0.4 → 0.3 让维度顺序稳定；maxTokens 1024 → 1280 给中文 10
-  //     维度展开预留 25% 余量，避免末段"画风 / 镜头"被截掉；
-  //   - 拼接层：append → prepend 让用户自定义偏好先入上下文，画风跟随性显著提升。
-  // 这一档优先级：还原度 ≈ 用户跟随性 ≫ 速度；用户 settings 旧值不会被动到，
-  // 想要这套新行为请主动切到 v022。
-  v022: {
-    id: 'v022',
-    label: 'v0.2.2 策略',
-    description:
-      '温度 0.3 · 上限 1280 token · 自定义模板前置。从 v0.1.0 直接演化：10 维度显式清单 + 三禁（模板句 / 主观水词 / 脑补图外）+ 空槽位静默跳过 + 维度名不打印。颜色强制具体色名、光照强制方向+强度+色温+质感。优先级：还原度 ≈ 用户跟随性 ≫ 速度。',
-    components: {
-      stylePromptSet: 'v0.2.2',
-      sampling: 'v0.2.2',
-      customJoin: 'v0.2.2',
-    },
-  },
-};
-
-/**
- * 新装用户的缺省策略。
- *
- * 选 classic（"v0.1.5 策略"）作为默认而不是 v016，是因为它在历史上是更早被
- * 大量用户感知的"原始行为基线"，措辞最稳；v016 只是给"我就要 v0.1.6 那一版
- * 输出感"的用户的显式回滚入口。两者数值等价，所以默认走哪一档对体验没差，
- * 这里更看重命名上的"基线感"。
- */
-export const DEFAULT_STRATEGY_ID: StrategyId = 'classic';
-
-// ============================================================
-// 4. resolve：把组件版本引用展开成可直接消费的扁平对象
+// 3. resolve：把组件版本引用展开成可直接消费的扁平对象
 // ============================================================
 
 /**
- * 把一份 StrategyDefinition 的组件版本组合解析成下游可以直接读的扁平结构。
+ * 把一档策略（按 id 索引到 STRATEGIES）解析成下游可以直接读的扁平结构。
  *
  * 解析失败（组件版本号未在注册表登记）时不静默兜底——直接抛错。原因是这种情况
  * 一定是代码 bug（比如 typo 了一个版本号），让它在开发期立刻暴露比线上吐空字符串
  * 安全得多。生产侧的"未知策略 id"由 getStrategy 在更上层兜底。
  */
-export function resolveStrategy(def: StrategyDefinition): ResolvedStrategy {
+export function resolveStrategy(id: StrategyId): ResolvedStrategy {
+  const def = STRATEGIES[id];
   const { stylePromptSet, sampling, customJoin } = def.components;
   const sp = STYLE_PROMPT_SETS[stylePromptSet];
   const sm = SAMPLING_PROFILES[sampling];
   const cj = CUSTOM_JOINS[customJoin];
   if (!sp || !sm || cj === undefined) {
     throw new Error(
-      `[strategies] 策略 "${def.id}" 引用了不存在的组件版本：` +
+      `[strategies] 策略 "${id}" 引用了不存在的组件版本：` +
         `stylePromptSet=${stylePromptSet}, sampling=${sampling}, customJoin=${customJoin}`
     );
   }
   return {
-    ...def,
+    id,
+    label: def.label,
+    description: def.description,
+    components: def.components,
     stylePrompts: sp,
     temperature: sm.temperature,
     maxTokens: sm.maxTokens,
@@ -370,24 +289,21 @@ export function resolveStrategy(def: StrategyDefinition): ResolvedStrategy {
  * temperature / maxTokens / customPosition 这 4 个字段的写法和重构前完全一致。
  */
 export function getStrategy(id: StrategyId | undefined | null): ResolvedStrategy {
-  const def =
-    id && id in STRATEGIES ? STRATEGIES[id as StrategyId] : STRATEGIES[DEFAULT_STRATEGY_ID];
-  return resolveStrategy(def);
+  const safeId: StrategyId = id && id in STRATEGIES ? (id as StrategyId) : DEFAULT_STRATEGY_ID;
+  return resolveStrategy(safeId);
 }
 
 /**
- * UI / 持久化两侧需要轮询的所有策略列表（保证渲染顺序稳定）。
+ * UI 侧需要轮询的所有策略列表，按 STRATEGIES 声明顺序返回。
  *
- * 顺序：v016（更新的版本号）→ classic（更早的版本号），按版本号由新到旧排，
- * 方便用户从更新档逐步往旧档对比效果。
+ * 写成函数（lazy）而不是 module-scope 顶层 const，是为了让 content script 这种
+ * 对 bundle 体积敏感的环境**只 import STRATEGY_LABELS 时不会把 STYLE_PROMPT_SETS
+ * 等重对象 trace 进 bundle**。函数体内的 resolveStrategy 调用要 evaluate 到
+ * heavy 维度表，所以只能让"实际用到列表的调用方"（如设置面板）通过函数显式触发。
  *
- * 这里在模块加载时就把所有策略 resolve 完毕，是因为组件版本表和策略定义都是
- * module-scope 静态常量，结果不会变；UI 渲染时直接拿到的就是含 stylePrompts /
- * temperature / maxTokens / customPosition 的扁平对象，开销忽略不计。
+ * 调用一次约 4~10 次解析、几十 µs，UI 渲染期间一次性算完即可，不需要缓存。
+ * 想要稳定的渲染顺序就调整 STRATEGIES_INTERNAL 里 key 的位置。
  */
-export const STRATEGY_LIST: ResolvedStrategy[] = [
-  resolveStrategy(STRATEGIES.v022),
-  resolveStrategy(STRATEGIES.v016),
-  resolveStrategy(STRATEGIES.classic),
-  resolveStrategy(STRATEGIES.v010),
-];
+export function getStrategyList(): ResolvedStrategy[] {
+  return (Object.keys(STRATEGIES) as StrategyId[]).map((id) => resolveStrategy(id));
+}

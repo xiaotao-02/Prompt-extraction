@@ -13,7 +13,12 @@ import {
   safeText,
 } from '../http';
 import { trimSlash } from '../url';
-import { safeProgress, type ExtractProgressFn } from '../types';
+import {
+  safeProgress,
+  safeRefineProgress,
+  type ExtractProgressFn,
+  type RefineProgressFn,
+} from '../types';
 
 export async function callGemini(
   cfg: ProviderConfig,
@@ -113,15 +118,28 @@ export async function callGemini(
   return acc;
 }
 
-/** Gemini 的纯文本（refine）通道。 */
+/**
+ * Gemini 的纯文本（refine）通道。
+ *
+ * onProgress 传入时切到 :streamGenerateContent?alt=sse 走 SSE 流式累积；
+ * 不传时走经典 :generateContent 一把拿全文。
+ */
 export async function callGeminiText(
   cfg: ProviderConfig,
   system: string,
-  user: string
+  user: string,
+  onProgress?: RefineProgressFn
 ): Promise<string> {
-  const url = `${trimSlash(cfg.baseUrl)}/models/${encodeURIComponent(
-    cfg.model
-  )}:generateContent?key=${encodeURIComponent(cfg.apiKey)}`;
+  const stream = !!onProgress;
+  // Gemini 的流式与非流式是两个不同 endpoint：streamGenerateContent?alt=sse vs generateContent。
+  // 这里按 onProgress 是否传入决定走哪条；未传入时保持老的非流式路径不变。
+  const finalUrl = stream
+    ? `${trimSlash(cfg.baseUrl)}/models/${encodeURIComponent(
+        cfg.model
+      )}:streamGenerateContent?alt=sse&key=${encodeURIComponent(cfg.apiKey)}`
+    : `${trimSlash(cfg.baseUrl)}/models/${encodeURIComponent(
+        cfg.model
+      )}:generateContent?key=${encodeURIComponent(cfg.apiKey)}`;
   const body = {
     systemInstruction: { parts: [{ text: system }] },
     contents: [{ role: 'user', parts: [{ text: user }] }],
@@ -130,18 +148,57 @@ export async function callGeminiText(
       maxOutputTokens: 1024,
     },
   };
-  const resp = await fetch(url, {
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+  if (stream) headers.Accept = 'text/event-stream';
+  const resp = await fetch(finalUrl, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers,
     body: JSON.stringify(body),
   });
   if (!resp.ok) {
     throw new Error(await describeRespFailure(resp, 'Gemini'));
   }
-  const json = await parseJsonResponse<{
-    candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }>;
-  }>(resp, 'Gemini');
-  const parts = json?.candidates?.[0]?.content?.parts;
-  if (!Array.isArray(parts)) throw new Error('Gemini 返回内容异常');
-  return parts.map((p: { text?: string }) => p.text || '').join('');
+
+  if (!stream || !isSseResponse(resp)) {
+    const json = await parseJsonResponse<{
+      candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }>;
+    }>(resp, 'Gemini');
+    const parts = json?.candidates?.[0]?.content?.parts;
+    if (!Array.isArray(parts)) throw new Error('Gemini 返回内容异常');
+    return parts.map((p: { text?: string }) => p.text || '').join('');
+  }
+
+  let acc = '';
+  let lastFlushAt = 0;
+  let sawFirstChunk = false;
+  for await (const data of readSseDataChunks(resp)) {
+    let json: {
+      candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }>;
+    };
+    try {
+      json = JSON.parse(data);
+    } catch {
+      continue;
+    }
+    const parts = json.candidates?.[0]?.content?.parts;
+    if (!Array.isArray(parts)) continue;
+    let added = '';
+    for (const p of parts) if (p?.text) added += p.text;
+    if (!added) continue;
+    acc += added;
+    if (!sawFirstChunk) {
+      sawFirstChunk = true;
+      safeRefineProgress(onProgress, { stage: 'streaming', partial: acc });
+      lastFlushAt = Date.now();
+      continue;
+    }
+    const now = Date.now();
+    if (now - lastFlushAt >= STREAM_FLUSH_INTERVAL_MS) {
+      lastFlushAt = now;
+      safeRefineProgress(onProgress, { stage: 'streaming', partial: acc });
+    }
+  }
+  if (!acc) throw new Error('Gemini 返回内容为空');
+  safeRefineProgress(onProgress, { stage: 'streaming', partial: acc });
+  return acc;
 }
