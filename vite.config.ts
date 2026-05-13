@@ -21,7 +21,10 @@ export default defineConfig({
   },
   build: {
     target: 'esnext',
-    minify: 'esbuild',
+    // 临时关闭压缩 + 打开 sourcemap，确保 React 抛错时给的是完整堆栈而不是 #310 这样的数字代码。
+    // 排查完后可以恢复 minify: 'esbuild'。
+    minify: false,
+    sourcemap: true,
     rollupOptions: {
       output: {
         chunkFileNames: 'assets/chunk-[hash].js',

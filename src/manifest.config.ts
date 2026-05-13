@@ -40,9 +40,6 @@ export default defineManifest({
     'scripting',
     'activeTab',
     'clipboardWrite',
-    'alarms',
-    'notifications',
-    'management',
   ],
   host_permissions: ['<all_urls>'],
   web_accessible_resources: [

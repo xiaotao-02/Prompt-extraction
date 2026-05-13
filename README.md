@@ -22,7 +22,7 @@
 - **对话式 AI 调整**：用一句话告诉插件"改得更电影感 / 翻译成英文 / 加 8k masterpiece"，模型会基于现有提示词重写并自动存为新版本
 - **本地历史记录**：popup 弹窗内查看、复制、删除最近 100 条
 - **跨设备同步配置**：通过 `chrome.storage.sync` 同步 API Key 与偏好
-- **自动更新检测**：定期检查新版本，工具栏红点提示 + 桌面通知 + 一键更新
+- **手动检查更新**：在「设置 → 检查更新」面板里一键比对最新 GitHub Release，提示是否有新版可下载
 - **隐私友好**：API Key 仅保存在本地浏览器，扩展不连接任何第三方服务器
 
 ## 技术栈
@@ -52,6 +52,37 @@ npm run zip
 ```
 
 ### 加载到 Chrome
+
+#### 方式 A：一键脚本（推荐）
+
+```bash
+# Windows / macOS / Linux 通用
+npm run install:chrome
+
+# 或者使用 Edge
+npm run install:edge
+```
+
+> Windows 用户也可以直接 **双击仓库根目录的 `install.bat`**，第一次会自动 `npm install` + `npm run build` + 启动 Chrome 并加载扩展，无需手动操作 `chrome://extensions`。
+
+脚本会自动：
+
+1. 检测 / 自动构建 `dist/`（没有就跑一次 `npm run build`）
+2. 自动定位本机 Chrome / Edge 可执行文件（找不到时可通过 `CHROME_PATH` 环境变量手动指定）
+3. 用一个**项目独立的 profile**（`.chrome-dev-profile/`）启动浏览器，并通过 `--load-extension=<dist 绝对路径>` 在启动时直接加载本扩展
+4. 顺便把 `chrome://extensions/` 打开给你确认
+
+可选参数：
+
+| 参数 | 说明 |
+| --- | --- |
+| `--build` | 启动前强制重新构建（默认仅在 `dist/` 不存在时构建） |
+| `--browser=edge` | 使用 Microsoft Edge 而不是 Chrome |
+| `--use-default-profile` | 使用你的系统默认 Chrome profile（**需要先彻底关闭 Chrome**，否则参数会被忽略） |
+
+> 为什么默认用独立 profile？因为如果你已经在用主 Chrome，再传 `--load-extension` 给同一个 profile 会被现有进程吞掉、不生效。独立 profile 既保证一键稳定加载，又不会污染你日常浏览器；这个 profile 会被复用，登录态/扩展配置都会沉淀在 `.chrome-dev-profile/`。
+
+#### 方式 B：手动加载（传统方式）
 
 1. 执行 `npm run build`，生成 `dist/` 目录
 2. 打开 `chrome://extensions`
@@ -105,34 +136,15 @@ scripts/           # 图标生成 / zip 打包
 
 跳过发版：在 commit message 里加 `[skip release]` 即可（机器人自己产生的 `chore(release):` commit 也会被自动跳过，不会循环触发）。
 
-> 用户那侧的扩展默认更新源就是这个仓库，因此 Release 一旦发出，所有装了插件的用户在下一次定时检查（默认 24 小时一次）或手动点「立即检查」时就会收到更新。
+> 用户那侧的扩展默认更新源就是这个仓库，因此 Release 一旦发出，所有装了插件的用户在「设置 → 检查更新」中点一下「立即检查更新」即可收到提示。
 
-## 自动更新
+## 检查更新
 
-扩展内置了一个轻量更新检查机制，**默认更新源已配置为本仓库** [`xiaotao-02/Prompt-extraction`](https://github.com/xiaotao-02/Prompt-extraction)，安装后无需手动填写即可收到 Release 更新通知。
+扩展内置一个**手动**的更新检查面板，更新源固定为本仓库 [`xiaotao-02/Prompt-extraction`](https://github.com/xiaotao-02/Prompt-extraction) 的最新 Release。
 
-1. 如需切换更新源，可打开 **设置 → 自动更新**，在「更新源」中填入：
-   - GitHub 仓库简写：`owner/repo`（自动转换为 `https://api.github.com/repos/<owner>/<repo>/releases/latest`），或
-   - 完整 GitHub 仓库地址（`https://github.com/owner/repo[.git]`，会被识别并转换为同一接口），或
-   - 自定义 JSON URL，返回结构如下：
-     ```json
-     {
-       "version": "0.2.0",
-       "name": "v0.2.0",
-       "downloadUrl": "https://example.com/extension.zip",
-       "releaseUrl": "https://example.com/release/0.2.0",
-       "releaseNotes": "更新说明",
-       "publishedAt": "2026-05-13T00:00:00Z"
-     }
-     ```
-2. 后台 service worker 通过 `chrome.alarms` 按设定频率（默认每 24 小时）请求更新源，与 manifest 中的 `version` 比较；若发现新版：
-   - 工具栏图标右下角出现紫色 `NEW` 角标
-   - popup 顶部显示更新横幅
-   - 系统弹出桌面通知（可在设置中关掉）
-3. 点击「一键更新」时：
-   - 通过 **Chrome 网上应用店** 安装的扩展会调用 `chrome.runtime.requestUpdateCheck()` 触发原生更新并自动重载
-   - **开发者模式**（加载 `dist/` 目录）的扩展无法被脚本覆盖，会自动打开发布页让你下载新 zip，并提示你到 `chrome://extensions` 重新加载
-4. 你随时可以「忽略此版本」，下次发布更高的版本号时会再次提示。
+- 打开 **设置 → 检查更新**，点击「立即检查更新」即可向 GitHub Releases API 拉取最新版本，并与当前扩展的 `version` 比较。
+- 检测结果会直接展示在面板上：当前版本号、最近一次检查时间，以及（若有新版本）发布说明与「前往发布页」链接。
+- 没有定时任务、桌面通知或工具栏角标，更新动作完全由用户主动触发；下载新版本后到 `chrome://extensions` 重新加载即可。
 
 ## 常见问题
 

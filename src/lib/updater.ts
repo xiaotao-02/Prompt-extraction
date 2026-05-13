@@ -1,21 +1,12 @@
 import type { UpdateCheckResult, UpdateInfo, UpdateSettings } from './types';
 import { isNewerVersion } from './version';
 
-export const UPDATE_ALARM_NAME = 'image-prompt-update-check';
-export const MIN_INTERVAL_MINUTES = 30;
-
 // 内置默认更新源：插件官方 GitHub 仓库的 Releases。
-// 用户在「设置 → 自动更新」里填写的 feedUrl 仍会覆盖这里的默认值。
 export const DEFAULT_FEED_URL = 'xiaotao-02/Prompt-extraction';
 
 export const DEFAULT_UPDATE_SETTINGS: UpdateSettings = {
-  enabled: true,
-  feedUrl: DEFAULT_FEED_URL,
-  intervalHours: 24,
-  notifyDesktop: true,
   lastCheckedAt: 0,
   lastResult: null,
-  dismissedVersion: '',
 };
 
 export function getCurrentVersion(): string {
@@ -30,7 +21,6 @@ export function getCurrentVersion(): string {
  * 把用户输入的更新源规范化为可直接 fetch 的 URL。
  * - "owner/repo"                                → GitHub Releases Latest API
  * - "https://github.com/owner/repo[/...]"       → GitHub Releases Latest API
- *   （否则会拿到一个 HTML 页面，触发 JSON 解析报错）
  * - 完整 https URL                              → 原样使用
  * - 其他/空值                                    → 返回 null
  */
@@ -131,8 +121,6 @@ export async function fetchLatestRelease(feedUrl: string): Promise<UpdateInfo | 
     cache: 'no-store',
   });
   if (!resp.ok) {
-    // GitHub 的 /releases/latest 在"仓库存在但还没发布任何 Release"时也会返回 404，
-    // 这是常见情况而非真正的错误，给出更友好的提示。
     if (resp.status === 404 && isGithubReleasesLatest) {
       throw new Error(
         '更新源仓库尚未发布任何 Release（GitHub 返回 404）。请先在该仓库的 Releases 页面发布一个版本，或换用其它更新源。'
@@ -195,73 +183,6 @@ export async function performUpdateCheck(feedUrl: string): Promise<UpdateCheckRe
       error: e instanceof Error ? e.message : String(e),
     };
   }
-}
-
-/**
- * 仅当扩展通过 Chrome Web Store 安装且 manifest 中带 update_url 时，
- * Chrome 才能真正地自动更新。该函数封装这一原生流程，返回是否成功触发更新。
- */
-export async function tryNativeUpdate(): Promise<{
-  status: 'no_update' | 'throttled' | 'update_available' | 'unsupported' | 'error';
-  reloaded?: boolean;
-  message?: string;
-}> {
-  if (!chrome.runtime?.requestUpdateCheck) {
-    return { status: 'unsupported', message: '当前运行环境不支持原生更新' };
-  }
-  try {
-    const result = await new Promise<{ status: string }>((resolve, reject) => {
-      try {
-        chrome.runtime.requestUpdateCheck((status, details) => {
-          if (chrome.runtime.lastError) {
-            reject(new Error(chrome.runtime.lastError.message || 'requestUpdateCheck failed'));
-            return;
-          }
-          resolve({ status: String(status), ...(details || {}) });
-        });
-      } catch (err) {
-        reject(err);
-      }
-    });
-    if (result.status === 'update_available') {
-      setTimeout(() => {
-        try {
-          chrome.runtime.reload();
-        } catch {
-          /* ignore */
-        }
-      }, 200);
-      return { status: 'update_available', reloaded: true };
-    }
-    if (result.status === 'throttled') {
-      return { status: 'throttled', message: 'Chrome 更新检查被限流，请稍后再试' };
-    }
-    return { status: 'no_update' };
-  } catch (e) {
-    return {
-      status: 'unsupported',
-      message: e instanceof Error ? e.message : String(e),
-    };
-  }
-}
-
-/**
- * 判断当前扩展是否是通过 Chrome Web Store 正常安装的。
- * 开发者模式加载 (installType === 'development') 时无法自动更新。
- */
-export async function isStoreInstalled(): Promise<boolean> {
-  if (!chrome.management?.getSelf) return false;
-  try {
-    const info = await chrome.management.getSelf();
-    return info.installType === 'normal' && Boolean(info.updateUrl);
-  } catch {
-    return false;
-  }
-}
-
-export function clampIntervalHours(h: number): number {
-  if (!Number.isFinite(h) || h <= 0) return 24;
-  return Math.max(0.5, Math.min(168, h));
 }
 
 export { isNewerVersion };

@@ -7,3 +7,5 @@ dist-zip
 .idea
 .env
 .env.local
+.chrome-dev-profile
+

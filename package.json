@@ -11,6 +11,8 @@
     "icons": "node scripts/generate-icons.mjs",
     "icons:from-image": "powershell -ExecutionPolicy Bypass -File scripts/resize-icons.ps1 && node scripts/optimize-pngs.mjs",
     "zip": "npm run build && node scripts/zip.mjs",
+    "install:chrome": "node scripts/install-to-chrome.mjs",
+    "install:edge": "node scripts/install-to-chrome.mjs --browser=edge",
     "lint": "tsc -b --noEmit"
   },
   "dependencies": {

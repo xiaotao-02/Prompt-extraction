@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Save, Sparkles, Settings as SettingsIcon, BookOpen, Check } from 'lucide-react';
+import { Save, Settings as SettingsIcon, BookOpen, Check } from 'lucide-react';
 import SettingsView from './SettingsView';
 import PromptLibrary from './PromptLibrary';
 
@@ -52,9 +52,11 @@ export default function OptionsApp() {
       <header className="w-full border-b border-zinc-200 dark:border-zinc-800 bg-white/60 dark:bg-zinc-950/60 backdrop-blur sticky top-0 z-10">
         <div className="max-w-5xl mx-auto px-8 py-4 flex items-center justify-between gap-4">
           <div className="flex items-center gap-3 min-w-0">
-            <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-indigo-500 to-violet-500 flex items-center justify-center shadow-sm flex-none">
-              <Sparkles className="w-5 h-5 text-white" />
-            </div>
+            <img
+              src={chrome.runtime.getURL('icons/icon-128.png')}
+              alt="Prompt Extracto"
+              className="w-10 h-10 rounded-xl shadow-sm flex-none object-cover"
+            />
             <div className="min-w-0">
               <h1 className="text-lg font-semibold truncate">Prompt Extracto</h1>
               <p className="text-xs text-zinc-500 truncate">

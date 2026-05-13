@@ -22,7 +22,6 @@ import {
   restorePromptVersion,
 } from '@/lib/storage';
 import type { HistoryItem, PromptVersion, RefineResponse } from '@/lib/types';
-import UpdateBanner from './UpdateBanner';
 
 const REFINE_SUGGESTIONS = [
   '翻译成英文',
@@ -158,9 +157,11 @@ export default function PopupApp() {
     <div className="flex flex-col max-h-[600px]">
       <header className="flex items-center justify-between px-4 py-3 border-b border-zinc-200 dark:border-zinc-800">
         <div className="flex items-center gap-2">
-          <div className="w-7 h-7 rounded-lg bg-gradient-to-br from-indigo-500 to-violet-500 flex items-center justify-center">
-            <Sparkles className="w-4 h-4 text-white" />
-          </div>
+          <img
+            src={chrome.runtime.getURL('icons/icon-48.png')}
+            alt="Prompt Extracto"
+            className="w-7 h-7 rounded-lg object-cover"
+          />
           <div>
             <div className="text-sm font-semibold leading-none">提示词提取器</div>
             <div className="text-[10px] text-zinc-500 mt-0.5">右键图片 → 提取提示词</div>
@@ -185,8 +186,6 @@ export default function PopupApp() {
           </button>
         </div>
       </header>
-
-      <UpdateBanner />
 
       <div className="flex-1 overflow-y-auto">
         {list.length === 0 ? (

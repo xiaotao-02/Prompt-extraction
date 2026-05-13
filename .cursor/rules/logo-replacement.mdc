@@ -1,0 +1,50 @@
+---
+description: 更换插件 logo / 图标时必须全面替换所有出现位置
+alwaysApply: true
+---
+
+# Logo / 图标全面替换约定
+
+每当用户要求"换图标"、"换 logo"、"换 icon"、"换图片"，**必须**把以下全部出现位置一次性更新到位，不允许只换 PNG。
+
+## 标准更换流程
+
+1. **源图**：将新图覆盖到 `public/icons-src/source.png`
+2. **生成 + 压缩 4 个标准尺寸 PNG**：
+   ```bash
+   npm run icons:from-image
+   ```
+   这会跑 `scripts/resize-icons.ps1`（中心裁剪 + HighQualityBicubic 缩放）和 `scripts/optimize-pngs.mjs`（无损 PNG 重压缩）。
+3. **必须清理 dist 后再构建**（vite/@crxjs 增量缓存会让旧图保留）：
+   ```powershell
+   Remove-Item -Recurse -Force dist
+   npm run build
+   ```
+4. **替换页面内的品牌 logo**（这一步最容易遗漏）：
+   - `src/options/OptionsApp.tsx` 顶部 header logo → `<img src={chrome.runtime.getURL('icons/icon-128.png')} />`
+   - `src/popup/PopupApp.tsx` 头部 logo → `<img src={chrome.runtime.getURL('icons/icon-48.png')} />`
+   - 任何新增 popup/options/onboarding 页面里的品牌位置同理
+
+## 必须排查的"隐藏副本"
+
+每次换图后用 `Grep` 全局再过一遍，确认没有残留旧风格资源/引用：
+
+- 项目里其他 `.svg / .png / .ico` 静态资源（特别是 `public/icons/` 下除 `icon-*.png` 之外的孤儿文件，例如曾经出现过的 `public/icons/icon.svg`）
+- 代码里硬编码的旧主题渐变色（如 `#6366f1` / `#a855f7` / `indigo-500 to violet-500` 组合）如果它们是用作"品牌 logo 容器"的背景，要一起改成新图标 `<img>`；如果只是页面装饰渐变，则保留
+- README / docs / 商店素材里的 logo 截图
+
+## 不要动的"功能图标"
+
+下列是 lucide-react 功能图标，**不属于** logo，保留即可：
+
+- 空状态插画（如 PopupApp 的 `EmptyState` 里的 `<Sparkles>`）
+- 功能区装饰图标（如 SetupGuide 的 Auto-Refine `<Sparkles>`）
+- 设置/历史/复制/编辑等 UI 操作图标
+
+## 验收清单
+
+完成后必须确认：
+
+- [ ] `dist/icons/icon-{16,32,48,128}.png` 全部为新图
+- [ ] `dist/icons/` 下没有除 4 张 PNG 之外的其他图片（无 `icon.svg` 等残留）
+- [ ] 在 Chrome 中重新加载扩展，工具栏图标 / popup 头部 logo / options 头部 logo 视觉一致

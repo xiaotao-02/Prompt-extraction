@@ -1,29 +1,8 @@
 import { extractPrompt, refinePrompt } from '@/lib/api';
 import { fetchImageAsBase64, makeStorageThumbnail } from '@/lib/image';
-import {
-  addHistory,
-  appendPromptVersion,
-  getSettings,
-  getUpdateSettings,
-  patchUpdateSettings,
-  saveUpdateResult,
-} from '@/lib/storage';
-import type {
-  HistoryItem,
-  RefineResponse,
-  RuntimeMessage,
-  UpdateCheckResult,
-} from '@/lib/types';
-import {
-  UPDATE_ALARM_NAME,
-  MIN_INTERVAL_MINUTES,
-  clampIntervalHours,
-  getCurrentVersion,
-  isStoreInstalled,
-  performUpdateCheck,
-  tryNativeUpdate,
-} from '@/lib/updater';
-import { isNewerVersion } from '@/lib/version';
+import { addHistory, appendPromptVersion, getSettings, saveUpdateResult } from '@/lib/storage';
+import type { HistoryItem, RefineResponse, RuntimeMessage, UpdateCheckResult } from '@/lib/types';
+import { DEFAULT_FEED_URL, getCurrentVersion, performUpdateCheck } from '@/lib/updater';
 
 const MENU_ID = 'extract-image-prompt';
 /**
@@ -31,7 +10,6 @@ const MENU_ID = 'extract-image-prompt';
  * 内联 SVG、被遮罩覆盖的图片等），由内容脚本动态把它切到 visible:true。
  */
 const MENU_ID_FALLBACK = 'extract-image-prompt-fallback';
-const UPDATE_NOTIFICATION_ID = 'image-prompt-update-available';
 
 /**
  * 最近一次内容脚本探测到的"鼠标位置图片"。每个 tab 一份，避免不同
@@ -67,18 +45,22 @@ function ensureContextMenus(): void {
   });
 }
 
-chrome.runtime.onInstalled.addListener(async () => {
+chrome.runtime.onInstalled.addListener((details) => {
   ensureContextMenus();
-  await rescheduleUpdateAlarm();
-  // 安装/更新后清掉旧徽章，并立刻做一次轻量检查（不阻塞）
-  await refreshActionBadge();
-  void runScheduledCheck({ silent: true });
+  // 首次安装：自动打开设置页，引导用户配置 API 并设置「数据目录」。
+  // 这是"卸载/重装后能自动识别数据"工作流的关键一步 —— 用户必须在数据丢失前
+  // 主动挑一个目录绑定。reason === 'install' 只在第一次安装时触发，更新/启用不会。
+  if (details.reason === 'install') {
+    try {
+      chrome.runtime.openOptionsPage();
+    } catch {
+      /* ignore */
+    }
+  }
 });
 
-chrome.runtime.onStartup.addListener(async () => {
+chrome.runtime.onStartup.addListener(() => {
   ensureContextMenus();
-  await rescheduleUpdateAlarm();
-  await refreshActionBadge();
 });
 
 // 标签关闭时清理待处理的 fallback 图片缓存
@@ -130,20 +112,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true;
   }
   if (message?.type === 'CHECK_UPDATE') {
-    runUpdateCheck({ force: Boolean(message.payload?.force) }).then((result) => {
+    runUpdateCheck().then((result) => {
       sendResponse({ ok: true, result });
-    });
-    return true;
-  }
-  if (message?.type === 'APPLY_UPDATE') {
-    applyUpdate().then((res) => sendResponse(res));
-    return true;
-  }
-  if (message?.type === 'DISMISS_UPDATE') {
-    const v = message.payload?.version || '';
-    patchUpdateSettings({ dismissedVersion: v }).then(async () => {
-      await refreshActionBadge();
-      sendResponse({ ok: true });
     });
     return true;
   }
@@ -360,203 +330,16 @@ async function sendToTab(tabId: number, message: RuntimeMessage): Promise<void> 
   }
 }
 
-// ============== 自动更新 ==============
+// ============== 检查更新（仅手动） ==============
 
-chrome.alarms?.onAlarm.addListener((alarm) => {
-  if (alarm.name !== UPDATE_ALARM_NAME) return;
-  void runScheduledCheck({ silent: false });
-});
-
-chrome.storage.onChanged.addListener((changes, area) => {
-  if (area !== 'sync') return;
-  if (!changes['app_settings_v1']) return;
-  // 设置变更后重新调度 alarm，并刷新徽章
-  void rescheduleUpdateAlarm();
-  void refreshActionBadge();
-});
-
-if (chrome.notifications?.onClicked) {
-  chrome.notifications.onClicked.addListener(async (id) => {
-    if (id !== UPDATE_NOTIFICATION_ID) return;
-    chrome.notifications.clear(id);
-    await applyUpdate();
-  });
-}
-
-if (chrome.notifications?.onButtonClicked) {
-  chrome.notifications.onButtonClicked.addListener(async (id, btnIdx) => {
-    if (id !== UPDATE_NOTIFICATION_ID) return;
-    chrome.notifications.clear(id);
-    if (btnIdx === 0) {
-      await applyUpdate();
-    } else {
-      const u = await getUpdateSettings();
-      if (u.lastResult?.latest?.version) {
-        await patchUpdateSettings({ dismissedVersion: u.lastResult.latest.version });
-        await refreshActionBadge();
-      }
-    }
-  });
-}
-
-async function rescheduleUpdateAlarm(): Promise<void> {
-  if (!chrome.alarms) return;
-  const u = await getUpdateSettings();
-  await chrome.alarms.clear(UPDATE_ALARM_NAME).catch(() => false);
-  if (!u.enabled) return;
-  const periodInMinutes = Math.max(
-    MIN_INTERVAL_MINUTES,
-    Math.round(clampIntervalHours(u.intervalHours) * 60)
-  );
-  chrome.alarms.create(UPDATE_ALARM_NAME, {
-    periodInMinutes,
-    delayInMinutes: 1,
-  });
-}
-
-interface RunCheckOpts {
-  force?: boolean;
-  silent?: boolean;
-}
-
-async function runUpdateCheck(opts: RunCheckOpts = {}): Promise<UpdateCheckResult> {
-  const u = await getUpdateSettings();
-  const result = await performUpdateCheck(u.feedUrl);
+async function runUpdateCheck(): Promise<UpdateCheckResult> {
+  const result = await performUpdateCheck(DEFAULT_FEED_URL);
   await saveUpdateResult(result);
-  await refreshActionBadge();
-  if (result.hasUpdate && result.latest && !opts.silent) {
-    await maybeNotify(result);
-  }
   return result;
 }
 
-async function runScheduledCheck(opts: RunCheckOpts = {}): Promise<void> {
-  const u = await getUpdateSettings();
-  if (!u.enabled) return;
-  // 距上次检查不足 1 小时则跳过（避免重复触发）
-  if (!opts.force && u.lastCheckedAt && Date.now() - u.lastCheckedAt < 30 * 60_000) {
-    return;
-  }
-  await runUpdateCheck(opts);
-}
+// 兜底：service worker 冷启动时确保右键菜单一定存在。
+ensureContextMenus();
 
-async function maybeNotify(result: UpdateCheckResult): Promise<void> {
-  const u = await getUpdateSettings();
-  const latest = result.latest;
-  if (!latest) return;
-  if (u.dismissedVersion && !isNewerVersion(latest.version, u.dismissedVersion)) {
-    return;
-  }
-  if (!u.notifyDesktop || !chrome.notifications?.create) return;
-  try {
-    chrome.notifications.create(
-      UPDATE_NOTIFICATION_ID,
-      {
-        type: 'basic',
-        iconUrl: chrome.runtime.getURL('icons/icon-128.png'),
-        title: 'Prompt Extracto · 有新版本',
-        message: `新版本 v${latest.version} 已发布。\n当前版本 v${result.current}。`,
-        contextMessage: latest.name || '',
-        buttons: [{ title: '立即更新' }, { title: '忽略此版本' }],
-        priority: 1,
-        requireInteraction: false,
-      },
-      () => void chrome.runtime.lastError
-    );
-  } catch (err) {
-    console.warn('[PromptExtracto] notify failed', err);
-  }
-}
-
-async function refreshActionBadge(): Promise<void> {
-  if (!chrome.action) return;
-  const u = await getUpdateSettings();
-  const latest = u.lastResult?.latest;
-  const showDot =
-    !!latest &&
-    !!u.lastResult?.hasUpdate &&
-    isNewerVersion(latest.version, u.dismissedVersion || '0.0.0');
-  try {
-    if (showDot) {
-      await chrome.action.setBadgeText({ text: 'NEW' });
-      await chrome.action.setBadgeBackgroundColor({ color: '#7c3aed' });
-      await chrome.action.setTitle({
-        title: `Prompt Extracto\n有新版本 v${latest!.version} 可用`,
-      });
-    } else {
-      await chrome.action.setBadgeText({ text: '' });
-      await chrome.action.setTitle({ title: 'Prompt Extracto' });
-    }
-  } catch {
-    /* ignore */
-  }
-}
-
-async function applyUpdate(): Promise<{
-  ok: boolean;
-  mode: 'native' | 'manual';
-  message?: string;
-  downloadUrl?: string;
-  releaseUrl?: string;
-}> {
-  const u = await getUpdateSettings();
-  const latest = u.lastResult?.latest;
-
-  // 优先尝试 Chrome 商店原生更新（一键更新 + 自动 reload）
-  if (await isStoreInstalled()) {
-    const r = await tryNativeUpdate();
-    if (r.status === 'update_available') {
-      return { ok: true, mode: 'native', message: '已触发 Chrome 商店更新，正在重新加载…' };
-    }
-    if (r.status === 'no_update') {
-      return { ok: true, mode: 'native', message: '当前已是最新版本' };
-    }
-    if (r.status === 'throttled') {
-      return { ok: false, mode: 'native', message: r.message };
-    }
-    // 不支持 → 走手动模式
-  }
-
-  // 手动模式：打开下载/发布页让用户手动加载新版
-  const url = latest?.downloadUrl || latest?.releaseUrl;
-  if (!url) {
-    return {
-      ok: false,
-      mode: 'manual',
-      message: '尚未检测到新版本下载地址，请先在「设置 → 检查更新」中检查',
-    };
-  }
-  try {
-    await chrome.tabs.create({ url, active: true });
-    return {
-      ok: true,
-      mode: 'manual',
-      message: '已打开下载页面，下载后请到 chrome://extensions 重新加载已解压的扩展',
-      downloadUrl: latest?.downloadUrl,
-      releaseUrl: latest?.releaseUrl,
-    };
-  } catch (e) {
-    return {
-      ok: false,
-      mode: 'manual',
-      message: e instanceof Error ? e.message : String(e),
-    };
-  }
-}
-
-// 兜底：service worker 启动时如果没有 alarm / 右键菜单，则补建
-void (async () => {
-  // 即便 chrome.contextMenus.create 在 onInstalled 里失败过，每次 SW 启动
-  // 都重新注册一次，确保「提取图片提示词」菜单一定存在。
-  ensureContextMenus();
-  if (!chrome.alarms) return;
-  const all = await chrome.alarms.getAll();
-  if (!all.find((a) => a.name === UPDATE_ALARM_NAME)) {
-    await rescheduleUpdateAlarm();
-  }
-  await refreshActionBadge();
-})();
-
-// 暴露给 console 调试
 (globalThis as unknown as { __imagePromptVersion?: string }).__imagePromptVersion =
   getCurrentVersion();

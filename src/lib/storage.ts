@@ -8,13 +8,30 @@ import type {
   UpdateSettings,
 } from './types';
 import { PROVIDERS } from './providers';
-import { DEFAULT_FEED_URL, DEFAULT_UPDATE_SETTINGS } from './updater';
+import { DEFAULT_UPDATE_SETTINGS } from './updater';
 
 const SETTINGS_KEY = 'app_settings_v1';
 const HISTORY_KEY = 'history_v1';
+/**
+ * 「从端点拉取的模型列表」缓存。
+ *
+ * 单独放到 chrome.storage.local 而不是塞进 SETTINGS_KEY 一起 sync，
+ * 否则以下场景会**静默丢失 API Key**：
+ * 中转站经常一次返回几百个模型 → providers.<id>.discoveredModels 拼一起轻松 >8KB
+ * → chrome.storage.sync.set 抛 QUOTA_BYTES_PER_ITEM → 整个 settings 写入失败 → 用户
+ * 看见「保存成功」但重启后回滚。把这部分缓存挪到 local 后，sync 里的 settings 始终在
+ * 数百字节级别，永不会撑爆。
+ */
+const DISCOVERED_KEY = 'discovered_models_v1';
 // 后台管理页支持的最大记录数。提升到 300 是因为「提示词库」鼓励用户长期保留与整理结果。
 // 由于 chrome.storage.local 配额为 5MB 且我们已经把缩略图直接复用原图 URL，几乎不会触顶。
 const HISTORY_LIMIT = 300;
+
+interface DiscoveredCache {
+  models: string[];
+  at: number;
+}
+type DiscoveredMap = Partial<Record<ProviderId, DiscoveredCache>>;
 
 export const STYLE_PROMPTS: Record<string, string> = {
   'natural-zh':
@@ -50,34 +67,142 @@ function defaultSettings(): AppSettings {
   };
 }
 
+/**
+ * 在写入 chrome.storage.sync 前剥离体积大、易爆配额的字段（如 discoveredModels）。
+ * 这些字段会单独走 chrome.storage.local。
+ */
+function stripBulky(settings: AppSettings): AppSettings {
+  const providers = Object.fromEntries(
+    (Object.entries(settings.providers) as Array<[ProviderId, AppSettings['providers'][ProviderId]]>).map(
+      ([id, cfg]) => [
+        id,
+        {
+          id: cfg.id,
+          apiKey: cfg.apiKey,
+          baseUrl: cfg.baseUrl,
+          model: cfg.model,
+        },
+      ]
+    )
+  ) as AppSettings['providers'];
+  return { ...settings, providers };
+}
+
+async function readDiscoveredMap(): Promise<DiscoveredMap> {
+  try {
+    const data = await chrome.storage.local.get(DISCOVERED_KEY);
+    const raw = (data[DISCOVERED_KEY] as DiscoveredMap) || {};
+    return raw && typeof raw === 'object' ? raw : {};
+  } catch {
+    return {};
+  }
+}
+
+async function writeDiscoveredMap(map: DiscoveredMap): Promise<void> {
+  await chrome.storage.local.set({ [DISCOVERED_KEY]: map });
+}
+
 export async function getSettings(): Promise<AppSettings> {
-  const data = await chrome.storage.sync.get(SETTINGS_KEY);
-  const stored = data[SETTINGS_KEY] as Partial<AppSettings> | undefined;
+  const [syncData, discovered] = await Promise.all([
+    chrome.storage.sync.get(SETTINGS_KEY),
+    readDiscoveredMap(),
+  ]);
+  const stored = syncData[SETTINGS_KEY] as Partial<AppSettings> | undefined;
   const base = defaultSettings();
-  if (!stored) return base;
   // 合并，避免新增 provider 时旧配置缺字段
   const mergedProviders = { ...base.providers };
-  if (stored.providers) {
+  if (stored?.providers) {
     for (const id of Object.keys(stored.providers) as ProviderId[]) {
       mergedProviders[id] = { ...base.providers[id], ...stored.providers[id] };
     }
   }
-  const mergedUpdates = { ...base.updates, ...(stored.updates || {}) };
-  // 旧版用户存过的 feedUrl 可能是空字符串，统一回落到内置默认仓库，
-  // 保证所有人都能自动收到 Releases 更新提醒。
-  if (!mergedUpdates.feedUrl || !mergedUpdates.feedUrl.trim()) {
-    mergedUpdates.feedUrl = DEFAULT_FEED_URL;
+  // 把 local 里的 discoveredModels 合回每个 provider 配置
+  for (const id of Object.keys(mergedProviders) as ProviderId[]) {
+    const cached = discovered[id];
+    if (cached && Array.isArray(cached.models)) {
+      mergedProviders[id] = {
+        ...mergedProviders[id],
+        discoveredModels: cached.models,
+        discoveredAt: cached.at,
+      };
+    } else {
+      // 兼容老版本：当年 discoveredModels 是和 settings 一起 sync 的
+      // 这里只读不删，保证回滚兼容；下次 saveSettings 会自动迁移到 local。
+    }
   }
+  // 老版本曾在 updates 里存过 enabled/feedUrl/intervalHours 等字段，
+  // 这里只挑出新结构关心的两个字段，其余自动丢弃。
+  const storedUpdates = (stored?.updates || {}) as Partial<typeof base.updates>;
+  const mergedUpdates = {
+    lastCheckedAt: storedUpdates.lastCheckedAt ?? base.updates.lastCheckedAt,
+    lastResult: storedUpdates.lastResult ?? base.updates.lastResult,
+  };
   return {
     ...base,
-    ...stored,
+    ...(stored || {}),
     providers: mergedProviders,
     updates: mergedUpdates,
   };
 }
 
+/**
+ * 保存全部设置。
+ *
+ * - chrome.storage.sync 只写**轻量**字段（API Key / baseUrl / model / 风格 / 更新设置 …）
+ * - chrome.storage.local 单独维护 discoveredModels 缓存
+ *
+ * 如果 sync 写入仍然失败（例如总配额 100KB 用完，或网络异常），会自动回退到 local，
+ * 避免「点了保存看起来成功，重启后回滚」的隐患。
+ */
 export async function saveSettings(settings: AppSettings): Promise<void> {
-  await chrome.storage.sync.set({ [SETTINGS_KEY]: settings });
+  const slim = stripBulky(settings);
+  // 1) 写 discoveredModels 到 local（体积无忧）
+  const map: DiscoveredMap = {};
+  for (const id of Object.keys(settings.providers) as ProviderId[]) {
+    const cfg = settings.providers[id];
+    if (cfg.discoveredModels && cfg.discoveredModels.length > 0) {
+      map[id] = { models: cfg.discoveredModels, at: cfg.discoveredAt || Date.now() };
+    }
+  }
+  await writeDiscoveredMap(map);
+
+  // 2) 写轻量 settings 到 sync
+  try {
+    await chrome.storage.sync.set({ [SETTINGS_KEY]: slim });
+  } catch (err) {
+    // 极端情况：sync 总配额耗尽，转写 local 保底，保证用户的 API Key 永远不丢
+    console.warn('[PromptExtracto] sync set failed, falling back to local', err);
+    await chrome.storage.local.set({ [SETTINGS_KEY]: slim });
+  }
+
+  // 双向兜底：若之前的 fallback 写到了 local，把它清理掉，避免下次重复读取分歧
+  if (chrome.storage.sync) {
+    try {
+      const check = await chrome.storage.sync.get(SETTINGS_KEY);
+      if (check[SETTINGS_KEY]) {
+        await chrome.storage.local.remove(SETTINGS_KEY).catch(() => undefined);
+      }
+    } catch {
+      /* ignore */
+    }
+  }
+
+  void notifyBackupSubscribers();
+}
+
+const backupListeners = new Set<() => void>();
+export function onLocalDataChange(listener: () => void): () => void {
+  backupListeners.add(listener);
+  return () => backupListeners.delete(listener);
+}
+function notifyBackupSubscribers(): void {
+  for (const l of backupListeners) {
+    try {
+      l();
+    } catch (err) {
+      console.debug('[PromptExtracto] backup listener failed', err);
+    }
+  }
 }
 
 export async function getUpdateSettings(): Promise<UpdateSettings> {
@@ -122,21 +247,27 @@ export async function getHistory(): Promise<HistoryItem[]> {
   return raw.map(migrateItem);
 }
 
+async function writeHistory(list: HistoryItem[]): Promise<void> {
+  await chrome.storage.local.set({ [HISTORY_KEY]: list });
+  notifyBackupSubscribers();
+}
+
 export async function addHistory(item: HistoryItem): Promise<void> {
   const list = await getHistory();
   list.unshift(migrateItem(item));
   if (list.length > HISTORY_LIMIT) list.length = HISTORY_LIMIT;
-  await chrome.storage.local.set({ [HISTORY_KEY]: list });
+  await writeHistory(list);
 }
 
 export async function clearHistory(): Promise<void> {
   await chrome.storage.local.remove(HISTORY_KEY);
+  notifyBackupSubscribers();
 }
 
 export async function removeHistory(id: string): Promise<void> {
   const list = await getHistory();
   const next = list.filter((i) => i.id !== id);
-  await chrome.storage.local.set({ [HISTORY_KEY]: next });
+  await writeHistory(next);
 }
 
 /** 批量删除若干条历史项；用于「提示词库」的多选删除。 */
@@ -145,7 +276,7 @@ export async function removeHistoryItems(ids: string[]): Promise<void> {
   const set = new Set(ids);
   const list = await getHistory();
   const next = list.filter((i) => !set.has(i.id));
-  await chrome.storage.local.set({ [HISTORY_KEY]: next });
+  await writeHistory(next);
 }
 
 /**
@@ -161,7 +292,7 @@ export async function patchHistoryItem(
   if (idx < 0) return null;
   const updated: HistoryItem = { ...list[idx], ...patch };
   list[idx] = updated;
-  await chrome.storage.local.set({ [HISTORY_KEY]: list });
+  await writeHistory(list);
   return updated;
 }
 
@@ -186,7 +317,7 @@ export async function removePromptVersion(
   if (next.length === item.versions.length) return item;
   const updated: HistoryItem = { ...item, versions: next };
   list[idx] = updated;
-  await chrome.storage.local.set({ [HISTORY_KEY]: list });
+  await writeHistory(list);
   return updated;
 }
 
@@ -227,7 +358,7 @@ export async function appendPromptVersion(
     versions: [version, ...(item.versions || [])],
   };
   list[idx] = updated;
-  await chrome.storage.local.set({ [HISTORY_KEY]: list });
+  await writeHistory(list);
   return updated;
 }
 
@@ -259,11 +390,97 @@ export async function restorePromptVersion(
     versions: [version, ...item.versions],
   };
   list[idx] = updated;
-  await chrome.storage.local.set({ [HISTORY_KEY]: list });
+  await writeHistory(list);
   return updated;
 }
 
 export async function getHistoryItem(id: string): Promise<HistoryItem | null> {
   const list = await getHistory();
   return list.find((i) => i.id === id) || null;
+}
+
+// ===================== 全量备份 / 恢复 =====================
+
+/** 备份文件结构。version 字段用于后续兼容旧版本备份。 */
+export interface BackupPayload {
+  /** 备份文件格式版本，递增；当前 1。 */
+  version: 1;
+  /** 备份生成时间 ISO 字符串，便于人眼判断新旧。 */
+  exportedAt: string;
+  /** 生成备份的扩展版本，便于排查。 */
+  appVersion?: string;
+  settings: AppSettings;
+  history: HistoryItem[];
+}
+
+export async function buildBackup(appVersion?: string): Promise<BackupPayload> {
+  const [settings, history] = await Promise.all([getSettings(), getHistory()]);
+  return {
+    version: 1,
+    exportedAt: new Date().toISOString(),
+    appVersion,
+    settings,
+    history,
+  };
+}
+
+/**
+ * 从备份载荷恢复。
+ *
+ * @param payload 备份内容
+ * @param mode    'replace' 直接覆盖；'merge' 与现有数据合并（按 id 去重，保留较新的 updatedAt）
+ */
+export async function restoreBackup(
+  payload: BackupPayload,
+  mode: 'replace' | 'merge' = 'merge'
+): Promise<{ settingsRestored: boolean; historyAdded: number; historyTotal: number }> {
+  if (!payload || payload.version !== 1) {
+    throw new Error('不支持的备份格式');
+  }
+  // settings 直接整条覆盖（用户主动恢复，意图明确）
+  let settingsRestored = false;
+  if (payload.settings) {
+    await saveSettings(payload.settings);
+    settingsRestored = true;
+  }
+
+  let added = 0;
+  if (Array.isArray(payload.history)) {
+    if (mode === 'replace') {
+      const next = payload.history.slice(0, HISTORY_LIMIT).map(migrateItem);
+      await writeHistory(next);
+      added = next.length;
+    } else {
+      const current = await getHistory();
+      const byId = new Map(current.map((i) => [i.id, i] as const));
+      for (const incoming of payload.history) {
+        const item = migrateItem(incoming);
+        const exist = byId.get(item.id);
+        if (!exist) {
+          byId.set(item.id, item);
+          added++;
+        } else {
+          // 同 id：保留 updatedAt 更新的版本，但合并 versions 列表（按 id 去重）
+          const newer =
+            (item.updatedAt || item.createdAt || 0) >= (exist.updatedAt || exist.createdAt || 0)
+              ? item
+              : exist;
+          const older = newer === item ? exist : item;
+          const seen = new Set(newer.versions.map((v) => v.id));
+          const mergedVersions = [...newer.versions];
+          for (const v of older.versions) {
+            if (!seen.has(v.id)) mergedVersions.push(v);
+          }
+          byId.set(item.id, { ...newer, versions: mergedVersions });
+        }
+      }
+      const merged = Array.from(byId.values()).sort(
+        (a, b) => (b.updatedAt || b.createdAt || 0) - (a.updatedAt || a.createdAt || 0)
+      );
+      if (merged.length > HISTORY_LIMIT) merged.length = HISTORY_LIMIT;
+      await writeHistory(merged);
+    }
+  }
+  const total = (await getHistory()).length;
+  return { settingsRestored, historyAdded: added, historyTotal: total };
 }

@@ -39,13 +39,8 @@ export interface UpdateCheckResult {
 }
 
 export interface UpdateSettings {
-  enabled: boolean;
-  feedUrl: string;
-  intervalHours: number;
-  notifyDesktop: boolean;
   lastCheckedAt: number;
   lastResult: UpdateCheckResult | null;
-  dismissedVersion: string;
 }
 
 export interface AppSettings {
@@ -136,28 +131,6 @@ export type RuntimeMessage =
     }
   | {
       type: 'CHECK_UPDATE';
-      payload?: { force?: boolean };
-    }
-  | {
-      type: 'CHECK_UPDATE_RESULT';
-      payload: UpdateCheckResult;
-    }
-  | {
-      type: 'APPLY_UPDATE';
-    }
-  | {
-      type: 'APPLY_UPDATE_RESULT';
-      payload: {
-        ok: boolean;
-        mode: 'native' | 'manual';
-        message?: string;
-        downloadUrl?: string;
-        releaseUrl?: string;
-      };
-    }
-  | {
-      type: 'DISMISS_UPDATE';
-      payload: { version: string };
     }
   | {
       /**

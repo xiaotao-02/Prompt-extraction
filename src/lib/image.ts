@@ -27,17 +27,21 @@ const FLATTEN_MAX_DIM = 1536; // 扁平化后最长边，节省 token
 /**
  * 静态大图的"近无损降采样"阈值。
  *
- * 取 2048 是因为 OpenAI GPT-4o 的 high-detail 输入会在服务端被强制
- * resize 到 ≤ 2048×2048（再切 512×512 tile），Anthropic / Gemini 也都
- * 会对超大图做服务端缩放。把客户端阈值设到 2048 后，模型实际"看到"
- * 的像素信息和直接上传原图 *完全一致*，但上传体积和远端解码时间能
- * 直接砍掉 60~90%。
+ * 长边 1280 是识图类任务被业界广泛验证可用的"经济点"：
+ *   - OpenAI vision low-detail 直接用 512×512，high-detail 也是按
+ *     512×512 切 tile（1280 长边 ≈ 6 个 tile，识图细节足够）
+ *   - Anthropic Claude 推荐 ≤ 1.15 megapixel（≈ 1568 长边），1280 在其下
+ *   - 大多数视觉 transformer 的训练输入分辨率就在 224~1024 之间
  *
- * 体积阈值 4MB：少数图片像素并不大但本身就是巨大的位图（比如未压缩
- * 的截图），即便长边没超过 2048 也值得重编码一次。
+ * 比起 2048 阈值，1280 能让"中等大小图"（1–2MB 网图）也吃到降采样红利，
+ * 上传体积通常再砍 50%~70%。识图 / 反推提示词这种任务对 1280 px 长边
+ * 几乎没有可察觉的精度损失。
+ *
+ * 体积阈值 1.5MB：很多 1080p / 视网膜屏截图像素没到 2048 但本身就有 2MB+，
+ * 这类图重编码后体积往往能压到 ≤ 500KB。
  */
-const SHRINK_DIM_THRESHOLD = 2048;
-const SHRINK_BYTES_THRESHOLD = 4 * 1024 * 1024;
+const SHRINK_DIM_THRESHOLD = 1280;
+const SHRINK_BYTES_THRESHOLD = Math.round(1.5 * 1024 * 1024);
 /** JPEG 重编码质量：0.95 在人眼几乎不可分辨，但体积比 1.0 小一半。 */
 const SHRINK_JPEG_QUALITY = 0.95;
 

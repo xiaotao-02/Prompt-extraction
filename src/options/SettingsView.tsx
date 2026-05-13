@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Check,
   Eye,
@@ -12,10 +12,11 @@ import {
 } from 'lucide-react';
 import { PROVIDER_LIST, PROVIDERS } from '@/lib/providers';
 import { getSettings, saveSettings } from '@/lib/storage';
-import type { AppSettings, OutputStyle, ProviderId } from '@/lib/types';
+import type { AppSettings, OutputStyle, ProviderConfig, ProviderId } from '@/lib/types';
 import { extractPrompt, listModels } from '@/lib/api';
 import UpdateSection from './UpdateSection';
 import SetupGuide from './SetupGuide';
+import DataPersistence from './DataPersistence';
 
 const STYLE_OPTIONS: { value: OutputStyle; label: string; desc: string }[] = [
   { value: 'natural-zh', label: '自然语言（中文）', desc: '段落式中文描述，适合通用 AI 绘图' },
@@ -48,6 +49,14 @@ export default function SettingsView({ registerSaveHandler }: Props) {
   const [fetchModelsError, setFetchModelsError] = useState<string | null>(null);
   const [modelFilter, setModelFilter] = useState('');
 
+  /**
+   * 记录每个 provider 在「当前会话」里已经自动拉取过的签名（apiKey|baseUrl）。
+   * - 用 ref 而不是 state，避免每次写入触发额外渲染。
+   * - 用 sig 作 value：当用户改 Key/URL 时签名变更，自动重新拉取。
+   * - 切 provider 时按 pid 隔离，互不影响。
+   */
+  const autoFetchedRef = useRef<Map<ProviderId, string>>(new Map());
+
   useEffect(() => {
     getSettings().then(setSettings);
   }, []);
@@ -67,10 +76,70 @@ export default function SettingsView({ registerSaveHandler }: Props) {
     });
   }, [registerSaveHandler, settings]);
 
+  // —— 配置完成后自动拉取模型列表 ——
+  // 触发条件：当前 provider 的 apiKey + baseUrl 都已填写，且这对组合在本会话里
+  // 还没被拉取过。带 1s 防抖避免「敲一下字符就发一次请求」。
+  // 已有 discoveredModels 时只把签名标记为「已知」，不会重复请求，
+  // 直到用户改动 apiKey 或 baseUrl 才会再次自动拉取。
+  const activeProviderId = settings?.activeProvider;
+  const activeApiKey = settings?.providers[settings?.activeProvider as ProviderId]?.apiKey ?? '';
+  const activeBaseUrl =
+    settings?.providers[settings?.activeProvider as ProviderId]?.baseUrl ?? '';
+  useEffect(() => {
+    if (!settings || !activeProviderId) return;
+    const pid = activeProviderId;
+    const cfg = settings.providers[pid];
+    if (!cfg.apiKey || !cfg.baseUrl) return;
+    if (cfg.apiKey.trim().length < 6) return;
+
+    const sig = `${cfg.apiKey}|${cfg.baseUrl}`;
+    // 该 provider 已经拉过模型 + 还没记账 → 标记为已知，避免一进入页面就重拉
+    if (
+      !autoFetchedRef.current.has(pid) &&
+      (cfg.discoveredModels?.length ?? 0) > 0
+    ) {
+      autoFetchedRef.current.set(pid, sig);
+      return;
+    }
+    if (autoFetchedRef.current.get(pid) === sig) return;
+    if (fetchingModels) return;
+
+    const timer = setTimeout(() => {
+      autoFetchedRef.current.set(pid, sig);
+      runFetchModels(pid, cfg, sig);
+    }, 1000);
+    return () => clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeProviderId, activeApiKey, activeBaseUrl]);
+
   const activeMeta = useMemo(
     () => (settings ? PROVIDERS[settings.activeProvider] : null),
     [settings]
   );
+
+  /**
+   * 下拉框最终展示的模型列表 = provider 内置 modelOptions ∪ 从端点拉到的模型。
+   * - 内置选项排在前面，是为了让人工挑选过的「视觉模型」首选保持显眼；
+   * - 之后拼上去重后的 discovered，避免重复条目；
+   * - 当前选中的 model 若两边都没有，会通过下面的「__custom__」选项进入自定义输入。
+   *
+   * 必须放在「加载中」早期 return 之前，否则两次渲染的 hook 数量不一致，
+   * 会触发 React error #310（Rendered fewer/more hooks than during the previous render）。
+   */
+  const combinedModelOptions = useMemo(() => {
+    if (!settings || !activeMeta) return [];
+    const cfg = settings.providers[settings.activeProvider];
+    const disc = cfg?.discoveredModels ?? [];
+    const set = new Set<string>(activeMeta.modelOptions);
+    const result: string[] = [...activeMeta.modelOptions];
+    for (const m of disc) {
+      if (!set.has(m)) {
+        set.add(m);
+        result.push(m);
+      }
+    }
+    return result;
+  }, [settings, activeMeta]);
 
   if (!settings || !activeMeta) {
     return <div className="p-8 text-sm text-zinc-500">加载中…</div>;
@@ -102,30 +171,50 @@ export default function SettingsView({ registerSaveHandler }: Props) {
     }
   };
 
-  const onFetchModels = async () => {
-    if (!settings) return;
+  /**
+   * 拉取并落盘指定 provider 的模型列表。
+   *
+   * 抽成独立函数后，「手动按钮」与「配置后自动拉取」共用同一份逻辑，
+   * 同时通过 setSettings 的函数式更新避免与并发编辑产生竞态：
+   * 拉取完成时只有在 pid 与 apiKey|baseUrl 没被中途改动时才会落盘。
+   */
+  const runFetchModels = async (pid: ProviderId, cfg: ProviderConfig, sig: string) => {
     setFetchingModels(true);
     setFetchModelsError(null);
     try {
-      const models = await listModels(activeCfg, settings.activeProvider);
-      const next: AppSettings = {
-        ...settings,
-        providers: {
-          ...settings.providers,
-          [settings.activeProvider]: {
-            ...activeCfg,
-            discoveredModels: models,
-            discoveredAt: Date.now(),
+      const models = await listModels(cfg, pid);
+      let persisted: AppSettings | null = null;
+      setSettings((prev) => {
+        if (!prev) return prev;
+        if (prev.activeProvider !== pid) return prev;
+        const cur = prev.providers[pid];
+        if (`${cur.apiKey}|${cur.baseUrl}` !== sig) return prev;
+        const next: AppSettings = {
+          ...prev,
+          providers: {
+            ...prev.providers,
+            [pid]: { ...cur, discoveredModels: models, discoveredAt: Date.now() },
           },
-        },
-      };
-      setSettings(next);
-      await saveSettings(next);
+        };
+        persisted = next;
+        return next;
+      });
+      if (persisted) {
+        await saveSettings(persisted);
+      }
     } catch (e) {
       setFetchModelsError(e instanceof Error ? e.message : String(e));
     } finally {
       setFetchingModels(false);
     }
+  };
+
+  const onFetchModels = async () => {
+    if (!settings) return;
+    const pid = settings.activeProvider;
+    const sig = `${activeCfg.apiKey}|${activeCfg.baseUrl}`;
+    autoFetchedRef.current.set(pid, sig);
+    await runFetchModels(pid, activeCfg, sig);
   };
 
   const onClearDiscovered = async () => {
@@ -166,6 +255,14 @@ export default function SettingsView({ registerSaveHandler }: Props) {
           <Check className="w-4 h-4" /> 设置已保存
         </div>
       )}
+
+      {/* 数据持久化：卸载/重装/换机后能拿回数据的核心保险（FSA 数据目录 + 手动导入导出） */}
+      <DataPersistence
+        onDataRestored={async () => {
+          const next = await getSettings();
+          setSettings(next);
+        }}
+      />
 
       {/* 配置指南：去掉内置默认 API 后，引导用户自带 Key 完成配置 */}
       <SetupGuide settings={settings} applyConfig={applyConfig} />
@@ -267,11 +364,11 @@ export default function SettingsView({ registerSaveHandler }: Props) {
                   {fetchingModels ? '拉取中…' : '从端点拉取'}
                 </button>
               </label>
-              {activeMeta.modelOptions.length > 0 ? (
+              {combinedModelOptions.length > 0 ? (
                 <select
                   className="input"
                   value={
-                    activeMeta.modelOptions.includes(activeCfg.model)
+                    combinedModelOptions.includes(activeCfg.model)
                       ? activeCfg.model
                       : '__custom__'
                   }
@@ -280,11 +377,32 @@ export default function SettingsView({ registerSaveHandler }: Props) {
                     updateActiveCfg({ model: e.target.value });
                   }}
                 >
-                  {activeMeta.modelOptions.map((m) => (
-                    <option key={m} value={m}>
-                      {m}
-                    </option>
-                  ))}
+                  {activeMeta.modelOptions.length > 0 && (
+                    <optgroup label="内置推荐">
+                      {activeMeta.modelOptions.map((m) => (
+                        <option key={`builtin-${m}`} value={m}>
+                          {m}
+                        </option>
+                      ))}
+                    </optgroup>
+                  )}
+                  {discovered.length > 0 && (
+                    <optgroup
+                      label={`端点拉取（${discovered.length}）${
+                        activeCfg.discoveredAt
+                          ? ' · ' + formatTimeAgo(activeCfg.discoveredAt)
+                          : ''
+                      }`}
+                    >
+                      {discovered
+                        .filter((m) => !activeMeta.modelOptions.includes(m))
+                        .map((m) => (
+                          <option key={`fetched-${m}`} value={m}>
+                            {m}
+                          </option>
+                        ))}
+                    </optgroup>
+                  )}
                   <option value="__custom__">自定义...</option>
                 </select>
               ) : (
@@ -295,8 +413,8 @@ export default function SettingsView({ registerSaveHandler }: Props) {
                   placeholder={activeMeta.defaultModel}
                 />
               )}
-              {activeMeta.modelOptions.length > 0 &&
-                !activeMeta.modelOptions.includes(activeCfg.model) && (
+              {combinedModelOptions.length > 0 &&
+                !combinedModelOptions.includes(activeCfg.model) && (
                   <input
                     className="input mt-2"
                     value={activeCfg.model}
@@ -481,8 +599,27 @@ export default function SettingsView({ registerSaveHandler }: Props) {
 
       <UpdateSection />
 
-      <footer className="text-center text-xs text-zinc-400 py-6">
-        数据仅保存在你的浏览器本地，不会上传到任何第三方服务器。
+      <footer className="text-xs text-zinc-400 dark:text-zinc-500 py-6 space-y-2 leading-relaxed">
+        <div className="text-center">
+          数据仅保存在你的浏览器本地，不会上传到任何第三方服务器。
+        </div>
+        <div className="max-w-2xl mx-auto rounded-lg bg-zinc-50 dark:bg-zinc-900/40 border border-zinc-100 dark:border-zinc-800 p-3 space-y-1">
+          <div className="font-medium text-zinc-500 dark:text-zinc-400">关于数据丢失风险</div>
+          <ul className="list-disc pl-4 space-y-0.5">
+            <li>
+              <b>更新插件不会丢</b>：商店推送的版本更新、`npm run build` 重新加载，
+              chrome.storage 都会原样保留。
+            </li>
+            <li>
+              <b>只有这三种情况才会丢</b>：① 你在 chrome://extensions 主动点「移除」；
+              ② 扩展 ID 变了（不同安装来源并存）；③ 换电脑且没登录同一个 Google 账号。
+            </li>
+            <li>
+              <b>怎么彻底防丢</b>：在上面的「数据持久化」里挑一个数据目录 ——
+              即便插件被删，目录里的 JSON 文件还在；重装后选回去就能完整还原。
+            </li>
+          </ul>
+        </div>
       </footer>
     </div>
   );
