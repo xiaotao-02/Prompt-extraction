@@ -408,11 +408,10 @@ export async function listModels(
   providerId: ProviderId
 ): Promise<string[]> {
   if (!cfg.baseUrl) throw new Error('请先填写 Base URL');
-  const baseUrl = trimSlash(cfg.baseUrl);
 
   if (providerId === 'gemini') {
     if (!cfg.apiKey) throw new Error('请先填写 API Key');
-    const url = `${baseUrl}/models?key=${encodeURIComponent(cfg.apiKey)}`;
+    const url = `${trimSlash(cfg.baseUrl)}/models?key=${encodeURIComponent(cfg.apiKey)}`;
     const resp = await fetch(url);
     if (!resp.ok) throw new Error(await describeRespFailure(resp, 'Gemini'));
     const json = await parseJsonResponse<{
@@ -429,7 +428,11 @@ export async function listModels(
     return uniqSorted(list);
   }
 
-  // Anthropic + 所有 OpenAI 兼容端点（含中转站）
+  // Anthropic + 所有 OpenAI 兼容端点（含中转站）。
+  // OpenAI 兼容协议走 normalizeOpenAIBase，与 chat/completions 走相同的归一化，
+  // 避免「拉模型列表能成功，但发请求失败」或反过来这种割裂体验。
+  const baseUrl =
+    providerId === 'anthropic' ? trimSlash(cfg.baseUrl) : normalizeOpenAIBase(cfg.baseUrl);
   const url = `${baseUrl}/models`;
   const headers: Record<string, string> = {};
   if (providerId === 'anthropic') {
@@ -461,8 +464,19 @@ function uniqSorted(arr: string[]): string[] {
   return Array.from(new Set(arr)).sort((a, b) => a.localeCompare(b));
 }
 
+/**
+ * 去掉末尾的 `/`，并修正常见的「版本号大写」拼写错误。
+ *
+ * 用户经常按文档抄成 `/V1`、`/V2`、`/V1beta` 等大写版本号，
+ * 但几乎所有 API 服务端的路由都是小写。这里只针对 `/V<digit>` 这一段做小写化，
+ * 不会改动其它 path（避免破坏区分大小写的租户名 / 项目 ID 等）。
+ *
+ * 例如：
+ *   `https://ai.shukelongda.cn/V1`   → `https://ai.shukelongda.cn/v1`
+ *   `https://example.com/Tenant/V1/` → `https://example.com/Tenant/v1`
+ */
 function trimSlash(s: string): string {
-  return s.replace(/\/+$/, '');
+  return s.replace(/\/+$/, '').replace(/\/V(\d+)/g, '/v$1');
 }
 
 /**
@@ -473,10 +487,13 @@ function trimSlash(s: string): string {
  * 被前端网关当作普通网页请求并返回 HTML 首页，最终导致
  * `Unexpected token '<'` 这种让人摸不着头脑的错误。
  *
- * 这里在拼接前检测：如果 baseUrl 没有任何路径段（只有 origin），
- * 自动补一个 `/v1`——这对几乎所有 OpenAI 兼容服务都成立。
+ * 这里在拼接前做两件事：
+ * 1. 通过 `trimSlash` 修掉末尾斜杠并把大写 `/V1` 改成 `/v1`；
+ * 2. 如果 baseUrl 没有任何路径段（只有 origin），自动补一个 `/v1`
+ *    ——这对几乎所有 OpenAI 兼容服务都成立。
+ *
  * 对已经带路径的 baseUrl（如 `…/v1`、`…/api/paas/v4`、`…/compatible-mode/v1`）
- * 完全不动，保持向后兼容。
+ * 不再额外补 `/v1`，保持向后兼容。
  */
 function normalizeOpenAIBase(raw: string): string {
   const trimmed = trimSlash((raw || '').trim());
@@ -530,7 +547,11 @@ async function parseJsonResponse<T = unknown>(resp: Response, label: string): Pr
   } catch {
     if (looksLikeHtml(text) || ct.includes('text/html')) {
       throw new Error(
-        `${label} 返回的是 HTML 页面而不是 JSON，请检查「baseUrl / 接口地址」是否填写正确（应为 API 端点，例如 https://api.openai.com/v1，而不是网站首页）。\n` +
+        `${label} 返回的是 HTML 页面而不是 JSON，请检查「baseUrl / 接口地址」是否填写正确。\n` +
+          `常见原因：\n` +
+          `  • 漏写 /v1（应为 https://api.openai.com/v1，而不是 https://api.openai.com）\n` +
+          `  • 版本号大小写写错（应为小写 /v1，不是 /V1）\n` +
+          `  • 把网站首页当成了 API 域名\n` +
           `URL: ${url}\nContent-Type: ${ct || '(空)'}\n响应预览: ${truncate(text)}`
       );
     }

@@ -240,7 +240,7 @@ export default function SetupGuide({ settings, applyConfig }: Props) {
 
             <textarea
               className="input min-h-[120px] font-mono text-[12px] resize-y leading-relaxed"
-              placeholder={`粘贴 JSON 配置串，支持两种格式：
+              placeholder={`粘贴 JSON 配置串，支持三种格式：
 {
   "provider": "openai",
   "apiKey": "sk-...",
@@ -248,12 +248,19 @@ export default function SetupGuide({ settings, applyConfig }: Props) {
   "model": "gpt-4o-mini"
 }
 
-或：
+或多 provider 整体：
 {
   "activeProvider": "openai",
   "providers": {
     "openai": { "apiKey": "sk-...", "baseUrl": "...", "model": "..." }
   }
+}
+
+或 NewAPI 中转站「渠道连接」信息（自动识别站点）：
+{
+  "_type": "newapi_channel_conn",
+  "key": "sk-...",
+  "url": "https://ai.shukelongda.cn"
 }`}
               value={importText}
               onChange={(e) => {
@@ -318,9 +325,12 @@ function Step({ n, children }: { n: number; children: React.ReactNode }) {
 /**
  * 把外部传入的 JSON 对象合并到现有 AppSettings。
  *
- * 支持两种顶层格式：
+ * 支持三种顶层格式：
  * 1) 单 provider 片段：{ provider, apiKey, baseUrl, model }
  * 2) 多 provider 整体：{ activeProvider?, providers: { [id]: { apiKey, baseUrl?, model? } } }
+ * 3) NewAPI 中转站「渠道连接」：{ _type: "newapi_channel_conn", key, url }
+ *    会自动按 url 的 hostname 匹配已知 provider（匹配不到回落到 `custom`），
+ *    并且当 url 只是裸域名时自动补 `/v1` 以兼容 OpenAI 协议。
  *
  * 返回 discriminated union，调用方根据 `error` 判断是否失败。
  */
@@ -329,6 +339,40 @@ function applyImportedConfig(
   raw: Record<string, unknown>
 ): { value: AppSettings; hint: string } | { error: string } {
   const validIds = new Set<ProviderId>(PROVIDER_LIST.map((p) => p.id));
+
+  // —— NewAPI「渠道连接」信息：{ _type: "newapi_channel_conn", key, url }
+  if (raw._type === 'newapi_channel_conn') {
+    const apiKey = typeof raw.key === 'string' ? raw.key.trim() : '';
+    const rawUrl = typeof raw.url === 'string' ? raw.url.trim() : '';
+    if (!apiKey) {
+      return { error: '导入失败：newapi_channel_conn 缺少 key 字段或为空。' };
+    }
+    if (!rawUrl) {
+      return { error: '导入失败：newapi_channel_conn 缺少 url 字段或为空。' };
+    }
+    const baseUrl = ensureOpenAIBase(rawUrl);
+    const pid = matchProviderByUrl(rawUrl) ?? 'custom';
+    const prev = base.providers[pid];
+    const meta = PROVIDERS[pid];
+    const merged: ProviderConfig = {
+      ...prev,
+      id: pid,
+      apiKey,
+      baseUrl,
+      model: prev.model && prev.model.trim() ? prev.model : meta.defaultModel,
+    };
+    return {
+      value: {
+        ...base,
+        activeProvider: pid,
+        providers: { ...base.providers, [pid]: merged },
+      },
+      hint:
+        pid === 'custom'
+          ? `已识别 NewAPI 中转「${baseUrl}」并导入到「自定义」。如需切换 provider 可在下方调整。`
+          : `已识别为「${meta.label}」并导入配置（${baseUrl}）。`,
+    };
+  }
 
   // —— 单 provider 片段
   if (typeof raw.provider === 'string') {
@@ -408,6 +452,56 @@ function applyImportedConfig(
 
   return {
     error:
-      '无法识别的 JSON 结构。请提供 { provider, apiKey, baseUrl?, model? } 或 { providers: {...} }。',
+      '无法识别的 JSON 结构。请提供 { provider, apiKey, baseUrl?, model? }、{ providers: {...} } 或 { _type: "newapi_channel_conn", key, url }。',
   };
+}
+
+/**
+ * 把 NewAPI 渠道里粘出来的 url 归一化成 OpenAI 兼容的 baseUrl。
+ *
+ * NewAPI 自带的渠道连接信息通常给的是站点根地址（如 `https://ai.shukelongda.cn`），
+ * 但 OpenAI 兼容协议的 chat/completions 路径需要挂在 `/v1` 下。
+ * 这里只在 pathname 为空 / `/` 时补 `/v1`，避免破坏带租户路径的端点
+ * （如 `…/api/paas/v4`、`…/compatible-mode/v1`）。
+ */
+function ensureOpenAIBase(raw: string): string {
+  const trimmed = raw.replace(/\/+$/, '');
+  try {
+    const u = new URL(trimmed);
+    if (u.pathname === '' || u.pathname === '/') {
+      return `${u.origin}/v1`;
+    }
+    return trimmed;
+  } catch {
+    return trimmed;
+  }
+}
+
+/**
+ * 按 hostname 把外部 url 映射到一个内置 provider。
+ *
+ * 用于「一键导入」场景：用户从 NewAPI 中转粘贴的 `url` 经常正好对应某个内置
+ * provider 的官方域名（例如 `ai.shukelongda.cn` → `shukelongda`），
+ * 这种情况下应该直接切换到对应 provider，让用户继承默认模型选项与文档链接。
+ *
+ * 匹配不到时返回 null，调用方可以回落到 `custom`。
+ */
+function matchProviderByUrl(url: string): ProviderId | null {
+  let host: string;
+  try {
+    host = new URL(url).hostname.toLowerCase();
+  } catch {
+    return null;
+  }
+  if (!host) return null;
+  for (const p of PROVIDER_LIST) {
+    if (p.id === 'custom') continue;
+    try {
+      const phost = new URL(p.defaultBaseUrl).hostname.toLowerCase();
+      if (phost === host) return p.id;
+    } catch {
+      continue;
+    }
+  }
+  return null;
 }
