@@ -122,12 +122,27 @@ function looksLikeHtml(s: string): boolean {
 export async function fetchLatestRelease(feedUrl: string): Promise<UpdateInfo | null> {
   const url = normalizeFeedUrl(feedUrl);
   if (!url) return null;
+  const isGithubReleasesLatest = /^https:\/\/api\.github\.com\/repos\/[\w.-]+\/[\w.-]+\/releases\/latest$/i.test(
+    url
+  );
   const resp = await fetch(url, {
     method: 'GET',
     headers: { Accept: 'application/json' },
     cache: 'no-store',
   });
   if (!resp.ok) {
+    // GitHub 的 /releases/latest 在"仓库存在但还没发布任何 Release"时也会返回 404，
+    // 这是常见情况而非真正的错误，给出更友好的提示。
+    if (resp.status === 404 && isGithubReleasesLatest) {
+      throw new Error(
+        '更新源仓库尚未发布任何 Release（GitHub 返回 404）。请先在该仓库的 Releases 页面发布一个版本，或换用其它更新源。'
+      );
+    }
+    if (resp.status === 403) {
+      throw new Error(
+        `HTTP 403：可能触发了 GitHub 匿名 API 限流（每小时 60 次），请稍后再试。`
+      );
+    }
     throw new Error(`HTTP ${resp.status} ${resp.statusText}`);
   }
   const text = await resp.text();
