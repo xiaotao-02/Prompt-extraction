@@ -13,14 +13,18 @@ chrome.runtime.onMessage.addListener((message: RuntimeMessage, _sender, sendResp
       status: 'loading',
       stage: 'calling',
       startedAt: Date.now(),
+      strategy: message.payload.strategy,
     });
     return false;
   }
   if (message.type === 'EXTRACT_PROGRESS') {
-    updatePanel(message.payload.requestId, {
-      stage: message.payload.stage,
-      partial: message.payload.partial,
-    });
+    // 只把"实际带值"的字段塞进 patch，避免后台只为通知 strategy 而发的
+    // progress 把面板已经推进到的 stage / partial 重置回 undefined。
+    const patch: Parameters<typeof updatePanel>[1] = {};
+    if (message.payload.stage !== undefined) patch.stage = message.payload.stage;
+    if (message.payload.partial !== undefined) patch.partial = message.payload.partial;
+    if (message.payload.strategy !== undefined) patch.strategy = message.payload.strategy;
+    updatePanel(message.payload.requestId, patch);
     return false;
   }
   if (message.type === 'EXTRACT_RESULT') {

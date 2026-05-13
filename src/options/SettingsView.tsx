@@ -12,6 +12,7 @@ import {
 } from 'lucide-react';
 import { PROVIDER_LIST, PROVIDERS } from '@/lib/providers';
 import { getSettings, saveSettings } from '@/lib/storage';
+import { STRATEGY_LIST } from '@/lib/strategies';
 import type { AppSettings, OutputStyle, ProviderConfig, ProviderId } from '@/lib/types';
 import { extractPrompt, listModels } from '@/lib/api';
 import UpdateSection from './UpdateSection';
@@ -513,6 +514,47 @@ export default function SettingsView({ registerSaveHandler, onDirtyChange }: Pro
         </div>
       </section>
 
+      {/* 策略版本：决定 stylePrompts 措辞 + 采样温度 + 输出上限 + 自定义模板拼接位置 */}
+      <section className="card">
+        <h2 className="text-sm font-semibold mb-1">策略版本</h2>
+        <p className="text-xs text-zinc-500 mb-4">
+          切换不同档位的"提示词 + 采样"组合，效果不满意时可以随时换回旧版本对比。
+        </p>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+          {STRATEGY_LIST.map((s) => {
+            const active = settings.promptStrategy === s.id;
+            return (
+              <button
+                key={s.id}
+                type="button"
+                onClick={() => setSettings({ ...settings, promptStrategy: s.id })}
+                className={`text-left p-3 rounded-xl border transition ${
+                  active
+                    ? 'border-violet-500 bg-violet-50 dark:bg-violet-500/10'
+                    : 'border-zinc-200 dark:border-zinc-800 hover:border-zinc-300'
+                }`}
+              >
+                <div className="text-sm font-medium flex items-center gap-2">
+                  {s.label}
+                  {active && (
+                    <span className="text-[10px] px-1.5 py-0.5 rounded bg-violet-500 text-white">
+                      生效中
+                    </span>
+                  )}
+                </div>
+                <div className="text-[11px] text-zinc-500 mt-1 leading-relaxed">
+                  {s.description}
+                </div>
+                <div className="text-[10px] text-zinc-400 mt-1.5 font-mono">
+                  temperature {s.temperature} · max_tokens {s.maxTokens} ·{' '}
+                  {s.customPosition === 'prepend' ? '自定义前置' : '自定义追加'}
+                </div>
+              </button>
+            );
+          })}
+        </div>
+      </section>
+
       {/* 输出风格 */}
       <section className="card">
         <h2 className="text-sm font-semibold mb-1">输出风格</h2>
@@ -548,7 +590,7 @@ export default function SettingsView({ registerSaveHandler, onDirtyChange }: Pro
             }
           />
           <p className="text-[11px] text-zinc-400 mt-1.5">
-            这段内容会拼接到系统提示词末尾，用来微调输出风格或追加规则。
+            拼接位置由「策略版本」决定：高保真档把它放在最前面让模型优先遵守，经典档以"额外要求：…"形式追加到末尾。
           </p>
         </div>
       </section>

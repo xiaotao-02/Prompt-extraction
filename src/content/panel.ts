@@ -8,7 +8,7 @@ import {
   getHistoryItem,
   restorePromptVersion,
 } from '@/lib/storage';
-import type { ExtractStage, PromptVersion, RefineResponse } from '@/lib/types';
+import type { ExtractStage, PromptVersion, RefineResponse, StrategyId } from '@/lib/types';
 
 interface PanelState {
   requestId: string;
@@ -41,6 +41,33 @@ interface PanelState {
   partial?: string;
   /** loading 开始时间戳，用于 UI 上显示 "已用时 xx s"。 */
   startedAt?: number;
+  /**
+   * 本次反推使用的「提示词策略档位」id。
+   *
+   * 由后台在 settings 加载完成后通过 EXTRACT_PENDING / EXTRACT_PROGRESS 透传，
+   * 仅用于在 loading 状态下亮一个 "策略：高保真 v0.1.7" 之类的标签，
+   * 让用户清楚当前生效的是哪一档。后续如果想在 success 状态也显示，
+   * 直接复用同一字段即可。
+   */
+  strategy?: StrategyId;
+}
+
+/**
+ * 策略 id → loading 面板上显示的简短中文 label。
+ *
+ * 这里不直接 import `STRATEGIES` 是为了避免 content script 把 `strategies.ts`
+ * 的 4 套 stylePrompts 字符串（几 KB）一起打进 bundle —— 这块代码只需要"档位名"。
+ * 如果以后新增了 strategy id，这里加一行即可；未命中走 'fidelity' 兜底。
+ */
+const STRATEGY_LABEL: Record<StrategyId, string> = {
+  classic: '经典 v0.1.0',
+  v016: 'v0.1.6 策略',
+  fidelity: '高保真 v0.1.7',
+};
+
+function strategyLabel(id: StrategyId | undefined): string {
+  if (!id) return '';
+  return STRATEGY_LABEL[id] || STRATEGY_LABEL.fidelity;
 }
 
 const HOST_ID = '__image_prompt_extractor_host__';
@@ -94,14 +121,16 @@ export function updatePanel(requestId: string, patch: Partial<PanelState>): void
     void syncVersions(requestId);
   }
 
-  // loading 阶段如果只是 stage / partial 增量更新，做"轻量刷新"：只改
-  // 阶段文案、进度条、流式 textarea，避免 200ms 一次的整面板重渲让
-  // 用户感觉抖。其他情况（status 切换 / error / success）走完整重渲。
+  // loading 阶段如果只是 stage / partial / strategy 增量更新，做"轻量刷新"：
+  // 只改阶段文案、进度条、流式 textarea、策略 badge，避免 200ms 一次的整面板
+  // 重渲让用户感觉抖。其他情况（status 切换 / error / success）走完整重渲。
   const lightUpdate =
     prev.status === 'loading' &&
     currentState.status === 'loading' &&
     patch.status === undefined &&
-    (patch.stage !== undefined || patch.partial !== undefined);
+    (patch.stage !== undefined ||
+      patch.partial !== undefined ||
+      patch.strategy !== undefined);
 
   if (lightUpdate && panel) {
     applyLoadingPatch(currentState);
@@ -167,6 +196,17 @@ function stageProgress(stage: ExtractStage | undefined, hasPartial: boolean): nu
 }
 
 /**
+ * loading 阶段下，进度条下方那行 hint 显示的「当前在做什么」。
+ * 跟着 stage 切，让用户能看到扩展真的在推进而不是卡住。
+ */
+function stageHint(stage: ExtractStage | undefined, hasPartial: boolean): string {
+  if (stage === 'fetching') return '正在下载图片…';
+  if (stage === 'streaming' || hasPartial) return '正在接收模型回复…';
+  if (stage === 'finalizing') return '正在保存结果…';
+  return '正在调用大模型…';
+}
+
+/**
  * loading 状态下的"轻量刷新"：只改阶段文案、计时、进度条宽度、流式预览
  * 的 textarea 内容，不替换 DOM 节点。
  */
@@ -175,11 +215,23 @@ function applyLoadingPatch(state: PanelState): void {
   const stageEl = panel.querySelector<HTMLElement>('[data-role="stage-label"]');
   if (stageEl) stageEl.textContent = stageLabel(state.stage);
 
+  // 策略 badge：可能在 PENDING 时还没有，要在 settings 加载完后追加上去。
+  // 直接覆盖文本即可；空值时清空文本但保留节点位置不抖动 header。
+  const strategyEl = panel.querySelector<HTMLElement>('[data-role="strategy-badge"]');
+  if (strategyEl) {
+    const label = strategyLabel(state.strategy);
+    strategyEl.textContent = label ? `策略：${label}` : '';
+    strategyEl.classList.toggle('hidden', !label);
+  }
+
   const hasPartial = !!state.partial;
   const barEl = panel.querySelector<HTMLElement>('[data-role="bar-fill"]');
   if (barEl) {
     barEl.style.width = `${Math.round(stageProgress(state.stage, hasPartial) * 100)}%`;
   }
+
+  const hintEl = panel.querySelector<HTMLElement>('[data-role="stage-hint"]');
+  if (hintEl) hintEl.textContent = stageHint(state.stage, hasPartial);
 
   const elapsedEl = panel.querySelector<HTMLElement>('[data-role="elapsed"]');
   if (elapsedEl && state.startedAt) {
@@ -241,11 +293,15 @@ function panelHtml(state: PanelState): string {
           state.partial || ''
         )}</textarea>`
       : '';
+    const stratLabel = strategyLabel(state.strategy);
     return `
       <div class="header">
         <div class="title">
           <span class="dot loading"></span>
           <span data-role="stage-label">${escapeText(stageLabel(state.stage))}</span>
+          <span class="badge strategy-badge ${stratLabel ? '' : 'hidden'}" data-role="strategy-badge">${
+            stratLabel ? `策略：${escapeText(stratLabel)}` : ''
+          }</span>
         </div>
         <button class="icon-btn" data-action="close" title="关闭">${ICON_CLOSE}</button>
       </div>
@@ -256,7 +312,7 @@ function panelHtml(state: PanelState): string {
             <span data-role="bar-fill" style="width:${pct}%"></span>
           </div>
           <div class="hint hint-row">
-            <span>调用大模型中，第一次可能略慢…</span>
+            <span data-role="stage-hint">${escapeText(stageHint(state.stage, hasPartial))}</span>
             <span class="elapsed" data-role="elapsed">${escapeText(elapsed)}</span>
           </div>
         </div>
@@ -795,6 +851,16 @@ const STYLE = `
 @media (prefers-color-scheme: dark) {
   .badge { background: rgba(255,255,255,0.08); color: rgba(255,255,255,0.7); }
 }
+/* loading 头部的策略档位标签：用品牌紫色淡底，和右下角进度条的高亮色保持呼应。 */
+.strategy-badge {
+  background: rgba(99,102,241,0.12);
+  color: #4f46e5;
+  font-weight: 500;
+}
+@media (prefers-color-scheme: dark) {
+  .strategy-badge { background: rgba(139,92,246,0.20); color: #c4b5fd; }
+}
+.strategy-badge.hidden { display: none; }
 .dot { width: 8px; height: 8px; border-radius: 50%; flex: none; }
 .dot.loading { background: #f59e0b; animation: pulse 1.2s infinite; }
 .dot.success { background: #10b981; }

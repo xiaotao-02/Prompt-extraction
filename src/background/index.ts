@@ -199,6 +199,20 @@ async function runExtraction(params: {
     payload: { requestId, imageUrl },
   });
 
+  // settings 读取完成后立刻补发一次 strategy 信息，让 loading 面板把
+  // 「正在使用 X 策略」标签亮出来。不阻塞主链路：发送是 fire-and-forget。
+  // 注意 stage 不带，由 content/index.ts 在 stage===undefined 时跳过覆盖，
+  // 避免把已经推进到 'fetching' 的进度条踢回默认状态。
+  void settingsPromise.then(
+    (settings) => {
+      postToTab(tabId, {
+        type: 'EXTRACT_PROGRESS',
+        payload: { requestId, strategy: settings.promptStrategy },
+      });
+    },
+    () => undefined
+  );
+
   // 图片下载经常不是瞬间完成（跨域 / blob / 动图扁平化 / 视频抓帧 base64
   // 化都可能在 100ms～几秒级别）。如果 80ms 内还没完成，先把面板切到
   // 'fetching' 阶段；否则就让 extractPrompt 自己 emit 'calling'，避免

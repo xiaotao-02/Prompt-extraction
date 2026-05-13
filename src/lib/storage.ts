@@ -8,6 +8,7 @@ import type {
   UpdateSettings,
 } from './types';
 import { PROVIDERS } from './providers';
+import { DEFAULT_STRATEGY_ID } from './strategies';
 import { DEFAULT_UPDATE_SETTINGS } from './updater';
 
 const SETTINGS_KEY = 'app_settings_v1';
@@ -33,16 +34,9 @@ interface DiscoveredCache {
 }
 type DiscoveredMap = Partial<Record<ProviderId, DiscoveredCache>>;
 
-export const STYLE_PROMPTS: Record<string, string> = {
-  'natural-zh':
-    '请用自然流畅的中文段落详细描述这张图片的画面内容、风格、构图、光线、色调、氛围以及主体细节，输出可作为 AI 绘图工具的高质量提示词。只输出提示词正文，不要任何前缀、解释或 Markdown。',
-  'natural-en':
-    'Describe this image in detailed, fluent English suitable as a high-quality prompt for AI image generators. Cover subject, style, composition, lighting, color palette, mood, and key details. Output ONLY the prompt body — no prefix, no explanation, no markdown.',
-  'sd-tags':
-    'Generate a Stable Diffusion / Danbooru-style English tag prompt for this image. Use comma-separated short tags ordered by importance. Include subject, character features, clothing, pose, environment, lighting, art style, quality boosters. Output ONLY the tag list, single line, no explanation.',
-  midjourney:
-    'Generate a Midjourney v6 style English prompt for this image. Use a vivid descriptive sentence with comma-separated style modifiers, then end with appropriate parameters like --ar 16:9 --style raw if relevant. Output ONLY the prompt, no explanation, no markdown.',
-};
+// 注意：STYLE_PROMPTS 这个 module-scope 常量已经被「策略档位」体系取代。
+// 新代码请通过 `getStrategy(settings.promptStrategy).stylePrompts[outputStyle]`
+// 拿到当前生效档位下的指令文本。详见 src/lib/strategies.ts。
 
 function defaultSettings(): AppSettings {
   const providers = Object.fromEntries(
@@ -64,6 +58,7 @@ function defaultSettings(): AppSettings {
     customPromptTemplate: '',
     saveHistory: true,
     updates: { ...DEFAULT_UPDATE_SETTINGS },
+    promptStrategy: DEFAULT_STRATEGY_ID,
   };
 }
 

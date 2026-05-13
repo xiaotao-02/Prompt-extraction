@@ -7,6 +7,7 @@
   "scripts": {
     "dev": "node scripts/generate-icons.mjs && vite",
     "build": "node scripts/generate-icons.mjs && tsc -b --noEmit && vite build",
+    "build:watch": "node scripts/generate-icons.mjs && vite build --watch",
     "preview": "vite preview",
     "icons": "node scripts/generate-icons.mjs",
     "icons:from-image": "powershell -ExecutionPolicy Bypass -File scripts/resize-icons.ps1 && node scripts/optimize-pngs.mjs",

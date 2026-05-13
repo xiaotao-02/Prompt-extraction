@@ -1,5 +1,5 @@
 import type { AppSettings, ExtractStage, OutputStyle, ProviderConfig, ProviderId } from '../types';
-import { STYLE_PROMPTS } from '../storage';
+import { getStrategy, type PromptStrategy } from '../strategies';
 import { fetchImageAsBase64, type FetchedImage } from '../image';
 
 /**
@@ -50,10 +50,16 @@ function safeProgress(
   }
 }
 
-function buildInstruction(settings: AppSettings): string {
-  const base = STYLE_PROMPTS[settings.outputStyle] ?? STYLE_PROMPTS['natural-zh'];
+function buildInstruction(settings: AppSettings, strategy: PromptStrategy): string {
+  const base = strategy.stylePrompts[settings.outputStyle] ?? strategy.stylePrompts['natural-zh'];
   const custom = settings.customPromptTemplate.trim();
   if (!custom) return base;
+  // 拼接位置由策略决定：
+  //   - 'prepend'（高保真档默认）：custom 放在 base 之前，把用户的话当一等公民
+  //   - 'append' （经典档兼容写法）：base 在前，custom 以"额外要求："形式追加在末尾
+  if (strategy.customPosition === 'prepend') {
+    return `${custom}\n\n${base}`;
+  }
   return `${base}\n\n额外要求：${custom}`;
 }
 
@@ -64,7 +70,12 @@ export async function extractPrompt(params: ExtractParams): Promise<ExtractResul
   if (!cfg.apiKey) {
     throw new Error(`请先在「设置」中为 ${providerId} 配置 API Key`);
   }
-  const instruction = buildInstruction(settings);
+  // 策略档位决定 stylePrompts + 采样参数 + custom 拼接位置。在 extract 入口
+  // 取一次，后续无论是 instruction 还是各家 API 的 body 都从这一份 strategy
+  // 派生，保证"用户选了哪档就完整生效"，不会出现"指令换了但温度还是旧值"
+  // 这种半新半旧的脏状态。
+  const strategy = getStrategy(settings.promptStrategy);
+  const instruction = buildInstruction(settings, strategy);
 
   // 阶段 1：图片就绪
   // - 如果调用方已经在外部并行下载完了，直接进入「calling」
@@ -84,10 +95,10 @@ export async function extractPrompt(params: ExtractParams): Promise<ExtractResul
   let prompt: string;
   switch (providerId) {
     case 'anthropic':
-      prompt = await callAnthropic(cfg, img, instruction, onProgress);
+      prompt = await callAnthropic(cfg, img, instruction, strategy, onProgress);
       break;
     case 'gemini':
-      prompt = await callGemini(cfg, img, instruction, onProgress);
+      prompt = await callGemini(cfg, img, instruction, strategy, onProgress);
       break;
     case 'openai':
     case 'zhipu':
@@ -95,7 +106,7 @@ export async function extractPrompt(params: ExtractParams): Promise<ExtractResul
     case 'siliconflow':
     case 'custom':
     default:
-      prompt = await callOpenAICompatible(cfg, img, instruction, onProgress);
+      prompt = await callOpenAICompatible(cfg, img, instruction, strategy, onProgress);
       break;
   }
 
@@ -112,6 +123,7 @@ async function callOpenAICompatible(
   cfg: ProviderConfig,
   img: FetchedImage,
   instruction: string,
+  strategy: PromptStrategy,
   onProgress?: ExtractParams['onProgress']
 ): Promise<string> {
   // 大部分兼容 OpenAI 的服务端都接受 url 形式的 image_url，
@@ -132,8 +144,8 @@ async function callOpenAICompatible(
         ],
       },
     ],
-    temperature: 0.4,
-    max_tokens: 1024,
+    temperature: strategy.temperature,
+    max_tokens: strategy.maxTokens,
     stream: true,
   };
 
@@ -219,12 +231,15 @@ async function callAnthropic(
   cfg: ProviderConfig,
   img: FetchedImage,
   instruction: string,
+  strategy: PromptStrategy,
   onProgress?: ExtractParams['onProgress']
 ): Promise<string> {
   const url = `${trimSlash(cfg.baseUrl)}/messages`;
   const body = {
     model: cfg.model,
-    max_tokens: 1024,
+    max_tokens: strategy.maxTokens,
+    // Anthropic 的 temperature 范围与 OpenAI 一致（0~1），可以直传
+    temperature: strategy.temperature,
     stream: true,
     messages: [
       {
@@ -314,6 +329,7 @@ async function callGemini(
   cfg: ProviderConfig,
   img: FetchedImage,
   instruction: string,
+  strategy: PromptStrategy,
   onProgress?: ExtractParams['onProgress']
 ): Promise<string> {
   // Gemini 的流式端点是独立 path：:streamGenerateContent?alt=sse
@@ -337,8 +353,8 @@ async function callGemini(
       },
     ],
     generationConfig: {
-      temperature: 0.4,
-      maxOutputTokens: 1024,
+      temperature: strategy.temperature,
+      maxOutputTokens: strategy.maxTokens,
     },
   };
   const resp = await fetch(url, {
@@ -440,7 +456,11 @@ export async function refinePrompt(params: RefineParams): Promise<RefineResult> 
   if (!cfg.apiKey) {
     throw new Error(`请先在「设置」中为 ${providerId} 配置 API Key`);
   }
-  const styleHint = STYLE_PROMPTS[settings.outputStyle] || '';
+  // refine 路径也按"当前策略"走 —— 这样用户切到 classic 时改写出来的提示词
+  // 语气也是 classic 那一档的（短段落、套话兼容）；切到 fidelity 时则会跟
+  // 抽图时的指令保持一致的"有序展开 / 信息密集"调子。
+  const strategy = getStrategy(settings.promptStrategy);
+  const styleHint = strategy.stylePrompts[settings.outputStyle] || '';
   const system = REFINE_SYSTEM_PROMPT(styleHint);
   const user = REFINE_USER_PROMPT(current, instruction);
 
