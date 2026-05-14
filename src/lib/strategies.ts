@@ -60,6 +60,7 @@ import {
   DEFAULT_STRATEGY_ID,
   type StrategyId,
   type StrategyDefinition,
+  type StrategyComponents,
   type StylePromptSetVersion,
   type SamplingVersion,
   type CustomJoinVersion,
@@ -318,6 +319,56 @@ export function resolveStrategy(id: StrategyId): ResolvedStrategy {
 export function getStrategy(id: StrategyId | undefined | null): ResolvedStrategy {
   const safeId: StrategyId = id && id in STRATEGIES ? (id as StrategyId) : DEFAULT_STRATEGY_ID;
   return resolveStrategy(safeId);
+}
+
+/**
+ * 把用户自由组合的组件版本解析成可直接消费的扁平 ResolvedStrategy。
+ *
+ * 与 resolveStrategy 的区别：resolveStrategy 从 STRATEGIES[id] 拿 components，
+ * 这里直接接受外部传入的 components（来自 AppSettings.customComponents）。
+ *
+ * overrides（阶段 3）允许用户进一步覆盖指令文本和采样参数，
+ * 覆盖层优先级高于 components 引用的版本。
+ */
+export function resolveCustomStrategy(
+  components: StrategyComponents,
+  overrides?: {
+    instruction?: string;
+    temperature?: number;
+    maxTokens?: number;
+    joinPosition?: CustomJoinPosition;
+  }
+): ResolvedStrategy {
+  const sp = STYLE_PROMPT_SETS[components.stylePromptSet];
+  const sm = SAMPLING_PROFILES[components.sampling];
+  const cj = CUSTOM_JOINS[components.customJoin];
+  if (!sp || !sm || cj === undefined) {
+    throw new Error(
+      `[strategies] 自定义组合引用了不存在的组件版本：` +
+        `stylePromptSet=${components.stylePromptSet}, sampling=${components.sampling}, customJoin=${components.customJoin}`
+    );
+  }
+  const resolved: ResolvedStrategy = {
+    id: 'custom',
+    label: '自定义组合',
+    description: `指令集@${components.stylePromptSet} · 采样@${components.sampling} · 拼接@${components.customJoin}`,
+    components,
+    stylePrompts: { ...sp },
+    temperature: sm.temperature,
+    maxTokens: sm.maxTokens,
+    customPosition: cj,
+  };
+
+  if (overrides?.instruction) {
+    for (const key of Object.keys(resolved.stylePrompts) as (keyof typeof resolved.stylePrompts)[]) {
+      resolved.stylePrompts[key] = overrides.instruction;
+    }
+  }
+  if (overrides?.temperature != null) resolved.temperature = overrides.temperature;
+  if (overrides?.maxTokens != null) resolved.maxTokens = overrides.maxTokens;
+  if (overrides?.joinPosition) resolved.customPosition = overrides.joinPosition;
+
+  return resolved;
 }
 
 /**

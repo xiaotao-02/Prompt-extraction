@@ -164,6 +164,16 @@ const STRATEGIES_INTERNAL = {
       customJoin: 'v0.3.0',
     },
   },
+  custom: {
+    label: '自定义组合',
+    description:
+      '自由混搭已有的指令集、采样参数、拼接方式。适合对比实验和高级调优。',
+    components: {
+      stylePromptSet: 'v0.3.0',
+      sampling: 'v0.3.0',
+      customJoin: 'v0.3.0',
+    },
+  },
 } as const satisfies Record<string, StrategyDefinition>;
 
 /**

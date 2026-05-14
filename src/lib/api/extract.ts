@@ -4,7 +4,7 @@
  */
 import type { AppSettings } from '../types';
 import { fetchImageAsBase64 } from '../image';
-import { getStrategy, type PromptStrategy } from '../strategies';
+import { getStrategy, resolveCustomStrategy, type PromptStrategy } from '../strategies';
 import { callOpenAICompatible } from './providers/openai';
 import { callAnthropic } from './providers/anthropic';
 import { callGemini } from './providers/gemini';
@@ -38,7 +38,14 @@ export async function extractPrompt(params: ExtractParams): Promise<ExtractResul
   // 取一次，后续无论是 instruction 还是各家 API 的 body 都从这一份 strategy
   // 派生，保证"用户选了哪档就完整生效"，不会出现"指令换了但温度还是旧值"
   // 这种半新半旧的脏状态。
-  const strategy = getStrategy(settings.promptStrategy);
+  const strategy =
+    settings.promptStrategy === 'custom' && settings.customComponents
+      ? resolveCustomStrategy(settings.customComponents, {
+          instruction: settings.customInstruction || undefined,
+          temperature: settings.customTemperature,
+          maxTokens: settings.customMaxTokens,
+        })
+      : getStrategy(settings.promptStrategy);
   const instruction = buildInstruction(settings, strategy);
 
   // 阶段 1：图片就绪

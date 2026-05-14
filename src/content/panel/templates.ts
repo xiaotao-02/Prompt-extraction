@@ -294,12 +294,12 @@ export function panelHtml(state: PanelState): string {
         >${escapeText(refining && refineHasPartial ? state.refinePartial || '' : draft)}</textarea>
         <div class="meta-row">
           <div class="meta-left">
-            ${strategySelectHtml(state.strategy)}
             <button
               class="link-btn ${state.versionsOpen ? 'active' : ''}"
               data-action="toggle-versions"
               ${versionCount === 0 ? 'disabled' : ''}
             >${ICON_HISTORY}<span>历史版本 · ${versionCount}</span></button>
+            ${strategySelectHtml(state.strategy)}
             <button
               class="link-btn ${state.refineOpen ? 'active' : ''}"
               data-action="toggle-refine"

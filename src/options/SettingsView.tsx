@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Check,
+  ChevronDown,
   Eye,
   EyeOff,
   ExternalLink,
@@ -12,7 +13,18 @@ import {
 } from 'lucide-react';
 import { PROVIDER_LIST, PROVIDERS } from '@/lib/providers';
 import { getSettings, saveSettings } from '@/lib/storage';
-import { getStrategyList } from '@/lib/strategies';
+import {
+  getStrategyList,
+  STYLE_PROMPT_SETS,
+  SAMPLING_PROFILES,
+  CUSTOM_JOINS,
+} from '@/lib/strategies';
+import type {
+  StylePromptSetVersion,
+  SamplingVersion,
+  CustomJoinVersion,
+  StrategyComponents,
+} from '@/lib/strategies-meta';
 import type { AppSettings, OutputStyle, ProviderConfig, ProviderId } from '@/lib/types';
 import { extractPrompt, listModels } from '@/lib/api';
 import UpdateSection from './UpdateSection';
@@ -578,33 +590,40 @@ export default function SettingsView({ registerSaveHandler, onDirtyChange }: Pro
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
           {strategyList.map((s) => {
             const active = settings.promptStrategy === s.id;
+            const isCustom = s.id === 'custom';
             return (
-              <button
-                key={s.id}
-                type="button"
-                onClick={() => setSettings({ ...settings, promptStrategy: s.id })}
-                className={`text-left p-3 rounded-xl border transition ${
-                  active
-                    ? 'border-violet-500 bg-violet-50 dark:bg-violet-500/10'
-                    : 'border-zinc-200 dark:border-zinc-800 hover:border-zinc-300'
-                }`}
-              >
-                <div className="text-sm font-medium flex items-center gap-2">
-                  {s.label}
-                  {active && (
-                    <span className="text-[10px] px-1.5 py-0.5 rounded bg-violet-500 text-white">
-                      生效中
-                    </span>
+              <div key={s.id} className={isCustom ? 'sm:col-span-2' : ''}>
+                <button
+                  type="button"
+                  onClick={() => setSettings({ ...settings, promptStrategy: s.id })}
+                  className={`w-full text-left p-3 rounded-xl border transition ${
+                    active
+                      ? 'border-violet-500 bg-violet-50 dark:bg-violet-500/10'
+                      : 'border-zinc-200 dark:border-zinc-800 hover:border-zinc-300'
+                  } ${isCustom && active ? 'rounded-b-none' : ''}`}
+                >
+                  <div className="text-sm font-medium flex items-center gap-2">
+                    {s.label}
+                    {active && (
+                      <span className="text-[10px] px-1.5 py-0.5 rounded bg-violet-500 text-white">
+                        生效中
+                      </span>
+                    )}
+                  </div>
+                  <div className="text-[11px] text-zinc-500 mt-1 leading-relaxed">
+                    {s.description}
+                  </div>
+                  {!isCustom && (
+                    <div className="text-[10px] text-zinc-400 mt-1.5 font-mono">
+                      temperature {s.temperature} · max_tokens {s.maxTokens} ·{' '}
+                      {s.customPosition === 'prepend' ? '自定义前置' : '自定义追加'}
+                    </div>
                   )}
-                </div>
-                <div className="text-[11px] text-zinc-500 mt-1 leading-relaxed">
-                  {s.description}
-                </div>
-                <div className="text-[10px] text-zinc-400 mt-1.5 font-mono">
-                  temperature {s.temperature} · max_tokens {s.maxTokens} ·{' '}
-                  {s.customPosition === 'prepend' ? '自定义前置' : '自定义追加'}
-                </div>
-              </button>
+                </button>
+                {isCustom && active && (
+                  <CustomStrategyPanel settings={settings} setSettings={setSettings} />
+                )}
+              </div>
             );
           })}
         </div>
@@ -657,6 +676,227 @@ export default function SettingsView({ registerSaveHandler, onDirtyChange }: Pro
       <footer className="text-xs text-zinc-400 dark:text-zinc-500 py-4 text-center">
         数据仅保存在你的浏览器本地，不会上传到任何第三方服务器。
       </footer>
+    </div>
+  );
+}
+
+const STYLE_PROMPT_SET_LABELS: Record<StylePromptSetVersion, string> = {
+  'v0.1.0': 'v0.1.0 — 基线指令，7 个抽象方面自由组织',
+  'v0.2.2': 'v0.2.2 — 10 维度显式清单 + 三禁 + 空槽位跳过',
+  'v0.3.0': 'v0.3.0 — 8 维度分句 / 具名风格锚定 / 摄影参数',
+};
+const SAMPLING_LABELS: Record<SamplingVersion, string> = {
+  'v0.1.0': 'v0.1.0 — temperature 0.4 · max_tokens 1024',
+  'v0.2.2': 'v0.2.2 — temperature 0.3 · max_tokens 1280',
+  'v0.3.0': 'v0.3.0 — temperature 0.3 · max_tokens 1536',
+};
+const CUSTOM_JOIN_LABELS: Record<CustomJoinVersion, string> = {
+  'v0.1.0': 'v0.1.0 — 自定义模板尾部追加',
+  'v0.2.2': 'v0.2.2 — 自定义模板前置',
+  'v0.3.0': 'v0.3.0 — 自定义模板前置',
+};
+
+function CustomStrategyPanel({
+  settings,
+  setSettings,
+}: {
+  settings: AppSettings;
+  setSettings: (s: AppSettings) => void;
+}) {
+  const [advancedOpen, setAdvancedOpen] = useState(
+    !!(settings.customInstruction || settings.customTemperature != null || settings.customMaxTokens != null)
+  );
+  const comp = settings.customComponents ?? {
+    stylePromptSet: 'v0.3.0' as StylePromptSetVersion,
+    sampling: 'v0.3.0' as SamplingVersion,
+    customJoin: 'v0.3.0' as CustomJoinVersion,
+  };
+
+  const updateComp = (patch: Partial<StrategyComponents>) => {
+    setSettings({
+      ...settings,
+      customComponents: { ...comp, ...patch },
+    });
+  };
+
+  const sm = SAMPLING_PROFILES[comp.sampling];
+  const cj = CUSTOM_JOINS[comp.customJoin];
+  const effectiveTemp = settings.customTemperature ?? sm.temperature;
+  const effectiveMaxTokens = settings.customMaxTokens ?? sm.maxTokens;
+
+  return (
+    <div className="border border-t-0 border-violet-500 rounded-b-xl bg-violet-50/50 dark:bg-violet-500/5 p-4 space-y-4">
+      {/* 组件版本混搭 */}
+      <div className="space-y-3">
+        <div>
+          <label className="text-[11px] font-medium text-zinc-600 dark:text-zinc-300 block mb-1">
+            指令集版本
+          </label>
+          <select
+            className="input text-xs"
+            value={comp.stylePromptSet}
+            onChange={(e) =>
+              updateComp({ stylePromptSet: e.target.value as StylePromptSetVersion })
+            }
+          >
+            {(Object.keys(STYLE_PROMPT_SETS) as StylePromptSetVersion[]).map((v) => (
+              <option key={v} value={v}>
+                {STYLE_PROMPT_SET_LABELS[v] ?? v}
+              </option>
+            ))}
+          </select>
+        </div>
+        <div>
+          <label className="text-[11px] font-medium text-zinc-600 dark:text-zinc-300 block mb-1">
+            采样参数
+          </label>
+          <select
+            className="input text-xs"
+            value={comp.sampling}
+            onChange={(e) =>
+              updateComp({ sampling: e.target.value as SamplingVersion })
+            }
+          >
+            {(Object.keys(SAMPLING_PROFILES) as SamplingVersion[]).map((v) => (
+              <option key={v} value={v}>
+                {SAMPLING_LABELS[v] ?? v}
+              </option>
+            ))}
+          </select>
+        </div>
+        <div>
+          <label className="text-[11px] font-medium text-zinc-600 dark:text-zinc-300 block mb-1">
+            拼接方式
+          </label>
+          <select
+            className="input text-xs"
+            value={comp.customJoin}
+            onChange={(e) =>
+              updateComp({ customJoin: e.target.value as CustomJoinVersion })
+            }
+          >
+            {(Object.keys(CUSTOM_JOINS) as CustomJoinVersion[]).map((v) => (
+              <option key={v} value={v}>
+                {CUSTOM_JOIN_LABELS[v] ?? v}
+              </option>
+            ))}
+          </select>
+        </div>
+      </div>
+
+      {/* 当前生效摘要 */}
+      <div className="text-[10px] text-zinc-400 font-mono">
+        temperature {effectiveTemp} · max_tokens {effectiveMaxTokens} ·{' '}
+        {(settings.customInstruction ? '自定义指令' : `指令集@${comp.stylePromptSet}`)} ·{' '}
+        {cj === 'prepend' ? '自定义前置' : '自定义追加'}
+      </div>
+
+      {/* 高级覆盖折叠区 */}
+      <div className="border-t border-violet-200 dark:border-violet-500/20 pt-3">
+        <button
+          type="button"
+          onClick={() => setAdvancedOpen(!advancedOpen)}
+          className="flex items-center gap-1.5 text-[11px] font-medium text-zinc-600 dark:text-zinc-300 hover:text-violet-600 dark:hover:text-violet-400 transition"
+        >
+          <ChevronDown
+            className={`w-3.5 h-3.5 transition-transform ${advancedOpen ? 'rotate-0' : '-rotate-90'}`}
+          />
+          高级覆盖
+        </button>
+
+        {advancedOpen && (
+          <div className="mt-3 space-y-3">
+            <div>
+              <label className="text-[11px] font-medium text-zinc-600 dark:text-zinc-300 block mb-1">
+                自定义指令模板
+              </label>
+              <textarea
+                className="input min-h-[100px] resize-y leading-relaxed font-mono text-[12px]"
+                placeholder="留空则使用上方选择的指令集版本。填写后将替代内置指令文本，对所有输出风格统一生效。"
+                value={settings.customInstruction ?? ''}
+                onChange={(e) =>
+                  setSettings({
+                    ...settings,
+                    customInstruction: e.target.value || undefined,
+                  })
+                }
+              />
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div>
+                <label className="text-[11px] font-medium text-zinc-600 dark:text-zinc-300 block mb-1">
+                  温度
+                  <span className="ml-2 font-mono text-zinc-400">
+                    {effectiveTemp.toFixed(2)}
+                  </span>
+                  {settings.customTemperature != null && (
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setSettings({ ...settings, customTemperature: undefined })
+                      }
+                      className="ml-2 text-violet-500 hover:underline"
+                    >
+                      重置
+                    </button>
+                  )}
+                </label>
+                <input
+                  type="range"
+                  min="0"
+                  max="1"
+                  step="0.05"
+                  value={effectiveTemp}
+                  onChange={(e) =>
+                    setSettings({
+                      ...settings,
+                      customTemperature: parseFloat(e.target.value),
+                    })
+                  }
+                  className="w-full accent-violet-500"
+                />
+                <div className="flex justify-between text-[10px] text-zinc-400 mt-0.5">
+                  <span>0.0（稳定）</span>
+                  <span>1.0（发散）</span>
+                </div>
+              </div>
+              <div>
+                <label className="text-[11px] font-medium text-zinc-600 dark:text-zinc-300 block mb-1">
+                  Token 上限
+                  {settings.customMaxTokens != null && (
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setSettings({ ...settings, customMaxTokens: undefined })
+                      }
+                      className="ml-2 text-violet-500 hover:underline"
+                    >
+                      重置
+                    </button>
+                  )}
+                </label>
+                <input
+                  type="number"
+                  className="input text-xs font-mono"
+                  min={256}
+                  max={8192}
+                  step={128}
+                  value={effectiveMaxTokens}
+                  onChange={(e) => {
+                    const v = parseInt(e.target.value, 10);
+                    if (!isNaN(v) && v >= 256) {
+                      setSettings({ ...settings, customMaxTokens: v });
+                    }
+                  }}
+                />
+              </div>
+            </div>
+            <p className="text-[10px] text-zinc-400 leading-snug">
+              覆盖值仅在选中「自定义组合」策略时生效。重置后将退回到上方采样参数版本的默认值。
+            </p>
+          </div>
+        )}
+      </div>
     </div>
   );
 }

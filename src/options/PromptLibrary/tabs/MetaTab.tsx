@@ -1,6 +1,7 @@
 import * as React from 'react';
 import { ExternalLink } from 'lucide-react';
 import type { HistoryItem } from '@/lib/types';
+import { STRATEGY_LABELS } from '@/lib/strategies-meta';
 
 export function MetaTab({ item }: { item: HistoryItem }) {
   return (
@@ -9,6 +10,14 @@ export function MetaTab({ item }: { item: HistoryItem }) {
       <MetaRow label="供应商" value={item.provider} />
       <MetaRow label="模型" value={<span className="font-mono">{item.model}</span>} />
       <MetaRow label="风格" value={item.style} />
+      <MetaRow
+        label="策略"
+        value={
+          item.strategy
+            ? STRATEGY_LABELS[item.strategy] ?? item.strategy
+            : <span className="text-zinc-400 italic">未知策略</span>
+        }
+      />
       <MetaRow label="创建时间" value={new Date(item.createdAt).toLocaleString()} />
       {item.updatedAt && item.updatedAt !== item.createdAt && (
         <MetaRow label="更新时间" value={new Date(item.updatedAt).toLocaleString()} />

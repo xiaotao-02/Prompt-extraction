@@ -1,6 +1,7 @@
 import { Check, Copy, Layers, RotateCcw, Trash2, X } from 'lucide-react';
 import type { HistoryItem, PromptVersion } from '@/lib/types';
 import { getVersionOrdinalLabel, type VersionOrdinalKind } from '@/lib/versionLabel';
+import { STRATEGY_LABELS } from '@/lib/strategies-meta';
 import { SourceTag } from '../SourceTag';
 
 const ORD_TAG_CLASS: Record<VersionOrdinalKind, string> = {
@@ -110,6 +111,11 @@ export function VersionsSidebar({
                   {ord.label}
                 </span>
                 <SourceTag source={v.source} />
+                {v.meta?.strategy && (
+                  <span className="px-1.5 py-px rounded bg-amber-100 dark:bg-amber-500/20 text-amber-700 dark:text-amber-300">
+                    {STRATEGY_LABELS[v.meta.strategy] ?? v.meta.strategy}
+                  </span>
+                )}
                 <span className="text-zinc-400 dark:text-zinc-500">
                   {new Date(v.createdAt).toLocaleString()}
                 </span>

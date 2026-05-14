@@ -48,6 +48,11 @@ function defaultSettings(): AppSettings {
     saveHistory: true,
     updates: { ...DEFAULT_UPDATE_SETTINGS },
     promptStrategy: DEFAULT_STRATEGY_ID,
+    customComponents: {
+      stylePromptSet: 'v0.3.0',
+      sampling: 'v0.3.0',
+      customJoin: 'v0.3.0',
+    },
   };
 }
 

@@ -407,6 +407,7 @@ async function runExtraction(params: {
         style: result.style,
         pageUrl,
         pageTitle,
+        strategy: settings.promptStrategy,
       }).then((stored) => {
         if (!stored) return;
         postToTab(tabId, {
@@ -438,6 +439,7 @@ async function persistHistory(params: {
   style: HistoryItem['style'];
   pageUrl: string;
   pageTitle: string;
+  strategy?: import('@/lib/strategies-meta').StrategyId;
 }): Promise<HistoryItem | undefined> {
   try {
     const now = Date.now();
@@ -457,6 +459,7 @@ async function persistHistory(params: {
       pageTitle: params.pageTitle,
       createdAt: now,
       updatedAt: now,
+      strategy: params.strategy,
       versions: [
         {
           id: params.requestId + ':v0',
@@ -467,6 +470,7 @@ async function persistHistory(params: {
             provider: params.provider,
             model: params.model,
             style: params.style,
+            strategy: params.strategy,
           },
         },
       ],

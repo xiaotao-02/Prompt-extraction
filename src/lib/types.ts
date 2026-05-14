@@ -67,8 +67,8 @@ export type OutputStyle = 'natural-zh' | 'natural-en' | 'sd-tags' | 'midjourney'
 // 同时本地绑定（types.ts 内部要在 AppSettings / 消息协议里直接当类型用）和
 // 对外 re-export。`export type { ... } from` 本身只做"转发"，不会把 StrategyId
 // 作为本地标识符可见，所以必须 import-then-export 两步走。
-import type { StrategyId } from './strategies-meta';
-export type { StrategyId };
+import type { StrategyId, StrategyComponents } from './strategies-meta';
+export type { StrategyId, StrategyComponents };
 
 export interface ProviderConfig {
   id: ProviderId;
@@ -124,6 +124,14 @@ export interface AppSettings {
    *     用户旧数据里写着的 id 仍然能解析回最新可用的组件组合，不会出空白。
    */
   promptStrategy: StrategyId;
+  /** 自定义组合策略选用的组件版本（仅 promptStrategy === 'custom' 时生效） */
+  customComponents?: StrategyComponents;
+  /** 完全自定义指令文本（仅 promptStrategy === 'custom' 时生效） */
+  customInstruction?: string;
+  /** 自定义温度（覆盖 sampling 版本） */
+  customTemperature?: number;
+  /** 自定义 token 上限（覆盖 sampling 版本） */
+  customMaxTokens?: number;
 }
 
 /**
@@ -160,7 +168,7 @@ export interface PromptVersion {
    * - 'edited' / 'restored' 版本：通常省略（不绑定具体模型）。
    * - 老数据没有该字段时，UI 应回退到展示「当前记录的 provider/model」。
    */
-  meta?: { provider: ProviderId; model: string; style: OutputStyle };
+  meta?: { provider: ProviderId; model: string; style: OutputStyle; strategy?: StrategyId };
 }
 
 export interface HistoryItem {
@@ -176,6 +184,8 @@ export interface HistoryItem {
   createdAt: number;
   updatedAt?: number;
   versions: PromptVersion[];
+  /** 提取时使用的策略档位 id */
+  strategy?: StrategyId;
   /** 用户置顶收藏，置顶项排在管理后台列表最前面 */
   pinned?: boolean;
   /** 用户给这条记录写的备注/标签，便于检索 */
