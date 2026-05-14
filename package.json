@@ -1,12 +1,12 @@
 {
   "name": "prompt-extracto",
-  "version": "0.1.13",
+  "version": "0.1.14",
   "description": "Prompt Extracto · 右键任意图片，调用视觉大模型提取 AI 绘画提示词的 Chrome 扩展",
   "private": true,
   "type": "module",
   "scripts": {
     "dev": "node scripts/generate-icons.mjs && vite",
-    "build": "node scripts/generate-icons.mjs && tsc -b --noEmit && vite build",
+    "build": "node scripts/generate-icons.mjs && tsc --noEmit && vite build",
     "build:watch": "node scripts/generate-icons.mjs && vite build --watch",
     "preview": "vite preview",
     "icons": "node scripts/generate-icons.mjs",
@@ -17,7 +17,7 @@
     "store:screenshots": "node scripts/make-store-screenshots.mjs",
     "install:chrome": "node scripts/install-to-chrome.mjs",
     "install:edge": "node scripts/install-to-chrome.mjs --browser=edge",
-    "lint": "tsc -b --noEmit"
+    "lint": "tsc --noEmit"
   },
   "dependencies": {
     "lucide-react": "^0.460.0",
