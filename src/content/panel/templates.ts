@@ -171,7 +171,11 @@ export function panelHtml(state: PanelState): string {
             <button class="icon-btn" data-action="toggle-versions" title="收起">${ICON_CLOSE}</button>
           </div>
           <ul class="versions-list">
-            ${versionsListHtml(versions, editorContent, state.selectedVersionId)}
+            ${versionsListHtml(versions, editorContent, state.selectedVersionId, {
+              provider: state.provider,
+              model: state.model,
+              strategy: state.strategy,
+            })}
           </ul>
         </aside>
       `
@@ -332,10 +336,11 @@ export function panelHtml(state: PanelState): string {
 export function versionsListHtml(
   versions: PromptVersion[],
   editorContent: string,
-  selectedVersionId?: string
+  selectedVersionId?: string,
+  fallbackMeta?: { provider?: string; model?: string; strategy?: StrategyId }
 ): string {
   return versions
-    .map((v, i) => versionItemHtml(v, i, versions.length, editorContent, selectedVersionId))
+    .map((v, i) => versionItemHtml(v, i, versions.length, editorContent, selectedVersionId, fallbackMeta))
     .join('');
 }
 
@@ -344,13 +349,17 @@ export function versionItemHtml(
   index: number,
   total: number,
   editorContent: string,
-  selectedVersionId?: string
+  selectedVersionId?: string,
+  fallbackMeta?: { provider?: string; model?: string; strategy?: StrategyId }
 ): string {
   const isCurrent = index === 0;
   const time = formatTime(v.createdAt);
   const tag = sourceLabel(v.source);
-  const ord = getVersionOrdinalLabel(total, index);
+  const ord = getVersionOrdinalLabel(v.versionNo, isCurrent);
   const preview = v.prompt.replace(/\s+/g, ' ').slice(0, 120);
+  const provider = v.meta?.provider ?? fallbackMeta?.provider;
+  const model = v.meta?.model ?? fallbackMeta?.model;
+  const strategy = v.meta?.strategy ?? fallbackMeta?.strategy;
   // selected：优先按「用户点选 id」；否则按正文与编辑器一致（兼容未设 id 的旧状态）。
   // 选中只负责预览到编辑器；真正恢复历史仍必须点击"恢复此版本"。
   const selected =
@@ -372,6 +381,16 @@ export function versionItemHtml(
       <div class="version-head">
         <span class="version-ord ${ord.kind}">${escapeText(ord.label)}</span>
         <span class="version-tag ${v.source}">${tag}</span>
+        ${
+          strategy
+            ? `<span class="version-strategy">${escapeText(STRATEGY_LABELS[strategy] ?? strategy)}</span>`
+            : ''
+        }
+        ${
+          provider && model
+            ? `<span class="version-meta">${escapeText(provider)} · ${escapeText(model)}</span>`
+            : ''
+        }
         <span class="version-time">${escapeText(time)}</span>
       </div>
       <div class="version-preview">${escapeText(preview)}${
@@ -386,10 +405,16 @@ export function versionItemHtml(
             ? ''
             : `<button class="link-btn primary restore-btn" data-action="restore-version" data-version-id="${escapeAttr(
                 v.id
-              )}">${ICON_RESTORE}<span>恢复此版本</span></button>
-              <button class="link-btn danger delete-btn" data-action="delete-version" data-version-id="${escapeAttr(
+              )}">${ICON_RESTORE}<span>恢复此版本</span></button>`
+        }
+        ${
+          total > 1
+            ? `<button class="link-btn danger delete-btn" data-action="delete-version" data-version-id="${escapeAttr(
                 v.id
-              )}" title="删除此版本">${ICON_TRASH}</button>`
+              )}" title="${
+                isCurrent ? '删除当前版本（下一条版本将顶替为当前）' : '删除此版本'
+              }">${ICON_TRASH}</button>`
+            : ''
         }
       </div>
     </li>
@@ -397,7 +422,7 @@ export function versionItemHtml(
 }
 
 export function sourceLabel(s: PromptVersion['source']): string {
-  // 注意：这里返回"来源"而非"时间序号"。"初始 / 当前 / 版本N"由 getVersionOrdinalLabel
+  // 注意：这里返回"来源"而非"版本序号"。"初始 / 当前 / 版本N"由 getVersionOrdinalLabel
   // 统一计算并以独立的 .version-ord chip 渲染，不要在这里和它打架。
   if (s === 'extracted') return '反推';
   if (s === 'edited') return '手动编辑';

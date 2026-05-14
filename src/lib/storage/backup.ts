@@ -12,6 +12,7 @@ import type { AppSettings, HistoryItem, LibraryFolder } from '../types';
 import { getSettings, saveSettings } from './settings';
 import { getHistory, writeHistory, migrateItem, HISTORY_LIMIT } from './history';
 import { getFolders, mergeFolders, replaceFolders } from './folders';
+import { mirrorCurrentVersion, normalizePromptVersions } from './versionState';
 
 export interface BackupPayload {
   /** 备份文件格式版本，递增；当前 2（v1 仍兼容）。 */
@@ -73,7 +74,7 @@ export async function restoreBackup(
   let added = 0;
   if (Array.isArray(payload.history)) {
     if (mode === 'replace') {
-      const next = payload.history.slice(0, HISTORY_LIMIT).map(migrateItem);
+      const next = payload.history.slice(0, HISTORY_LIMIT).map((item) => mirrorCurrentVersion(migrateItem(item)));
       await writeHistory(next);
       added = next.length;
     } else {
@@ -96,7 +97,13 @@ export async function restoreBackup(
           for (const v of older.versions) {
             if (!seen.has(v.id)) mergedVersions.push(v);
           }
-          byId.set(item.id, { ...newer, versions: mergedVersions });
+          byId.set(
+            item.id,
+            mirrorCurrentVersion({
+              ...newer,
+              versions: normalizePromptVersions(mergedVersions),
+            })
+          );
         }
       }
       const merged = Array.from(byId.values()).sort(

@@ -17,12 +17,6 @@ import { RefineInline } from './tabs/RefineInline';
 
 type InlineSection = 'refine' | 'meta';
 
-const VERSION_SIDEBAR_VISIBLE_COUNT = 15;
-const VERSION_SIDEBAR_ROW_HEIGHT = 88;
-const VERSION_SIDEBAR_HEADER_HEIGHT = 44;
-const VERSION_SIDEBAR_MIN_HEIGHT =
-  VERSION_SIDEBAR_HEADER_HEIGHT + VERSION_SIDEBAR_VISIBLE_COUNT * VERSION_SIDEBAR_ROW_HEIGHT;
-
 export function ExpandedPanel({
   item,
   draft,
@@ -80,17 +74,24 @@ export function ExpandedPanel({
     onChangeDraft(v.prompt);
   };
 
+  const handleRestoreVersion = (v: PromptVersion) => {
+    setSelectedVersionId(null);
+    onRestoreVersion(v);
+  };
+
+  const handleDeleteVersion = (v: PromptVersion) => {
+    if (selectedVersionId === v.id) setSelectedVersionId(null);
+    onDeleteVersion(v);
+  };
+
   return (
     <div className="border-t border-zinc-200 dark:border-zinc-800 bg-zinc-50/60 dark:bg-zinc-950/30 relative">
       {/* 版本侧边栏：向左挂出卡片外，不遮挡编辑区 */}
       <div
-        className="absolute right-full top-0 z-10 overflow-hidden rounded-l-2xl transition-all duration-300 ease-[cubic-bezier(.2,.9,.3,1)]"
+        className="absolute right-full top-1/2 z-10 overflow-hidden rounded-l-2xl transition-all duration-300 ease-[cubic-bezier(.2,.9,.3,1)] -translate-y-1/2"
         style={{
           width: versionsOpen && versionCount > 0 ? 300 : 0,
-          height:
-            versionsOpen && versionCount > 0
-              ? `max(100%, ${VERSION_SIDEBAR_MIN_HEIGHT}px)`
-              : '100%',
+          height: versionsOpen && versionCount > 0 ? 'max(75vh, 100%)' : '100%',
           opacity: versionsOpen && versionCount > 0 ? 1 : 0,
           pointerEvents: versionsOpen && versionCount > 0 ? 'auto' : 'none',
         }}
@@ -103,8 +104,8 @@ export function ExpandedPanel({
             onCopy={onCopy}
             copiedKey={copiedKey}
             onSelectVersion={handleSelectVersion}
-            onRestoreVersion={onRestoreVersion}
-            onDeleteVersion={onDeleteVersion}
+            onRestoreVersion={handleRestoreVersion}
+            onDeleteVersion={handleDeleteVersion}
             onClose={() => setVersionsOpen(false)}
           />
         </div>

@@ -464,6 +464,7 @@ async function persistHistory(params: {
         {
           id: params.requestId + ':v0',
           prompt: params.prompt,
+          versionNo: 0,
           createdAt: now,
           source: 'extracted',
           meta: {

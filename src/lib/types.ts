@@ -157,6 +157,10 @@ export type PromptVersionSource = 'extracted' | 'edited' | 'restored' | 'refined
 export interface PromptVersion {
   id: string;
   prompt: string;
+  /**
+   * 稳定的版本序号。排序以它为准，createdAt 只作为展示和冲突兜底。
+   */
+  versionNo?: number;
   createdAt: number;
   source: PromptVersionSource;
   note?: string;

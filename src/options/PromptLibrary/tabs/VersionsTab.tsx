@@ -77,8 +77,14 @@ export function VersionsSidebar({
         {item.versions.map((v, i) => {
           const isCurrent = i === 0;
           const cid = `ver:${item.id}::${v.id}`;
-          const ord = getVersionOrdinalLabel(item.versions.length, i);
+          const ord = getVersionOrdinalLabel(v.versionNo, isCurrent);
           const preview = v.prompt.replace(/\s+/g, ' ').slice(0, 120);
+          const meta = v.meta ?? {
+            provider: item.provider,
+            model: item.model,
+            style: item.style,
+            strategy: item.strategy,
+          };
           const isSelected =
             selectedVersionId != null
               ? v.id === selectedVersionId
@@ -111,11 +117,16 @@ export function VersionsSidebar({
                   {ord.label}
                 </span>
                 <SourceTag source={v.source} />
-                {v.meta?.strategy && (
+                {meta.strategy && (
                   <span className="px-1.5 py-px rounded bg-amber-100 dark:bg-amber-500/20 text-amber-700 dark:text-amber-300">
-                    {STRATEGY_LABELS[v.meta.strategy] ?? v.meta.strategy}
+                    {STRATEGY_LABELS[meta.strategy] ?? meta.strategy}
                   </span>
                 )}
+                <span className="inline-flex items-center gap-1 px-1.5 py-px rounded bg-white/80 dark:bg-zinc-800/80 text-zinc-600 dark:text-zinc-300 ring-1 ring-zinc-200/60 dark:ring-zinc-700/60">
+                  <span className="font-medium">{meta.provider}</span>
+                  <span className="text-zinc-300 dark:text-zinc-600">·</span>
+                  <span className="font-mono truncate max-w-[110px]">{meta.model}</span>
+                </span>
                 <span className="text-zinc-400 dark:text-zinc-500">
                   {new Date(v.createdAt).toLocaleString()}
                 </span>
@@ -151,10 +162,10 @@ export function VersionsSidebar({
                     <RotateCcw className="w-3 h-3" /> 恢复此版本
                   </button>
                 )}
-                {item.versions.length > 1 && !isCurrent && (
+                {item.versions.length > 1 && (
                   <button
                     onClick={(e) => { e.stopPropagation(); onDeleteVersion(v); }}
-                    title="删除此版本"
+                    title={isCurrent ? '删除当前版本（下一条版本将顶替为当前）' : '删除此版本'}
                     className="ml-auto inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-zinc-400 hover:text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-500/10 transition"
                   >
                     <Trash2 className="w-3 h-3" />

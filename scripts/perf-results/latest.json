@@ -1,0 +1,67 @@
+{
+  "recorded_at": "2026-05-14T18:26:01.495Z",
+  "branch": "main",
+  "commit": "1e20262",
+  "npm_run_build_elapsed_ms_store1": 4433,
+  "dist_js_total_bytes": 435371,
+  "dist_css_total_bytes": 74243,
+  "dist_js_file_count": 10,
+  "dist_css_file_count": 1,
+  "largest_js": [
+    {
+      "path": "dist/assets/chunk-DvCAwR2i.js",
+      "bytes": 151335
+    },
+    {
+      "path": "dist/assets/chunk-Dn70WjDW.js",
+      "bytes": 145939
+    },
+    {
+      "path": "dist/assets/chunk-CBqlF01u.js",
+      "bytes": 61663
+    },
+    {
+      "path": "dist/assets/chunk-DawEIvxc.js",
+      "bytes": 40092
+    },
+    {
+      "path": "dist/assets/chunk-4oVSTc3c.js",
+      "bytes": 15785
+    },
+    {
+      "path": "dist/assets/chunk-CT_Qt7rU.js",
+      "bytes": 10034
+    },
+    {
+      "path": "dist/assets/chunk-FTmkYY5P.js",
+      "bytes": 9969
+    },
+    {
+      "path": "dist/assets/index.ts-loader-Be_0qKxx.js",
+      "bytes": 338
+    },
+    {
+      "path": "dist/assets/chunk-BQw4eae2.js",
+      "bytes": 179
+    },
+    {
+      "path": "dist/service-worker-loader.js",
+      "bytes": 37
+    }
+  ],
+  "largest_css": [
+    {
+      "path": "dist/assets/globals-jZPgR6aV.css",
+      "bytes": 74243
+    }
+  ],
+  "manifest_entries": {
+    "background": "service-worker-loader.js",
+    "popup": "src/popup/index.html",
+    "options": "src/options/index.html",
+    "contentScripts": [
+      "assets/index.ts-loader-Be_0qKxx.js"
+    ]
+  },
+  "note": "build_* 为自动化基线；popup/options/content 运行时请以 PERF_METRICS.categories 为准在浏览器采样。"
+}

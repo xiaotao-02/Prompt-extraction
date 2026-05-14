@@ -4,6 +4,11 @@
  */
 import type { HistoryItem, PromptVersion, PromptVersionSource } from '../types';
 import { getHistory, writeHistory, newVersionId } from './history';
+import {
+  getNextPromptVersionNo,
+  mirrorCurrentVersion,
+  normalizePromptVersions,
+} from './versionState';
 
 function moveUpdatedItemToFront(
   list: HistoryItem[],
@@ -30,25 +35,33 @@ export async function appendPromptVersion(
   const list = await getHistory();
   const idx = list.findIndex((i) => i.id === id);
   if (idx < 0) return null;
-  const item = list[idx];
+  const item = mirrorCurrentVersion(list[idx]);
   const trimmed = prompt.replace(/\s+$/g, '');
   if (trimmed === item.prompt.replace(/\s+$/g, '')) return item;
   const version: PromptVersion = {
     id: newVersionId(),
     prompt: trimmed,
+    versionNo: getNextPromptVersionNo(item.versions),
     createdAt: Date.now(),
     source,
     note,
     meta,
   };
   const updated: HistoryItem = {
-    ...item,
-    prompt: trimmed,
-    updatedAt: version.createdAt,
-    ...(meta
-      ? { provider: meta.provider, model: meta.model, style: meta.style }
-      : {}),
-    versions: [version, ...(item.versions || [])],
+    ...mirrorCurrentVersion({
+      ...item,
+      prompt: trimmed,
+      updatedAt: version.createdAt,
+      ...(meta
+        ? {
+            provider: meta.provider,
+            model: meta.model,
+            style: meta.style,
+            ...(meta.strategy ? { strategy: meta.strategy } : {}),
+          }
+        : {}),
+      versions: normalizePromptVersions([version, ...(item.versions || [])]),
+    }),
   };
   await writeHistory(moveUpdatedItemToFront(list, idx, updated));
   return updated;
@@ -61,22 +74,28 @@ export async function restorePromptVersion(
   const list = await getHistory();
   const idx = list.findIndex((i) => i.id === id);
   if (idx < 0) return null;
-  const item = list[idx];
+  const item = mirrorCurrentVersion(list[idx]);
   const target = item.versions.find((v) => v.id === versionId);
   if (!target) return null;
-  if (target.prompt === item.prompt) return item;
-  const version: PromptVersion = {
-    id: newVersionId(),
-    prompt: target.prompt,
-    createdAt: Date.now(),
-    source: 'restored',
-    note: `restored from ${new Date(target.createdAt).toLocaleString()}`,
-  };
+  if (item.versions[0]?.id === versionId) return item;
+  const restoredAt = Date.now();
+  const nextVersionNo = getNextPromptVersionNo(item.versions);
   const updated: HistoryItem = {
-    ...item,
-    prompt: target.prompt,
-    updatedAt: version.createdAt,
-    versions: [version, ...item.versions],
+    ...mirrorCurrentVersion({
+      ...item,
+      prompt: target.prompt,
+      updatedAt: restoredAt,
+      versions: normalizePromptVersions(
+        item.versions.map((version) =>
+          version.id === versionId
+            ? {
+                ...version,
+                versionNo: nextVersionNo,
+              }
+            : version
+        )
+      ),
+    }),
   };
   await writeHistory(moveUpdatedItemToFront(list, idx, updated));
   return updated;
@@ -103,20 +122,8 @@ export async function removePromptVersion(
   if (next.length === item.versions.length) return item;
   const wasCurrent = item.versions[0]?.id === versionId;
   const updated: HistoryItem = wasCurrent
-    ? {
-        ...item,
-        prompt: next[0].prompt,
-        updatedAt: next[0].createdAt,
-        ...(next[0].meta
-          ? {
-              provider: next[0].meta.provider,
-              model: next[0].meta.model,
-              style: next[0].meta.style,
-            }
-          : {}),
-        versions: next,
-      }
-    : { ...item, versions: next };
+    ? mirrorCurrentVersion({ ...item, versions: next })
+    : { ...item, versions: normalizePromptVersions(next) };
   list[idx] = updated;
   await writeHistory(list);
   return updated;

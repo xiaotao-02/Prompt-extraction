@@ -484,7 +484,24 @@ export const STYLE = `
   .version-tag.refined { background: rgba(168,85,247,0.25); color: #d8b4fe; }
 }
 .version-time { opacity: 0.65; }
-/* 时间序号 chip：与来源 chip 并列在同一行，按"按时间排"的逻辑显示
+.version-meta, .version-strategy {
+  max-width: 150px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  padding: 1px 6px; border-radius: 4px; font-size: 10px; font-weight: 500;
+  background: rgba(255,255,255,0.70); color: #52525b;
+  border: 1px solid rgba(212,212,216,0.70);
+}
+.version-strategy {
+  background: rgba(245,158,11,0.12); color: #b45309; border-color: rgba(245,158,11,0.25);
+}
+@media (prefers-color-scheme: dark) {
+  .version-meta {
+    background: rgba(39,39,42,0.80); color: #d4d4d8; border-color: rgba(63,63,70,0.80);
+  }
+  .version-strategy {
+    background: rgba(245,158,11,0.18); color: #fbbf24; border-color: rgba(245,158,11,0.26);
+  }
+}
+/* 版本序号 chip：与来源 chip 并列在同一行，按 versionNo 显示
    "初始 / 版本N / 当前"。当前 = emerald，初始 = sky 蓝（与 emerald 区分），
    中间版本 = 中性灰。 */
 .version-ord {

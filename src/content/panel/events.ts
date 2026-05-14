@@ -151,7 +151,12 @@ function patchVersionList(): void {
   list.innerHTML = versionsListHtml(
     versions,
     editorContent,
-    st.selectedVersionId
+    st.selectedVersionId,
+    {
+      provider: st.provider,
+      model: st.model,
+      strategy: st.strategy,
+    }
   );
   updateDirtyChrome();
 }
@@ -527,9 +532,26 @@ function handleDataAction(root: HTMLElement, el: HTMLElement, event: MouseEvent)
     const vid = el.dataset.versionId;
     if (!vid) return;
     if ((state.versions?.length || 0) <= 1) return;
-    if (!confirm('确定删除该版本吗？此操作不可撤销')) return;
-    void removePromptVersion(state.requestId, vid).then(() => {
+    const isCurrent = state.versions?.[0]?.id === vid;
+    const msg = isCurrent
+      ? '确定删除「当前版本」吗？删除后将由下一条版本自动顶替为新的当前版本，此操作不可撤销'
+      : '确定删除该版本吗？此操作不可撤销';
+    if (!confirm(msg)) return;
+    void removePromptVersion(state.requestId, vid).then((updated) => {
       if (!currentState || currentState.requestId !== state.requestId) return;
+      if (updated && isCurrent) {
+        setCurrentState({
+          ...currentState,
+          prompt: updated.prompt,
+          draft: updated.prompt,
+          versions: updated.versions,
+          versionsOpen: true,
+          selectedVersionId: updated.versions[0]?.id,
+        });
+        renderPanel(currentState);
+        flashCopied(el, '已切换到下一版本 ✔');
+        return;
+      }
       void syncVersions(state.requestId);
     });
     return;

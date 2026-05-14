@@ -25,6 +25,7 @@ import {
 } from '@/lib/storage';
 import type { HistoryItem, PromptVersion, RefineResponse } from '@/lib/types';
 import { getVersionOrdinalLabel, type VersionOrdinalKind } from '@/lib/versionLabel';
+import { STRATEGY_LABELS } from '@/lib/strategies-meta';
 import { formatTime } from '../options/_shared/time';
 
 const VERSION_ORD_TAG_CLASS: Record<VersionOrdinalKind, string> = {
@@ -469,7 +470,13 @@ function VersionList({
         {item.versions.map((v, i) => {
           const isCurrent = i === 0;
           const cid = `${item.id}::${v.id}`;
-          const ord = getVersionOrdinalLabel(item.versions.length, i);
+          const ord = getVersionOrdinalLabel(v.versionNo, isCurrent);
+          const meta = v.meta ?? {
+            provider: item.provider,
+            model: item.model,
+            style: item.style,
+            strategy: item.strategy,
+          };
           return (
             <li key={v.id} className={`p-2 ${isCurrent ? 'bg-emerald-50/60 dark:bg-emerald-500/10' : ''}`}>
               <div className="flex items-center gap-1.5 text-[10px] mb-1 flex-wrap">
@@ -480,13 +487,16 @@ function VersionList({
                 </span>
                 <SourceTag source={v.source} />
                 <span className="text-zinc-500">{formatTime(v.createdAt)}</span>
-                {v.meta && (
-                  <span className="inline-flex items-center gap-1 px-1.5 py-px rounded bg-white/80 dark:bg-zinc-800/80 text-zinc-600 dark:text-zinc-300 ring-1 ring-zinc-200/60 dark:ring-zinc-700/60">
-                    <span className="font-medium">{v.meta.provider}</span>
-                    <span className="text-zinc-300 dark:text-zinc-600">·</span>
-                    <span className="font-mono truncate max-w-[110px]">{v.meta.model}</span>
+                {meta.strategy && (
+                  <span className="px-1.5 py-px rounded bg-amber-100 dark:bg-amber-500/20 text-amber-700 dark:text-amber-300">
+                    {STRATEGY_LABELS[meta.strategy] ?? meta.strategy}
                   </span>
                 )}
+                <span className="inline-flex items-center gap-1 px-1.5 py-px rounded bg-white/80 dark:bg-zinc-800/80 text-zinc-600 dark:text-zinc-300 ring-1 ring-zinc-200/60 dark:ring-zinc-700/60">
+                    <span className="font-medium">{meta.provider}</span>
+                    <span className="text-zinc-300 dark:text-zinc-600">·</span>
+                    <span className="font-mono truncate max-w-[110px]">{meta.model}</span>
+                </span>
               </div>
               <p className="text-[11px] leading-relaxed line-clamp-2 text-zinc-700 dark:text-zinc-300 whitespace-pre-wrap break-words">
                 {v.prompt}

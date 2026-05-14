@@ -1,5 +1,11 @@
 import type { HistoryItem, PromptVersion } from '../types';
 import { notifyBackupSubscribers } from './events';
+import {
+  getNextPromptVersionNo,
+  metaFromHistoryItem,
+  mirrorCurrentVersion,
+  normalizePromptVersions,
+} from './versionState';
 
 const HISTORY_KEY = 'history_v1';
 /**
@@ -16,18 +22,19 @@ const HISTORY_DEDUP_FLAG = 'history_dedup_by_image_v1';
 export const HISTORY_LIMIT = 300;
 
 export function migrateItem(raw: HistoryItem): HistoryItem {
-  if (raw.versions && raw.versions.length > 0) return raw;
+  if (raw.versions && raw.versions.length > 0) return mirrorCurrentVersion(raw);
   const seedVersion: PromptVersion = {
     id: raw.id + ':v0',
     prompt: raw.prompt,
+    versionNo: 0,
     createdAt: raw.createdAt || Date.now(),
     source: 'extracted',
   };
-  return {
+  return mirrorCurrentVersion({
     ...raw,
     updatedAt: raw.updatedAt ?? raw.createdAt,
     versions: [seedVersion],
-  };
+  });
 }
 
 /**
@@ -104,8 +111,8 @@ function isSameImage(a: HistoryItem, b: HistoryItem): boolean {
  *
  * 规则：
  * - 同一组里以"最近活跃（updatedAt/createdAt 最大）"的那条为主条；其他条目里
- *   的 versions 整体追加进主条，按 createdAt 倒序排列；主条 prompt/updatedAt 等
- *   元数据来自最新版本。
+ *   的 versions 整体追加进主条，再由 normalizePromptVersions 补齐 versionNo
+ *   并按版本号倒序排列；主条 prompt/updatedAt 等元数据来自当前版本。
  * - 任何一条 `pinned=true` → 合并后主条 pinned；其余 note 字段择最新者一份。
  *
  * 仅在 `HISTORY_DEDUP_FLAG` 不存在时执行一次；执行后写入标记。
@@ -140,16 +147,16 @@ function dedupHistoryByImage(list: HistoryItem[]): HistoryItem[] {
         allVersions.push(v);
       }
     }
-    allVersions.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
-    const top = allVersions[0] || head.versions?.[0];
-    return {
+    const normalizedVersions = normalizePromptVersions(allVersions);
+    const top = normalizedVersions[0] || head.versions?.[0];
+    return mirrorCurrentVersion({
       ...head,
       prompt: top?.prompt ?? head.prompt,
       updatedAt: top?.createdAt ?? head.updatedAt,
-      versions: allVersions,
+      versions: normalizedVersions,
       pinned: sorted.some((it) => it.pinned) || undefined,
       note: sorted.map((it) => it.note).find((n) => n && n.trim()) || head.note,
-    };
+    });
   });
 }
 
@@ -237,12 +244,14 @@ export async function addHistory(item: HistoryItem): Promise<HistoryItem> {
     const newVersion: PromptVersion = {
       id: incomingHead?.id || newVersionId(),
       prompt: incoming.prompt,
+      versionNo: getNextPromptVersionNo(existing.versions),
       createdAt: incomingHead?.createdAt || incoming.createdAt || Date.now(),
       source: 'extracted',
       meta: {
         provider: incoming.provider,
         model: incoming.model,
         style: incoming.style,
+        ...(incoming.strategy ? { strategy: incoming.strategy } : {}),
       },
     };
     // 老 versions 没有 meta 时，按 existing 的当前 provider/model/style 回填一份，
@@ -252,14 +261,10 @@ export async function addHistory(item: HistoryItem): Promise<HistoryItem> {
         ? v
         : {
             ...v,
-            meta: {
-              provider: existing.provider,
-              model: existing.model,
-              style: existing.style,
-            },
+            meta: metaFromHistoryItem(existing),
           }
     );
-    const merged: HistoryItem = {
+    const merged: HistoryItem = mirrorCurrentVersion({
       ...existing,
       // 当前指向最新一次反推：prompt + provider/model/style + updatedAt 都同步过去。
       prompt: incoming.prompt,
@@ -273,8 +278,8 @@ export async function addHistory(item: HistoryItem): Promise<HistoryItem> {
       pageUrl: existing.pageUrl || incoming.pageUrl,
       pageTitle: existing.pageTitle || incoming.pageTitle,
       updatedAt: newVersion.createdAt,
-      versions: [newVersion, ...oldVersions],
-    };
+      versions: normalizePromptVersions([newVersion, ...oldVersions]),
+    });
     list.splice(existingIdx, 1);
     list.unshift(merged);
     if (list.length > HISTORY_LIMIT) list.length = HISTORY_LIMIT;
@@ -289,13 +294,15 @@ export async function addHistory(item: HistoryItem): Promise<HistoryItem> {
         provider: incoming.provider,
         model: incoming.model,
         style: incoming.style,
+        ...(incoming.strategy ? { strategy: incoming.strategy } : {}),
       },
     };
   }
-  list.unshift(incoming);
+  const inserted = mirrorCurrentVersion(incoming);
+  list.unshift(inserted);
   if (list.length > HISTORY_LIMIT) list.length = HISTORY_LIMIT;
   await writeHistory(list);
-  return incoming;
+  return inserted;
 }
 
 export async function clearHistory(): Promise<void> {
