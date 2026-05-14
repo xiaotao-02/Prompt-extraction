@@ -1,6 +1,15 @@
 import { extractPrompt, refinePrompt } from '@/lib/api';
 import { fetchImageAsBase64, makeStorageThumbnail } from '@/lib/image';
-import { addHistory, appendPromptVersion, getHistoryItem, getSettings, saveSettings, saveUpdateResult } from '@/lib/storage';
+import {
+  addHistory,
+  appendPromptVersion,
+  getHistoryItem,
+  getSettings,
+  removePromptVersion,
+  restorePromptVersion,
+  saveSettings,
+  saveUpdateResult,
+} from '@/lib/storage';
 import type { HistoryItem, RefineResponse, RuntimeMessage, StrategyId, UpdateCheckResult } from '@/lib/types';
 import { DEFAULT_FEED_URL, getCurrentVersion, performUpdateCheck } from '@/lib/updater';
 
@@ -156,6 +165,44 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     })();
     return true;
   }
+  if (message?.type === 'GET_HISTORY_ITEM') {
+    const id = message.payload?.id;
+    if (!id) {
+      sendResponse({ ok: false, error: '缺少 id' });
+      return true;
+    }
+    void getHistoryItem(id).then((item) => sendResponse({ ok: true, item }));
+    return true;
+  }
+  if (message?.type === 'APPEND_PROMPT_VERSION') {
+    const p = message.payload;
+    if (!p?.id || typeof p.prompt !== 'string') {
+      sendResponse({ ok: false, error: '参数缺失' });
+      return true;
+    }
+    void appendPromptVersion(p.id, p.prompt, p.source ?? 'edited', p.note, p.meta).then((item) =>
+      sendResponse({ ok: true, item })
+    );
+    return true;
+  }
+  if (message?.type === 'RESTORE_PROMPT_VERSION') {
+    const p = message.payload;
+    if (!p?.id || !p.versionId) {
+      sendResponse({ ok: false, error: '参数缺失' });
+      return true;
+    }
+    void restorePromptVersion(p.id, p.versionId).then((item) => sendResponse({ ok: true, item }));
+    return true;
+  }
+  if (message?.type === 'REMOVE_PROMPT_VERSION') {
+    const p = message.payload;
+    if (!p?.id || !p.versionId) {
+      sendResponse({ ok: false, error: '参数缺失' });
+      return true;
+    }
+    void removePromptVersion(p.id, p.versionId).then((item) => sendResponse({ ok: true, item }));
+    return true;
+  }
   if (message?.type === 'CHECK_UPDATE') {
     runUpdateCheck()
       .then((result) => {
@@ -241,6 +288,12 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
                 await chrome.windows.update(existing.windowId, { focused: true });
               }
             } catch { /* ignore */ }
+            try {
+              const live = await chrome.tabs.get(targetId);
+              if (live.status !== 'complete') {
+                await waitForTabComplete(targetId);
+              }
+            } catch { /* ignore */ }
           } else {
             const tab = await chrome.tabs.create({ url: pageUrl, active: true });
             if (!tab.id) {
@@ -276,10 +329,17 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           }
         }
 
-        await sendToTabReliably(targetId, {
+        const delivered = await sendToTabReliably(targetId, {
           type: 'PANEL_FROM_HISTORY',
-          payload: { historyId },
+          payload: { historyId, item },
         });
+        if (!delivered) {
+          sendResponse({
+            ok: false,
+            error: '无法在目标网页显示悬浮窗，请刷新该页面后重试',
+          });
+          return;
+        }
         sendResponse({ ok: true, tabId: targetId, windowId: targetWindowId });
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
@@ -567,12 +627,12 @@ async function runRefine(
 }
 
 /**
- * 可靠地向 tab 发送消息：用 PING 确认 content script 就绪后再发。
+ * 可靠地向 tab 发送消息：轮询 PING + 校验业务消息是否 sendMessage 成功。
  *
  * 用于 OPEN_IN_PANEL 等用户主动操作——必须保证消息送达，不能 fire-and-forget。
  * 新建 tab 场景下 content script 在 document_idle 注入，`waitForTabComplete`
  * 只等页面 complete，listener 可能还没注册完，直接发消息会丢。这里通过
- * PING→ACK 轮询确认就绪，失败时自动注入 + 重试。
+ * PING→ACK 轮询；多轮 PING 仍失败时再程序化注入，避免与 declarative 注入过早叠打。
  */
 async function sendToTabReliably(
   tabId: number,
@@ -580,21 +640,38 @@ async function sendToTabReliably(
   maxAttempts = 8,
   intervalMs = 150,
 ): Promise<boolean> {
+  const INJECT_AFTER_ATTEMPTS = 3;
+  let programmaticInjected = false;
+
   for (let i = 0; i < maxAttempts; i++) {
     const alive = await pingTab(tabId);
     if (alive) {
-      chrome.tabs.sendMessage(tabId, message, () => void chrome.runtime.lastError);
-      return true;
-    }
-    // 第一次 ping 失败时主动注入一次，后续轮询只等
-    if (i === 0) {
+      const sent = await sendTabMessageOk(tabId, message);
+      if (sent) return true;
+    } else if (i >= INJECT_AFTER_ATTEMPTS && !programmaticInjected) {
+      programmaticInjected = true;
       await injectContentScript(tabId);
     }
     await sleep(intervalMs);
   }
-  // 兜底：超时后仍然尝试发一次
-  chrome.tabs.sendMessage(tabId, message, () => void chrome.runtime.lastError);
-  return false;
+  const finalOk = await sendTabMessageOk(tabId, message);
+  if (!finalOk) {
+    console.warn('[PromptExtracto] sendToTabReliably: final send failed', tabId);
+  }
+  return finalOk;
+}
+
+/** tabs.sendMessage 是否无 lastError（用于确认业务消息送达）。 */
+function sendTabMessageOk(tabId: number, message: RuntimeMessage): Promise<boolean> {
+  return new Promise((resolve) => {
+    try {
+      chrome.tabs.sendMessage(tabId, message, () => {
+        resolve(!chrome.runtime.lastError);
+      });
+    } catch {
+      resolve(false);
+    }
+  });
 }
 
 function pingTab(tabId: number): Promise<boolean> {
@@ -754,11 +831,22 @@ function waitForTabComplete(tabId: number, timeoutMs = 8000): Promise<void> {
   });
 }
 
+function getDeclarativeContentScriptFiles(): string[] {
+  const m = chrome.runtime.getManifest() as chrome.runtime.ManifestV3;
+  const js = m.content_scripts?.[0]?.js;
+  return Array.isArray(js) ? js : [];
+}
+
 async function injectContentScript(tabId: number): Promise<boolean> {
+  const files = getDeclarativeContentScriptFiles();
+  if (files.length === 0) {
+    console.warn('[PromptExtracto] injectContentScript: manifest has no content_scripts[0].js');
+    return false;
+  }
   try {
     await chrome.scripting.executeScript({
       target: { tabId },
-      files: ['src/content/index.ts'],
+      files,
     });
     return true;
   } catch (err) {

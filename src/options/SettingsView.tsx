@@ -586,7 +586,7 @@ export default function SettingsView({ registerSaveHandler, onDirtyChange }: Pro
         <div className="mt-5">
           <label className="label">额外提示词（可选）</label>
           <textarea
-            className="input min-h-[100px] resize-y leading-relaxed font-mono text-[13px]"
+            className="input min-h-[100px] resize-y leading-[1.6] font-mono text-[13px]"
             placeholder="例如：注重画面氛围与光影描写；输出不超过 100 字。&#10;可以多行输入，详细描述你想要的提示词风格、约束和示例。"
             value={settings.customPromptTemplate}
             onChange={(e) =>
@@ -848,7 +848,7 @@ function CustomStrategyPanel({
                 自定义指令模板
               </label>
               <textarea
-                className="input min-h-[100px] resize-y leading-relaxed font-mono text-[12px]"
+                className="input min-h-[100px] resize-y leading-[1.6] font-mono text-[12px]"
                 placeholder="留空则使用上方选择的指令集版本。填写后将替代内置指令文本，对所有输出风格统一生效。"
                 value={settings.customInstruction ?? ''}
                 onChange={(e) =>

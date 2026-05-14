@@ -143,7 +143,7 @@ export function ExpandedPanel({
                 ? '正在接收 AI 调整后的提示词…'
                 : '可在此修改提示词…'
             }
-            className={`input min-h-[280px] max-h-[520px] resize-y leading-relaxed font-mono text-[13px] w-full${
+            className={`input min-h-[280px] max-h-[520px] resize-y leading-[1.6] font-mono text-[13px] w-full${
               refineLoading ? ' opacity-[0.97]' : ''
             }`}
           />

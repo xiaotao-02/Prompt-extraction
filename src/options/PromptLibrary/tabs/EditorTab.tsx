@@ -35,7 +35,7 @@ export function EditorTab({
           value={draft}
           onChange={(e) => onChangeDraft(e.target.value)}
           spellCheck={false}
-          className="input min-h-[200px] max-h-[460px] resize-y leading-relaxed font-mono text-[13px]"
+          className="input min-h-[200px] max-h-[460px] resize-y leading-[1.6] font-mono text-[13px]"
         />
         <div className="mt-2 flex items-center gap-1.5 flex-wrap text-[11px]">
           <button

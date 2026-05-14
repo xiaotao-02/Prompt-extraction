@@ -4,8 +4,8 @@
   /* 与 src/lib/uiFontStack.ts UI_FONT_STACK_SANS 保持同步 */
   --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
     "Microsoft YaHei", "Hiragino Sans GB", system-ui, "Noto Sans CJK SC", sans-serif;
-  --font-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas,
-    "Liberation Mono", monospace;
+  /* 与 content panel 一致：扩展页 font-mono 也走同一无衬线栈（避免提示词等看起来像等宽） */
+  --font-mono: var(--font-sans);
 }
 
 @layer base {

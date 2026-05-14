@@ -374,11 +374,11 @@ export default function PopupApp() {
                           value={draft}
                           onChange={(e) => setDraft(e.target.value)}
                           spellCheck={false}
-                          className="w-full text-xs leading-relaxed rounded-md border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 px-2 py-1.5 outline-none focus:border-violet-400 focus:ring-2 focus:ring-violet-400/30 resize-y min-h-[80px] max-h-[180px]"
+                          className="w-full text-[13px] leading-[1.6] rounded-md border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 px-2 py-1.5 outline-none focus:border-violet-400 focus:ring-2 focus:ring-violet-400/30 resize-y min-h-[80px] max-h-[180px]"
                         />
                       ) : (
                         <p
-                          className={`text-xs leading-relaxed text-zinc-700 dark:text-zinc-300 whitespace-pre-wrap break-words ${
+                          className={`text-[13px] leading-[1.6] text-zinc-700 dark:text-zinc-300 whitespace-pre-wrap break-words ${
                             streamPreview
                               ? 'max-h-[180px] overflow-y-auto'
                               : 'line-clamp-3'
@@ -579,7 +579,7 @@ function VersionList({
                     <span className="font-mono truncate max-w-[168px]">{meta.model}</span>
                 </span>
               </div>
-              <p className="text-[11px] leading-relaxed line-clamp-2 text-zinc-700 dark:text-zinc-300 whitespace-pre-wrap break-words">
+              <p className="text-[13px] leading-[1.6] line-clamp-2 text-zinc-700 dark:text-zinc-300 whitespace-pre-wrap break-words">
                 {v.prompt}
               </p>
               <div className="mt-1.5 flex items-center gap-1 text-[10px]">

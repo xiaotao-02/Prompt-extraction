@@ -3,7 +3,7 @@
  * 这是 src/content/index.ts 唯一引用到的入口。
  */
 import { STYLE } from './styles';
-import type { PromptVersion } from '@/lib/types';
+import type { PromptVersion, StrategyId } from '@/lib/types';
 import {
   HOST_ID,
   host,
@@ -162,6 +162,48 @@ export function renderPanel(state: PanelState): void {
   manageLoadingTicker(state);
   manageLoadingStallWatchdog(state);
   manageRefineTicker(state);
+}
+
+/**
+ * 处理 EXTRACT_PENDING：同 requestId 的续跑（如面板内「重新生成」）需合并现有状态，
+ * 保留历史版本列表与侧栏展开态；否则最小状态会清空 versions，`历史版本 · 0` 且侧栏 DOM 丢失。
+ */
+export function renderPanelForExtractPending(payload: {
+  requestId: string;
+  imageUrl: string;
+  strategy?: StrategyId;
+}): void {
+  const prev = currentState;
+  if (prev != null && prev.requestId === payload.requestId) {
+    renderPanel({
+      ...prev,
+      requestId: payload.requestId,
+      imageUrl: payload.imageUrl,
+      status: 'loading',
+      stage: 'calling',
+      startedAt: Date.now(),
+      strategy: payload.strategy ?? prev.strategy,
+      prompt: undefined,
+      error: undefined,
+      draft: undefined,
+      selectedVersionId: undefined,
+      partial: undefined,
+      refineLoading: false,
+      refineError: undefined,
+      refinePartial: undefined,
+      refineStage: undefined,
+      refineStartedAt: undefined,
+    });
+    return;
+  }
+  renderPanel({
+    requestId: payload.requestId,
+    imageUrl: payload.imageUrl,
+    status: 'loading',
+    stage: 'calling',
+    startedAt: Date.now(),
+    strategy: payload.strategy,
+  });
 }
 
 export function updatePanel(requestId: string, patch: Partial<PanelState>): void {

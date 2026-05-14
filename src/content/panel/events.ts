@@ -1,10 +1,11 @@
-import { safeSendMessage, isExtensionContextValid } from '@/content/extensionBridge';
 import {
-  appendPromptVersion,
-  getHistoryItem,
-  removePromptVersion,
-  restorePromptVersion,
-} from '@/lib/storage';
+  safeSendMessage,
+  isExtensionContextValid,
+  appendPromptVersionFromExtension,
+  getHistoryItemFromExtension,
+  removePromptVersionFromExtension,
+  restorePromptVersionFromExtension,
+} from '@/content/extensionBridge';
 import type { RefineResponse, RuntimeMessage, StrategyId } from '@/lib/types';
 import { STRATEGY_LABELS } from '@/lib/strategies-meta';
 import {
@@ -117,7 +118,7 @@ export function updateDirtyChromeImmediate(): void {
 
 export async function syncVersions(requestId: string): Promise<void> {
   try {
-    const item = await getHistoryItem(requestId);
+    const item = await getHistoryItemFromExtension(requestId);
     if (!item) return;
     if (!currentState || currentState.requestId !== requestId) return;
     let nextSel = currentState.selectedVersionId;
@@ -523,7 +524,7 @@ function handleDataAction(root: HTMLElement, el: HTMLElement, event: MouseEvent)
   if (action === 'save') {
     const draft = state.draft ?? state.prompt ?? '';
     if (draft === state.prompt) return;
-    void appendPromptVersion(state.requestId, draft, 'edited').then((updated) => {
+    void appendPromptVersionFromExtension(state.requestId, draft, 'edited').then((updated) => {
       if (!updated || !currentState || currentState.requestId !== state.requestId) return;
       const wasOpen = currentState.versionsOpen;
       setCurrentState({
@@ -569,7 +570,7 @@ function handleDataAction(root: HTMLElement, el: HTMLElement, event: MouseEvent)
   if (action === 'restore-version') {
     const vid = el.dataset.versionId;
     if (!vid) return;
-    void restorePromptVersion(state.requestId, vid).then((updated) => {
+    void restorePromptVersionFromExtension(state.requestId, vid).then((updated) => {
       if (!updated || !currentState || currentState.requestId !== state.requestId) return;
       const wasOpen = currentState.versionsOpen;
       setCurrentState({
@@ -595,7 +596,7 @@ function handleDataAction(root: HTMLElement, el: HTMLElement, event: MouseEvent)
       ? '确定删除「当前版本」吗？删除后将由下一条版本自动顶替为新的当前版本，此操作不可撤销'
       : '确定删除该版本吗？此操作不可撤销';
     if (!confirm(msg)) return;
-    void removePromptVersion(state.requestId, vid).then((updated) => {
+    void removePromptVersionFromExtension(state.requestId, vid).then((updated) => {
       if (!currentState || currentState.requestId !== state.requestId) return;
       if (updated && isCurrent) {
         setCurrentState({

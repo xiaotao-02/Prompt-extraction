@@ -204,7 +204,7 @@ export default function SetupGuide({ settings, applyConfig }: Props) {
             </div>
 
             <textarea
-              className="input min-h-[120px] font-mono text-[12px] resize-y leading-relaxed"
+              className="input min-h-[120px] font-mono text-[12px] resize-y leading-[1.6]"
               placeholder={`支持粘贴 curl 命令或 JSON 配置，自动识别厂商和 API Key。
 示例：curl https://api.openai.com/v1/... -H "Authorization: Bearer sk-..."
 或：{ "provider": "deepseek", "apiKey": "sk-...", "model": "deepseek-chat" }`}
