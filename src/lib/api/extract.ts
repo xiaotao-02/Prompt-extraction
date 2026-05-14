@@ -65,6 +65,20 @@ export async function extractPrompt(params: ExtractParams): Promise<ExtractResul
     case 'zhipu':
     case 'qwen':
     case 'siliconflow':
+    case 'deepseek':
+    case 'moonshot':
+    case 'doubao':
+    case 'stepfun':
+    case 'minimax':
+    case 'yi':
+    case 'baidu':
+    case 'openrouter':
+    case 'xai':
+    case 'mistral':
+    case 'groq':
+    case 'together':
+    case 'fireworks':
+    case 'shukelongda':
     case 'custom':
     default:
       prompt = await callOpenAICompatible(cfg, img, instruction, strategy, onProgress);

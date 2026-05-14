@@ -1,3 +1,21 @@
+/**
+ * 内置 provider 标识。
+ *
+ * 分组（仅文档目的，类型上是平的联合）：
+ * - 三大原生协议：openai / anthropic / gemini
+ * - 国内主流（OpenAI 兼容）：zhipu / qwen / siliconflow / deepseek / moonshot /
+ *   doubao / stepfun / minimax / yi / baidu
+ * - 海外主流（OpenAI 兼容）：openrouter / xai / mistral / groq / together /
+ *   fireworks
+ * - 第三方中转：shukelongda
+ * - 兜底：custom（任意 OpenAI 兼容端点）
+ *
+ * **新增 provider 时同时改 `src/lib/providers.ts` 的 PROVIDERS 注册表**，
+ * 默认配置（baseUrl / 默认模型 / 文档链接）由那里集中维护。
+ *
+ * 老 settings 里若残留早期下线过的 id（例如曾经出现过的 'fidelity' 之类），
+ * `getSettings` 通过 base 默认值合并已经能软回退到 `openai`。
+ */
 export type ProviderId =
   | 'openai'
   | 'anthropic'
@@ -5,6 +23,19 @@ export type ProviderId =
   | 'zhipu'
   | 'qwen'
   | 'siliconflow'
+  | 'deepseek'
+  | 'moonshot'
+  | 'doubao'
+  | 'stepfun'
+  | 'minimax'
+  | 'yi'
+  | 'baidu'
+  | 'openrouter'
+  | 'xai'
+  | 'mistral'
+  | 'groq'
+  | 'together'
+  | 'fireworks'
   | 'shukelongda'
   | 'custom';
 

@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import {
   Copy,
   Check,
@@ -56,6 +56,7 @@ export function ItemRow({
 }) {
   const versionCount = item.versions?.length || 0;
   const [moveOpen, setMoveOpen] = useState(false);
+  const moveBtnRef = useRef<HTMLButtonElement>(null);
   const folder = item.folderId ? folders.find((f) => f.id === item.folderId) : undefined;
   const folderColor = folder ? getProjectColor(folder.color) : null;
   // 让用户点击整行任意空白处都能 toggle 展开/收起；同时仍要支持划选 prompt 文本
@@ -232,8 +233,9 @@ export function ItemRow({
             </button>
           )}
           {onMoveTo && (
-            <div className="relative">
+            <>
               <button
+                ref={moveBtnRef}
                 onClick={(e) => {
                   stop(e);
                   setMoveOpen((v) => !v);
@@ -250,6 +252,7 @@ export function ItemRow({
               </button>
               {moveOpen && (
                 <MoveToMenu
+                  anchorRef={moveBtnRef}
                   folders={folders}
                   currentFolderId={item.folderId ?? null}
                   onClose={() => setMoveOpen(false)}
@@ -260,7 +263,7 @@ export function ItemRow({
                   align="left"
                 />
               )}
-            </div>
+            </>
           )}
           <button
             onClick={(e) => {

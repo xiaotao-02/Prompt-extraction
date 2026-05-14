@@ -103,10 +103,19 @@ export default function OptionsApp() {
     // 这里不需要也不应该再手动 setDirty(false)，否则可能与子组件的真实状态错位。
   };
 
+  // 内容容器宽度按 Tab 切换：
+  // - 设置：保持 5xl（≈1024px），表单阅读舒适、避免横向阅读疲劳；
+  // - 提示词库：拉宽到 1536px，方便在大屏下一次看到更多条目 / 更多列卡片。
+  //   用任意值而不是 max-w-screen-2xl，避免 Tailwind v4 中 screen-* 预设变动带来的兼容问题。
+  // header 与 main 共用同一个宽度，保证 Tab 居中、保存按钮右对齐时不会与下方内容错位。
+  const containerWidth = tab === 'library' ? 'max-w-[1536px]' : 'max-w-5xl';
+
   return (
     <div className="min-h-screen w-full flex flex-col items-center">
       <header className="w-full border-b border-zinc-200 dark:border-zinc-800 bg-white/60 dark:bg-zinc-950/60 backdrop-blur sticky top-0 z-10">
-        <div className="max-w-5xl mx-auto px-8 py-4 hidden sm:grid grid-cols-[1fr_auto_1fr] items-center gap-4">
+        <div
+          className={`${containerWidth} mx-auto px-8 py-4 hidden sm:grid grid-cols-[1fr_auto_1fr] items-center gap-4`}
+        >
           <div className="flex items-center gap-2 min-w-0 justify-self-start">
             <img
               src={chrome.runtime.getURL('icons/icon-128.png')}
@@ -152,7 +161,9 @@ export default function OptionsApp() {
         </div>
 
         {/* 小屏：logo + 保存按钮一行，Tab 第二行 */}
-        <div className="sm:hidden max-w-5xl mx-auto px-4 py-3 flex items-center justify-between gap-3">
+        <div
+          className={`sm:hidden ${containerWidth} mx-auto px-4 py-3 flex items-center justify-between gap-3`}
+        >
           <div className="flex items-center gap-2 min-w-0">
             <img
               src={chrome.runtime.getURL('icons/icon-128.png')}
@@ -196,7 +207,7 @@ export default function OptionsApp() {
         </div>
       </header>
 
-      <main className="w-full max-w-5xl mx-auto px-8 py-8">
+      <main className={`w-full ${containerWidth} mx-auto px-8 py-8`}>
         {tab === 'settings' ? (
           <SettingsView
             registerSaveHandler={registerSaveHandler}

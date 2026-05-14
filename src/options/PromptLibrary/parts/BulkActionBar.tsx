@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { CheckCheck, Copy, Download, FolderInput, Trash2, X } from 'lucide-react';
 import type { LibraryFolder } from '@/lib/types';
 import { MoveToMenu } from './MoveToMenu';
@@ -27,6 +27,7 @@ export function BulkActionBar({
   onMoveTo?: (folderId: string | null) => void;
 }) {
   const [moveOpen, setMoveOpen] = useState(false);
+  const moveBtnRef = useRef<HTMLButtonElement>(null);
   return (
     <div className="sticky bottom-4 z-20 flex justify-center pointer-events-none">
       <div className="pointer-events-auto flex items-center gap-2 px-3 py-2 rounded-2xl bg-zinc-900/95 dark:bg-zinc-800/95 text-zinc-100 shadow-2xl shadow-black/20 backdrop-blur ring-1 ring-white/10">
@@ -56,8 +57,9 @@ export function BulkActionBar({
           <Download className="w-3.5 h-3.5" /> 导出
         </button>
         {onMoveTo && (
-          <div className="relative">
+          <>
             <button
+              ref={moveBtnRef}
               onClick={() => setMoveOpen((v) => !v)}
               className="inline-flex items-center gap-1 text-xs px-2 py-1 rounded-md hover:bg-white/10 transition"
             >
@@ -65,6 +67,7 @@ export function BulkActionBar({
             </button>
             {moveOpen && (
               <MoveToMenu
+                anchorRef={moveBtnRef}
                 folders={folders}
                 onClose={() => setMoveOpen(false)}
                 onPick={(fid) => {
@@ -72,10 +75,9 @@ export function BulkActionBar({
                   onMoveTo(fid);
                 }}
                 align="right"
-                placement="top"
               />
             )}
-          </div>
+          </>
         )}
         <button
           onClick={onDelete}

@@ -12,7 +12,8 @@ import {
   Sparkles,
 } from 'lucide-react';
 import { PROVIDER_LIST, PROVIDERS } from '@/lib/providers';
-import type { AppSettings, ProviderConfig, ProviderId } from '@/lib/types';
+import { importFromText } from '@/lib/configImport';
+import type { AppSettings } from '@/lib/types';
 
 interface Props {
   settings: AppSettings;
@@ -82,33 +83,17 @@ export default function SetupGuide({ settings, applyConfig }: Props) {
   const onImport = async () => {
     setImportError(null);
     setImportHint(null);
-    const raw = importText.trim();
-    if (!raw) {
-      setImportError('请先粘贴一段 JSON 配置。');
-      return;
-    }
-    let parsed: unknown;
-    try {
-      parsed = JSON.parse(raw);
-    } catch (e) {
-      setImportError(`JSON 解析失败：${e instanceof Error ? e.message : String(e)}`);
-      return;
-    }
-    if (!parsed || typeof parsed !== 'object') {
-      setImportError('JSON 顶层必须是对象。');
-      return;
-    }
 
-    const next = applyImportedConfig(settings, parsed as Record<string, unknown>);
-    if ('error' in next) {
-      setImportError(next.error);
+    const result = importFromText(settings, importText);
+    if (!result.ok) {
+      setImportError(result.error);
       return;
     }
 
     setImporting(true);
     try {
-      await applyConfig(next.value);
-      setImportHint(next.hint);
+      await applyConfig(result.settings);
+      setImportHint(result.hint);
       setImportText('');
     } catch (e) {
       setImportError(`保存失败：${e instanceof Error ? e.message : String(e)}`);
@@ -174,8 +159,9 @@ export default function SetupGuide({ settings, applyConfig }: Props) {
             </h3>
             <ol className="space-y-2 text-xs text-zinc-600 dark:text-zinc-300 leading-relaxed">
               <Step n={1}>
-                在下方「模型供应商」中挑选一家你想用的 provider（OpenAI / Anthropic / Gemini /
-                智谱 / 通义 / 硅基流动 等）。
+                在下方「模型供应商」中挑选一家 provider —— 已内置 OpenAI / Claude / Gemini /
+                智谱 / 通义 / 硅基流动 / DeepSeek / Kimi / 豆包 / Step / MiniMax / 零一 / 千帆 /
+                OpenRouter / Grok / Mistral / Groq / Together / Fireworks 等，或选「自定义」接入任意 OpenAI 兼容端点。
               </Step>
               <Step n={2}>
                 点击该 provider 卡片旁的「去申请」链接，在官网创建 API Key 并复制。
@@ -217,7 +203,7 @@ export default function SetupGuide({ settings, applyConfig }: Props) {
             <div className="flex items-center justify-between gap-2">
               <h3 className="text-xs font-semibold text-zinc-700 dark:text-zinc-200 flex items-center gap-1.5">
                 <Sparkles className="w-3.5 h-3.5 text-violet-500" />
-                一键配置（粘贴 JSON 导入 / 复制当前配置）
+                一键配置（粘贴 curl 命令 / JSON 导入 / 复制当前配置）
               </h3>
               <button
                 type="button"
@@ -240,28 +226,24 @@ export default function SetupGuide({ settings, applyConfig }: Props) {
 
             <textarea
               className="input min-h-[120px] font-mono text-[12px] resize-y leading-relaxed"
-              placeholder={`粘贴 JSON 配置串，支持三种格式：
-{
-  "provider": "openai",
-  "apiKey": "sk-...",
-  "baseUrl": "https://api.openai.com/v1",
-  "model": "gpt-4o-mini"
-}
+              placeholder={`支持直接粘 curl 命令（厂商文档复制），或粘 JSON 配置：
 
-或多 provider 整体：
-{
-  "activeProvider": "openai",
-  "providers": {
-    "openai": { "apiKey": "sk-...", "baseUrl": "...", "model": "..." }
-  }
-}
+▸ curl 命令（OpenAI / Anthropic / Gemini / DeepSeek / 智谱 等官方文档示例都识别）：
+curl https://api.openai.com/v1/chat/completions \\
+  -H "Authorization: Bearer sk-..." -H "Content-Type: application/json" \\
+  -d '{"model":"gpt-4o-mini","messages":[...]}'
 
-或 NewAPI 中转站「渠道连接」信息（自动识别站点）：
-{
-  "_type": "newapi_channel_conn",
-  "key": "sk-...",
-  "url": "https://ai.shukelongda.cn"
-}`}
+▸ JSON · 单 provider 片段（字段名宽松：apiKey / api_key / key / token、baseUrl / endpoint / url 都识别）：
+{ "provider": "deepseek", "apiKey": "sk-...", "baseUrl": "https://api.deepseek.com/v1", "model": "deepseek-chat" }
+
+▸ JSON · 只给 Key + url 也可以（自动按域名识别厂商，不知道就归到「自定义」）：
+{ "key": "sk-...", "url": "https://api.moonshot.cn/v1" }
+
+▸ JSON · 多 provider 整体（兼容 Cherry Studio / NextChat 等导出）：
+{ "activeProvider": "openai", "providers": { "openai": { ... }, "kimi": { ... } } }
+
+▸ JSON · NewAPI / OneAPI「渠道连接」信息（自动按站点识别）：
+{ "_type": "newapi_channel_conn", "key": "sk-...", "url": "https://your-newapi.example.com" }`}
               value={importText}
               onChange={(e) => {
                 setImportText(e.target.value);
@@ -302,6 +284,7 @@ export default function SetupGuide({ settings, applyConfig }: Props) {
 
             <p className="text-[10px] text-zinc-400 leading-snug">
               · 导入后会立即保存并切换到该 provider；其它 provider 的配置保持不变。<br />
+              · 粘 curl 时支持 Bearer / x-api-key / X-goog-api-key 等鉴权方式，会自动识别厂商并截取 baseUrl。<br />
               · 复制出的 JSON 包含 API Key，请谨慎分享。
             </p>
           </div>
@@ -322,186 +305,5 @@ function Step({ n, children }: { n: number; children: React.ReactNode }) {
   );
 }
 
-/**
- * 把外部传入的 JSON 对象合并到现有 AppSettings。
- *
- * 支持三种顶层格式：
- * 1) 单 provider 片段：{ provider, apiKey, baseUrl, model }
- * 2) 多 provider 整体：{ activeProvider?, providers: { [id]: { apiKey, baseUrl?, model? } } }
- * 3) NewAPI 中转站「渠道连接」：{ _type: "newapi_channel_conn", key, url }
- *    会自动按 url 的 hostname 匹配已知 provider（匹配不到回落到 `custom`），
- *    并且当 url 只是裸域名时自动补 `/v1` 以兼容 OpenAI 协议。
- *
- * 返回 discriminated union，调用方根据 `error` 判断是否失败。
- */
-function applyImportedConfig(
-  base: AppSettings,
-  raw: Record<string, unknown>
-): { value: AppSettings; hint: string } | { error: string } {
-  const validIds = new Set<ProviderId>(PROVIDER_LIST.map((p) => p.id));
-
-  // —— NewAPI「渠道连接」信息：{ _type: "newapi_channel_conn", key, url }
-  if (raw._type === 'newapi_channel_conn') {
-    const apiKey = typeof raw.key === 'string' ? raw.key.trim() : '';
-    const rawUrl = typeof raw.url === 'string' ? raw.url.trim() : '';
-    if (!apiKey) {
-      return { error: '导入失败：newapi_channel_conn 缺少 key 字段或为空。' };
-    }
-    if (!rawUrl) {
-      return { error: '导入失败：newapi_channel_conn 缺少 url 字段或为空。' };
-    }
-    const baseUrl = ensureOpenAIBase(rawUrl);
-    const pid = matchProviderByUrl(rawUrl) ?? 'custom';
-    const prev = base.providers[pid];
-    const meta = PROVIDERS[pid];
-    const merged: ProviderConfig = {
-      ...prev,
-      id: pid,
-      apiKey,
-      baseUrl,
-      model: prev.model && prev.model.trim() ? prev.model : meta.defaultModel,
-    };
-    return {
-      value: {
-        ...base,
-        activeProvider: pid,
-        providers: { ...base.providers, [pid]: merged },
-      },
-      hint:
-        pid === 'custom'
-          ? `已识别 NewAPI 中转「${baseUrl}」并导入到「自定义」。如需切换 provider 可在下方调整。`
-          : `已识别为「${meta.label}」并导入配置（${baseUrl}）。`,
-    };
-  }
-
-  // —— 单 provider 片段
-  if (typeof raw.provider === 'string') {
-    const pid = raw.provider as ProviderId;
-    if (!validIds.has(pid)) {
-      return { error: `未知的 provider："${pid}"，可选值：${Array.from(validIds).join(' / ')}` };
-    }
-    const apiKey = typeof raw.apiKey === 'string' ? raw.apiKey.trim() : '';
-    if (!apiKey) {
-      return { error: '导入失败：缺少 apiKey 字段或为空。' };
-    }
-    const prev = base.providers[pid];
-    const merged: ProviderConfig = {
-      ...prev,
-      id: pid,
-      apiKey,
-      baseUrl:
-        typeof raw.baseUrl === 'string' && raw.baseUrl.trim()
-          ? raw.baseUrl.trim()
-          : prev.baseUrl,
-      model:
-        typeof raw.model === 'string' && raw.model.trim() ? raw.model.trim() : prev.model,
-    };
-    return {
-      value: {
-        ...base,
-        activeProvider: pid,
-        providers: { ...base.providers, [pid]: merged },
-      },
-      hint: `已导入 ${PROVIDERS[pid]?.label || pid} 的配置并切换为当前供应商。`,
-    };
-  }
-
-  // —— 多 provider 整体
-  if (raw.providers && typeof raw.providers === 'object') {
-    const incoming = raw.providers as Record<string, Record<string, unknown>>;
-    const nextProviders = { ...base.providers };
-    const touched: ProviderId[] = [];
-    for (const k of Object.keys(incoming)) {
-      if (!validIds.has(k as ProviderId)) continue;
-      const pid = k as ProviderId;
-      const v = incoming[k] || {};
-      const prev = base.providers[pid];
-      nextProviders[pid] = {
-        ...prev,
-        id: pid,
-        apiKey: typeof v.apiKey === 'string' ? v.apiKey.trim() : prev.apiKey,
-        baseUrl:
-          typeof v.baseUrl === 'string' && (v.baseUrl as string).trim()
-            ? (v.baseUrl as string).trim()
-            : prev.baseUrl,
-        model:
-          typeof v.model === 'string' && (v.model as string).trim()
-            ? (v.model as string).trim()
-            : prev.model,
-      };
-      touched.push(pid);
-    }
-    if (touched.length === 0) {
-      return { error: 'providers 中没有任何受支持的 provider id。' };
-    }
-    const wantActive =
-      typeof raw.activeProvider === 'string' && validIds.has(raw.activeProvider as ProviderId)
-        ? (raw.activeProvider as ProviderId)
-        : touched[0];
-    return {
-      value: {
-        ...base,
-        activeProvider: wantActive,
-        providers: nextProviders,
-      },
-      hint: `已导入 ${touched.length} 个 provider 的配置，当前供应商：${
-        PROVIDERS[wantActive]?.label || wantActive
-      }`,
-    };
-  }
-
-  return {
-    error:
-      '无法识别的 JSON 结构。请提供 { provider, apiKey, baseUrl?, model? }、{ providers: {...} } 或 { _type: "newapi_channel_conn", key, url }。',
-  };
-}
-
-/**
- * 把 NewAPI 渠道里粘出来的 url 归一化成 OpenAI 兼容的 baseUrl。
- *
- * NewAPI 自带的渠道连接信息通常给的是站点根地址（如 `https://ai.shukelongda.cn`），
- * 但 OpenAI 兼容协议的 chat/completions 路径需要挂在 `/v1` 下。
- * 这里只在 pathname 为空 / `/` 时补 `/v1`，避免破坏带租户路径的端点
- * （如 `…/api/paas/v4`、`…/compatible-mode/v1`）。
- */
-function ensureOpenAIBase(raw: string): string {
-  const trimmed = raw.replace(/\/+$/, '');
-  try {
-    const u = new URL(trimmed);
-    if (u.pathname === '' || u.pathname === '/') {
-      return `${u.origin}/v1`;
-    }
-    return trimmed;
-  } catch {
-    return trimmed;
-  }
-}
-
-/**
- * 按 hostname 把外部 url 映射到一个内置 provider。
- *
- * 用于「一键导入」场景：用户从 NewAPI 中转粘贴的 `url` 经常正好对应某个内置
- * provider 的官方域名（例如 `ai.shukelongda.cn` → `shukelongda`），
- * 这种情况下应该直接切换到对应 provider，让用户继承默认模型选项与文档链接。
- *
- * 匹配不到时返回 null，调用方可以回落到 `custom`。
- */
-function matchProviderByUrl(url: string): ProviderId | null {
-  let host: string;
-  try {
-    host = new URL(url).hostname.toLowerCase();
-  } catch {
-    return null;
-  }
-  if (!host) return null;
-  for (const p of PROVIDER_LIST) {
-    if (p.id === 'custom') continue;
-    try {
-      const phost = new URL(p.defaultBaseUrl).hostname.toLowerCase();
-      if (phost === host) return p.id;
-    } catch {
-      continue;
-    }
-  }
-  return null;
-}
+// 配置导入解析（字段同义词 / provider 模糊匹配 / NewAPI 等多种格式）已统一搬到
+// `@/lib/configImport`，这里只负责 UI 编排。

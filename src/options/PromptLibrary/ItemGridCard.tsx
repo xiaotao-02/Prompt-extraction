@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import {
   Copy,
   Check,
@@ -51,6 +51,7 @@ export function ItemGridCard({
 }) {
   const versionCount = item.versions?.length || 0;
   const [moveOpen, setMoveOpen] = useState(false);
+  const moveBtnWrapRef = useRef<HTMLDivElement>(null);
   const folder = item.folderId ? folders.find((f) => f.id === item.folderId) : undefined;
   const folderColor = folder ? getProjectColor(folder.color) : null;
   // 网格卡片整卡可点击：和列表行一致，避免划选文本时误触发
@@ -139,7 +140,7 @@ export function ItemGridCard({
             </IconBtn>
           )}
           {onMoveTo && (
-            <div className="relative" onClick={stop}>
+            <div ref={moveBtnWrapRef} onClick={stop}>
               <IconBtn
                 onClick={() => setMoveOpen((v) => !v)}
                 title={folder ? `当前在「${folder.name}」，点击移动到其他文件夹` : '移动到项目 / 文件夹'}
@@ -151,6 +152,7 @@ export function ItemGridCard({
               </IconBtn>
               {moveOpen && (
                 <MoveToMenu
+                  anchorRef={moveBtnWrapRef}
                   folders={folders}
                   currentFolderId={item.folderId ?? null}
                   onClose={() => setMoveOpen(false)}

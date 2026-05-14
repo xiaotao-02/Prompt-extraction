@@ -752,29 +752,59 @@ export default function PromptLibrary({ focusId, onConsumeFocus }: PromptLibrary
 
       <div className="flex-1 min-w-0 space-y-5">
       {/* 当前节点面包屑 + 折叠侧栏按钮 */}
-      <section className="flex items-center gap-2 text-[12px] text-zinc-500 dark:text-zinc-400 -mb-1">
-        <button
-          onClick={() => setShowSidebar((v) => !v)}
-          className="hidden md:inline-flex items-center gap-1 px-2 py-1 rounded-md hover:bg-zinc-100 dark:hover:bg-zinc-800 text-zinc-500 dark:text-zinc-400 transition"
-          title={showSidebar ? '隐藏目录侧栏' : '显示目录侧栏'}
-        >
-          <FolderTreeIcon className="w-3.5 h-3.5" />
-        </button>
-        <span className="inline-flex items-center gap-1">
-          {selectedNode === SYSTEM_NODE.UNSORTED ? (
-            <Inbox className="w-3.5 h-3.5" />
-          ) : selectedNode === SYSTEM_NODE.PINNED ? (
-            <Pin className="w-3.5 h-3.5" />
-          ) : (
-            <Layers className="w-3.5 h-3.5" />
-          )}
-          <span className="font-medium text-zinc-700 dark:text-zinc-200">
-            {selectedNodeLabel}
-          </span>
-          <span>·</span>
-          <span>{nodeMatched.length} 条</span>
-        </span>
-      </section>
+      {(() => {
+        // 当前节点的图标 + 配色：跟下方 StatCard 用同一套 tone，保持视觉语言一致
+        const nodeTone =
+          selectedNode === SYSTEM_NODE.PINNED
+            ? {
+                bg: 'bg-amber-100 dark:bg-amber-500/15',
+                text: 'text-amber-600 dark:text-amber-300',
+              }
+            : selectedNode === SYSTEM_NODE.UNSORTED
+              ? {
+                  bg: 'bg-zinc-100 dark:bg-zinc-800',
+                  text: 'text-zinc-600 dark:text-zinc-300',
+                }
+              : {
+                  bg: 'bg-violet-100 dark:bg-violet-500/15',
+                  text: 'text-violet-600 dark:text-violet-300',
+                };
+        const NodeIcon =
+          selectedNode === SYSTEM_NODE.UNSORTED
+            ? Inbox
+            : selectedNode === SYSTEM_NODE.PINNED
+              ? Pin
+              : Layers;
+        return (
+          <section className="flex items-center gap-2">
+            <button
+              onClick={() => setShowSidebar((v) => !v)}
+              className="hidden md:inline-flex items-center justify-center w-8 h-8 rounded-lg border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 text-zinc-500 dark:text-zinc-400 hover:text-violet-600 dark:hover:text-violet-300 hover:border-violet-300 dark:hover:border-violet-500/40 transition"
+              title={showSidebar ? '隐藏目录侧栏' : '显示目录侧栏'}
+              aria-label={showSidebar ? '隐藏目录侧栏' : '显示目录侧栏'}
+            >
+              <FolderTreeIcon className="w-3.5 h-3.5" />
+            </button>
+            <div className="inline-flex items-center gap-2 pl-1.5 pr-2.5 py-1.5 rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 shadow-sm min-w-0">
+              <span
+                className={`inline-flex items-center justify-center w-7 h-7 rounded-lg flex-none ${nodeTone.bg} ${nodeTone.text}`}
+              >
+                <NodeIcon className="w-3.5 h-3.5" />
+              </span>
+              <span
+                className="text-sm font-semibold text-zinc-800 dark:text-zinc-100 truncate max-w-[320px]"
+                title={selectedNodeLabel}
+              >
+                {selectedNodeLabel}
+              </span>
+              <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-zinc-100 dark:bg-zinc-800 text-[11px] font-medium text-zinc-600 dark:text-zinc-300 tabular-nums flex-none">
+                <span className="text-zinc-900 dark:text-zinc-100">{nodeMatched.length}</span>
+                <span className="text-zinc-400 dark:text-zinc-500">条</span>
+              </span>
+            </div>
+          </section>
+        );
+      })()}
 
       {/* 顶部统计指标 */}
       <section className="grid grid-cols-2 md:grid-cols-4 gap-3">
@@ -933,7 +963,7 @@ export default function PromptLibrary({ focusId, onConsumeFocus }: PromptLibrary
       ) : filtered.length === 0 ? (
         <NoMatchState onClear={clearFilters} />
       ) : view === 'grid' ? (
-        <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3">
+        <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4 gap-3">
           {filtered.map((item) => (
             <ItemGridCard
               key={item.id}
