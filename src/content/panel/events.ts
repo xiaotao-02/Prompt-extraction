@@ -19,6 +19,7 @@ import {
   MIN_HEIGHT,
   VIEWPORT_MARGIN,
 } from './geometry';
+import { versionsListHtml } from './templates';
 
 function renderPanel(...args: Parameters<typeof panelActions.renderPanel>) {
   return panelActions.renderPanel(...args);
@@ -73,8 +74,15 @@ export function updateDirtyChrome(): void {
   setDisabled('[data-action="save"]', !dirty);
 
   const versions = currentState.versions || [];
-  const matched = versions.find((v) => v.prompt === draft);
-  const matchedId = matched?.id;
+  const sel = currentState.selectedVersionId;
+  let matchedId: string | undefined;
+  if (sel) {
+    const byId = versions.find((v) => v.id === sel);
+    if (byId && byId.prompt === draft) matchedId = sel;
+  }
+  if (!matchedId) {
+    matchedId = versions.find((v) => v.prompt === draft)?.id;
+  }
   panel.querySelectorAll<HTMLElement>('.version-item').forEach((item) => {
     item.classList.toggle(
       'selected',
@@ -88,17 +96,70 @@ export async function syncVersions(requestId: string): Promise<void> {
     const item = await getHistoryItem(requestId);
     if (!item) return;
     if (!currentState || currentState.requestId !== requestId) return;
+    let nextSel = currentState.selectedVersionId;
+    if (nextSel && !item.versions.some((v) => v.id === nextSel)) {
+      nextSel = undefined;
+    }
     setCurrentState({
       ...currentState,
       versions: item.versions,
+      selectedVersionId: nextSel,
       // 如果用户没在编辑，draft 跟着 prompt 走
       draft: currentState.draft ?? item.prompt,
       prompt: item.prompt,
     });
-    renderPanel(currentState);
+    patchVersionList();
   } catch (err) {
     console.warn('[PromptExtracto] syncVersions failed', err);
   }
+}
+
+/**
+ * 从历史记录同步 versions 后，只刷新侧栏 DOM，避免整块 renderPanel 抢走用户正在进行
+ * 的点击（mousedown 后异步完成导致 click 落在已卸载节点上）。
+ */
+function patchVersionList(): void {
+  const st = currentState;
+  if (!st || !panel) return;
+
+  const versions = st.versions || [];
+  if (versions.length === 0) {
+    renderPanel(st);
+    return;
+  }
+
+  const list = panel.querySelector<HTMLElement>('.versions-list');
+  if (!list) {
+    renderPanel(st);
+    return;
+  }
+
+  const headSpan = panel.querySelector<HTMLElement>('.versions-head > span');
+  if (headSpan) {
+    headSpan.textContent = `历史版本 · ${versions.length}`;
+  }
+
+  const editorContent = st.draft ?? st.prompt ?? '';
+  list.innerHTML = versionsListHtml(
+    versions,
+    editorContent,
+    st.selectedVersionId
+  );
+  bindVersionListDataActions();
+  updateDirtyChrome();
+}
+
+/** 只对 `.versions-list` 内的按钮 / 条目绑定 action（sync 替换了 innerHTML 后需重新挂）。 */
+function bindVersionListDataActions(): void {
+  const p = panel;
+  if (!p) return;
+  const list = p.querySelector<HTMLElement>('.versions-list');
+  if (!list) return;
+  list.querySelectorAll<HTMLElement>('[data-action]').forEach((bindEl) => {
+    bindEl.addEventListener('click', (event) =>
+      handleDataAction(p, bindEl, event as MouseEvent)
+    );
+  });
 }
 
 /**
@@ -290,6 +351,309 @@ function bindEdgeResize(root: HTMLElement): void {
   });
 }
 
+function handleDataAction(root: HTMLElement, el: HTMLElement, event: MouseEvent): void {
+  // 历史版本 li 整行带 data-action="select-version"，行内的「复制 / 恢复」按钮也各自有
+  // data-action；子控件先触发并 stopPropagation，避免父级 li 误判。
+  event.stopPropagation();
+  const action = el.dataset.action;
+  const state = currentState;
+  if (!state) return;
+  if (action === 'close') return closePanel();
+  if (action === 'copy') {
+    const text = state.draft ?? state.prompt ?? '';
+    navigator.clipboard
+      .writeText(text)
+      .then(() => flashCopied(el))
+      .catch(() => fallbackCopy(text, el));
+    return;
+  }
+  if (action === 'retry') {
+    if (!isContextValid()) return;
+    safeSendMessage({ type: 'PING' });
+    renderPanel({
+      ...state,
+      status: 'loading',
+      prompt: undefined,
+      error: undefined,
+      draft: undefined,
+      versions: undefined,
+      versionsOpen: false,
+      selectedVersionId: undefined,
+      stage: 'calling',
+      partial: undefined,
+      startedAt: Date.now(),
+    });
+    safeSendMessage({
+      type: 'EXTRACT_PROMPT',
+      payload: {
+        imageUrl: state.imageUrl,
+        pageUrl: location.href,
+        pageTitle: document.title,
+        requestId: state.requestId,
+      },
+    });
+    return;
+  }
+  if (action === 'open-options') {
+    if (!isContextValid()) return;
+    safeSendMessage({ type: 'OPEN_OPTIONS' });
+    return;
+  }
+  if (action === 'open-in-library') {
+    if (!isContextValid()) return;
+    safeSendMessage({
+      type: 'OPEN_OPTIONS',
+      payload: { tab: 'library', focusId: state.requestId },
+    });
+    return;
+  }
+  if (action === 'toggle-versions') {
+    const next = !state.versionsOpen;
+    setCurrentState({ ...state, versionsOpen: next });
+    const row = root.querySelector<HTMLElement>('.panel-row');
+    if (row) row.classList.toggle('versions-open', next);
+    const versionsBtn = root.querySelector<HTMLElement>(
+      '.meta-left [data-action="toggle-versions"]'
+    );
+    if (versionsBtn) versionsBtn.classList.toggle('active', next);
+    return;
+  }
+  if (action === 'reset') {
+    const restored = state.prompt ?? '';
+    let nextSel = state.selectedVersionId;
+    if (nextSel) {
+      const v = state.versions?.find((x) => x.id === nextSel);
+      if (!v || v.prompt !== restored) nextSel = undefined;
+    }
+    setCurrentState({ ...state, draft: restored, selectedVersionId: nextSel });
+    const actionRoot = root.isConnected ? root : panel ?? root;
+    const ta = actionRoot.querySelector<HTMLTextAreaElement>('[data-role="editor"]');
+    if (ta) ta.value = restored;
+    updateDirtyChrome();
+    return;
+  }
+  if (action === 'save') {
+    const draft = state.draft ?? state.prompt ?? '';
+    if (draft === state.prompt) return;
+    void appendPromptVersion(state.requestId, draft, 'edited').then((updated) => {
+      if (!updated || !currentState || currentState.requestId !== state.requestId) return;
+      setCurrentState({
+        ...currentState,
+        prompt: updated.prompt,
+        draft: updated.prompt,
+        versions: updated.versions,
+        versionsOpen: true,
+        selectedVersionId: updated.versions[0]?.id,
+      });
+      renderPanel(currentState);
+      flashCopied(el, '已保存 ✔');
+    });
+    return;
+  }
+  if (action === 'copy-version') {
+    const vid = el.dataset.versionId;
+    const v = state.versions?.find((x) => x.id === vid);
+    if (!v) return;
+    navigator.clipboard
+      .writeText(v.prompt)
+      .then(() => flashCopied(el, '已复制 ✔'))
+      .catch(() => fallbackCopy(v.prompt, el));
+    return;
+  }
+  if (action === 'load-version' || action === 'select-version') {
+    if (currentState?.refineLoading) return;
+    const vid = el.dataset.versionId;
+    const v = state.versions?.find((x) => x.id === vid);
+    if (!v || !currentState || !vid) return;
+    setCurrentState({
+      ...currentState,
+      draft: v.prompt,
+      selectedVersionId: vid,
+    });
+    const actionRoot = root.isConnected ? root : panel ?? root;
+    const ta = actionRoot.querySelector<HTMLTextAreaElement>('[data-role="editor"]');
+    if (ta) ta.value = v.prompt;
+    updateDirtyChrome();
+    return;
+  }
+  if (action === 'restore-version') {
+    const vid = el.dataset.versionId;
+    if (!vid) return;
+    void restorePromptVersion(state.requestId, vid).then((updated) => {
+      if (!updated || !currentState || currentState.requestId !== state.requestId) return;
+      setCurrentState({
+        ...currentState,
+        prompt: updated.prompt,
+        draft: updated.prompt,
+        versions: updated.versions,
+        versionsOpen: true,
+        selectedVersionId: updated.versions[0]?.id,
+      });
+      renderPanel(currentState);
+      flashCopied(el, '已恢复 ✔');
+    });
+    return;
+  }
+  if (action === 'delete-version') {
+    const vid = el.dataset.versionId;
+    if (!vid) return;
+    if ((state.versions?.length || 0) <= 1) return;
+    if (!confirm('确定删除该版本吗？此操作不可撤销')) return;
+    void removePromptVersion(state.requestId, vid).then(() => {
+      if (!currentState || currentState.requestId !== state.requestId) return;
+      void syncVersions(state.requestId);
+    });
+    return;
+  }
+  if (action === 'toggle-refine') {
+    const opening = !state.refineOpen;
+    const nextInstruction = opening ? state.refineInstruction || '' : '';
+    setCurrentState({
+      ...state,
+      refineOpen: opening,
+      refineError: undefined,
+      refineInstruction: nextInstruction,
+      refineStage: opening ? state.refineStage : undefined,
+      refinePartial: opening ? state.refinePartial : undefined,
+      refineStartedAt: opening ? state.refineStartedAt : undefined,
+    });
+
+    const slot = root.querySelector<HTMLElement>('[data-role="refine-slot"]');
+    if (slot) slot.classList.toggle('hidden', !opening);
+
+    const refineBtn = root.querySelector<HTMLElement>(
+      '.meta-left [data-action="toggle-refine"]'
+    );
+    if (refineBtn) refineBtn.classList.toggle('active', opening);
+
+    const refineInput = root.querySelector<HTMLTextAreaElement>('[data-role="refine-input"]');
+    if (refineInput) {
+      if (!opening) {
+        refineInput.value = '';
+        slot
+          ?.querySelectorAll('.refine-error, .refine-progress')
+          .forEach((n) => n.remove());
+      } else {
+        refineInput.value = nextInstruction;
+        setTimeout(() => refineInput.focus(), 0);
+      }
+    }
+    return;
+  }
+  if (action === 'refine-suggest') {
+    const text = el.dataset.text || '';
+    if (!currentState) return;
+    const prev = (currentState.refineInstruction || '').trim();
+    const next = prev ? `${prev}；${text}` : text;
+    setCurrentState({ ...currentState, refineInstruction: next });
+    const refineInput = root.querySelector<HTMLTextAreaElement>('[data-role="refine-input"]');
+    if (refineInput) {
+      refineInput.value = next;
+      refineInput.focus();
+      refineInput.setSelectionRange(next.length, next.length);
+    }
+    return;
+  }
+  if (action === 'run-refine') {
+    const instruction = (currentState?.refineInstruction || '').trim();
+    if (!instruction) {
+      setCurrentState({ ...state, refineError: '请先输入修改要求' });
+      renderPanel(currentState!);
+      return;
+    }
+    setCurrentState({
+      ...state,
+      refineLoading: true,
+      refineError: undefined,
+      refineInstruction: instruction,
+      refineStage: 'calling',
+      refinePartial: undefined,
+      refineStartedAt: Date.now(),
+    });
+    renderPanel(currentState!);
+    if (!isContextValid()) {
+      setCurrentState({
+        ...currentState!,
+        refineLoading: false,
+        refineError: '扩展已更新，请刷新页面',
+        refineStage: undefined,
+        refinePartial: undefined,
+        refineStartedAt: undefined,
+      });
+      renderPanel(currentState!);
+      return;
+    }
+    const baseline = state.draft ?? state.prompt ?? '';
+    try {
+      chrome.runtime.sendMessage(
+        {
+          type: 'REFINE_PROMPT',
+          payload: {
+            historyId: state.requestId,
+            instruction,
+            current: baseline,
+          },
+        },
+        (resp: RefineResponse | undefined) => {
+          if (!currentState || currentState.requestId !== state.requestId) return;
+          if (chrome.runtime.lastError || !resp) {
+            setCurrentState({
+              ...currentState,
+              refineLoading: false,
+              refineError:
+                chrome.runtime.lastError?.message || '后台未响应，请稍后再试',
+              refineStage: undefined,
+              refinePartial: undefined,
+              refineStartedAt: undefined,
+            });
+            renderPanel(currentState);
+            return;
+          }
+          if (!resp.ok) {
+            setCurrentState({
+              ...currentState,
+              refineLoading: false,
+              refineError: resp.error,
+              refineStage: undefined,
+              refinePartial: undefined,
+              refineStartedAt: undefined,
+            });
+            renderPanel(currentState);
+            return;
+          }
+          setCurrentState({
+            ...currentState,
+            refineLoading: false,
+            refineError: undefined,
+            refineInstruction: '',
+            refineOpen: false,
+            refineStage: undefined,
+            refinePartial: undefined,
+            refineStartedAt: undefined,
+            prompt: resp.prompt,
+            draft: resp.prompt,
+            versionsOpen: true,
+            selectedVersionId: undefined,
+          });
+          void syncVersions(state.requestId);
+          renderPanel(currentState);
+        }
+      );
+    } catch {
+      setCurrentState({
+        ...currentState!,
+        refineLoading: false,
+        refineError: '扩展已更新，请刷新页面',
+        refineStage: undefined,
+        refinePartial: undefined,
+        refineStartedAt: undefined,
+      });
+      renderPanel(currentState!);
+    }
+    return;
+  }
+}
+
 export function bindEvents(root: HTMLElement): void {
   bindHeaderDrag(root);
   bindEdgeResize(root);
@@ -297,8 +661,13 @@ export function bindEvents(root: HTMLElement): void {
   if (editor) {
     editor.addEventListener('input', () => {
       if (!currentState) return;
-      setCurrentState({ ...currentState, draft: editor.value });
-      // 仅刷新关键控件（避免每次按键都重渲染整片，从而丢失光标）
+      const val = editor.value;
+      let nextSel = currentState.selectedVersionId;
+      if (nextSel) {
+        const v = currentState.versions?.find((x) => x.id === nextSel);
+        if (!v || v.prompt !== val) nextSel = undefined;
+      }
+      setCurrentState({ ...currentState, draft: val, selectedVersionId: nextSel });
       updateDirtyChrome();
     });
   }
@@ -323,327 +692,9 @@ export function bindEvents(root: HTMLElement): void {
   }
 
   root.querySelectorAll<HTMLElement>('[data-action]').forEach((el) => {
-    el.addEventListener('click', (event) => {
-      // 历史版本 li 整行带 data-action="select-version"，行内的"复制 / 恢复"
-      // 按钮也带各自的 data-action。如果按钮的 click 冒泡上去，会同时触发整行
-      // 的"切换版本"动作，导致先恢复一个版本、又被冒泡的 select 把 draft
-      // 切回去这种诡异行为。统一在这里截断冒泡：子元素 action 处理完就停。
-      event.stopPropagation();
-      const action = el.dataset.action;
-      const state = currentState;
-      if (!state) return;
-      if (action === 'close') return closePanel();
-      if (action === 'copy') {
-        const text = state.draft ?? state.prompt ?? '';
-        navigator.clipboard
-          .writeText(text)
-          .then(() => flashCopied(el))
-          .catch(() => fallbackCopy(text, el));
-        return;
-      }
-      if (action === 'retry') {
-        if (!isContextValid()) return;
-        safeSendMessage({ type: 'PING' });
-        renderPanel({
-          ...state,
-          status: 'loading',
-          prompt: undefined,
-          error: undefined,
-          draft: undefined,
-          versions: undefined,
-          versionsOpen: false,
-          stage: 'calling',
-          partial: undefined,
-          startedAt: Date.now(),
-        });
-        safeSendMessage({
-          type: 'EXTRACT_PROMPT',
-          payload: {
-            imageUrl: state.imageUrl,
-            pageUrl: location.href,
-            pageTitle: document.title,
-            requestId: state.requestId,
-          },
-        });
-        return;
-      }
-      if (action === 'open-options') {
-        if (!isContextValid()) return;
-        safeSendMessage({ type: 'OPEN_OPTIONS' });
-        return;
-      }
-      if (action === 'open-in-library') {
-        if (!isContextValid()) return;
-        safeSendMessage({
-          type: 'OPEN_OPTIONS',
-          payload: { tab: 'library', focusId: state.requestId },
-        });
-        return;
-      }
-      if (action === 'toggle-versions') {
-        // 不重渲整面板：只切 .panel-row.versions-open，sidebar 用 CSS transform
-        // 滑入/滑出。这样面板尺寸保持不变，编辑器 textarea 不丢焦点、不丢滚动。
-        const next = !state.versionsOpen;
-        setCurrentState({ ...state, versionsOpen: next });
-        const row = root.querySelector<HTMLElement>('.panel-row');
-        if (row) row.classList.toggle('versions-open', next);
-        // 同步左下角"历史版本"link-btn 的 active 视觉
-        const versionsBtn = root.querySelector<HTMLElement>(
-          '.meta-left [data-action="toggle-versions"]'
-        );
-        if (versionsBtn) versionsBtn.classList.toggle('active', next);
-        return;
-      }
-      if (action === 'reset') {
-        // 撤销编辑：把 editor textarea 的值改回 prompt，更新 dirty 视觉，
-        // 不重渲面板，避免 sidebar 状态、滚动位置等 UI 一起被推平。
-        const restored = state.prompt ?? '';
-        setCurrentState({ ...state, draft: restored });
-        const editor = root.querySelector<HTMLTextAreaElement>('[data-role="editor"]');
-        if (editor) editor.value = restored;
-        updateDirtyChrome();
-        return;
-      }
-      if (action === 'save') {
-        const draft = state.draft ?? state.prompt ?? '';
-        if (draft === state.prompt) return;
-        void appendPromptVersion(state.requestId, draft, 'edited').then((updated) => {
-          if (!updated || !currentState || currentState.requestId !== state.requestId) return;
-          setCurrentState({
-            ...currentState,
-            prompt: updated.prompt,
-            draft: updated.prompt,
-            versions: updated.versions,
-            versionsOpen: true,
-          });
-          renderPanel(currentState);
-          flashCopied(el, '已保存 ✔');
-        });
-        return;
-      }
-      if (action === 'copy-version') {
-        const vid = el.dataset.versionId;
-        const v = state.versions?.find((x) => x.id === vid);
-        if (!v) return;
-        navigator.clipboard
-          .writeText(v.prompt)
-          .then(() => flashCopied(el, '已复制 ✔'))
-          .catch(() => fallbackCopy(v.prompt, el));
-        return;
-      }
-      if (action === 'load-version' || action === 'select-version') {
-        // 整行点击 = select-version；旧的 load-version 按钮已从模板去掉，
-        // 但 action 名继续兼容（万一有缓存的旧 DOM 还在跑）。
-        const vid = el.dataset.versionId;
-        const v = state.versions?.find((x) => x.id === vid);
-        if (!v || !currentState) return;
-        // 局部更新：把版本内容塞进编辑器 textarea，更新 dirty 视觉 + 列表高亮。
-        // 不重渲，保留 sidebar 滚动位置、不打断用户视线。
-        setCurrentState({ ...currentState, draft: v.prompt });
-        const editor = root.querySelector<HTMLTextAreaElement>('[data-role="editor"]');
-        if (editor) editor.value = v.prompt;
-        // updateDirtyChrome 内部会 toggle .version-item.selected，
-        // CSS 同时隐藏被选中行的"恢复此版本"按钮，无需手动 sync。
-        updateDirtyChrome();
-        return;
-      }
-      if (action === 'restore-version') {
-        const vid = el.dataset.versionId;
-        if (!vid) return;
-        void restorePromptVersion(state.requestId, vid).then((updated) => {
-          if (!updated || !currentState || currentState.requestId !== state.requestId) return;
-          setCurrentState({
-            ...currentState,
-            prompt: updated.prompt,
-            draft: updated.prompt,
-            versions: updated.versions,
-            versionsOpen: true,
-          });
-          renderPanel(currentState);
-          flashCopied(el, '已恢复 ✔');
-        });
-        return;
-      }
-      if (action === 'delete-version') {
-        // 删除单个历史版本：
-        // - 模板里"当前版本"不渲染删除按钮，所以这里不会拿到 versions[0]；
-        //   storage 层的 removePromptVersion 也兜底了"不能删当前 / 至少留一条"。
-        // - 删除完成后不重置 draft：用户可能正在编辑别的草稿；只调用
-        //   syncVersions 刷新版本列表 + 视觉重渲，draft 由 syncVersions 自己保留。
-        const vid = el.dataset.versionId;
-        if (!vid) return;
-        if ((state.versions?.length || 0) <= 1) return;
-        if (!confirm('确定删除该版本吗？此操作不可撤销')) return;
-        void removePromptVersion(state.requestId, vid).then(() => {
-          if (!currentState || currentState.requestId !== state.requestId) return;
-          void syncVersions(state.requestId);
-        });
-        return;
-      }
-      if (action === 'toggle-refine') {
-        // 不重渲：refine-box 是常驻 DOM 的（templates.ts 里的 .refine-slot），
-        // 只切 .hidden 类即可滑入/滑出。这样面板尺寸保持稳定，编辑器和滚动
-        // 都不会被影响。
-        const opening = !state.refineOpen;
-        // 关闭时清掉上一轮的进度残留 / 错误提示 / 输入内容
-        const nextInstruction = opening ? state.refineInstruction || '' : '';
-        setCurrentState({
-          ...state,
-          refineOpen: opening,
-          refineError: undefined,
-          refineInstruction: nextInstruction,
-          refineStage: opening ? state.refineStage : undefined,
-          refinePartial: opening ? state.refinePartial : undefined,
-          refineStartedAt: opening ? state.refineStartedAt : undefined,
-        });
-
-        const slot = root.querySelector<HTMLElement>('[data-role="refine-slot"]');
-        if (slot) slot.classList.toggle('hidden', !opening);
-
-        // 同步左下角"AI 调整"link-btn 的 active 视觉
-        const refineBtn = root.querySelector<HTMLElement>(
-          '.meta-left [data-action="toggle-refine"]'
-        );
-        if (refineBtn) refineBtn.classList.toggle('active', opening);
-
-        const refineInput = root.querySelector<HTMLTextAreaElement>(
-          '[data-role="refine-input"]'
-        );
-        if (refineInput) {
-          if (!opening) {
-            refineInput.value = '';
-            // 关闭时同步清掉视觉残留：错误提示 / 进度块。
-            // 注意：流式回复现在直接刷到主编辑器（不再有副 .stream-preview 节点），
-            // 由 refine 成功 / 失败的 setCurrentState + renderPanel 自然还原。
-            slot
-              ?.querySelectorAll('.refine-error, .refine-progress')
-              .forEach((n) => n.remove());
-          } else {
-            // 打开时把当前 state 中的 instruction 回填，并自动聚焦
-            refineInput.value = nextInstruction;
-            setTimeout(() => refineInput.focus(), 0);
-          }
-        }
-        return;
-      }
-      if (action === 'refine-suggest') {
-        const text = el.dataset.text || '';
-        if (!currentState) return;
-        // 把建议追加到输入框（如果已有内容则用顿号连接），仅做局部更新：
-        // 直接改 refine-input 的 value + 同步 state，不重渲面板。
-        const prev = (currentState.refineInstruction || '').trim();
-        const next = prev ? `${prev}；${text}` : text;
-        setCurrentState({ ...currentState, refineInstruction: next });
-        const refineInput = root.querySelector<HTMLTextAreaElement>(
-          '[data-role="refine-input"]'
-        );
-        if (refineInput) {
-          refineInput.value = next;
-          refineInput.focus();
-          refineInput.setSelectionRange(next.length, next.length);
-        }
-        return;
-      }
-      if (action === 'run-refine') {
-        const instruction = (currentState?.refineInstruction || '').trim();
-        if (!instruction) {
-          setCurrentState({ ...state, refineError: '请先输入修改要求' });
-          renderPanel(currentState!);
-          return;
-        }
-        setCurrentState({
-          ...state,
-          refineLoading: true,
-          refineError: undefined,
-          refineInstruction: instruction,
-          // 进度相关字段全部初始化：'calling' + 起始时间，让进度条在按下按钮的
-          // 瞬间就能跑出来（不必等首个 REFINE_PROGRESS 到达）。
-          refineStage: 'calling',
-          refinePartial: undefined,
-          refineStartedAt: Date.now(),
-        });
-        renderPanel(currentState!);
-        if (!isContextValid()) {
-          setCurrentState({
-            ...currentState!,
-            refineLoading: false,
-            refineError: '扩展已更新，请刷新页面',
-            refineStage: undefined,
-            refinePartial: undefined,
-            refineStartedAt: undefined,
-          });
-          renderPanel(currentState!);
-          return;
-        }
-        const baseline = state.draft ?? state.prompt ?? '';
-        try {
-          chrome.runtime.sendMessage(
-            {
-              type: 'REFINE_PROMPT',
-              payload: {
-                historyId: state.requestId,
-                instruction,
-                current: baseline,
-              },
-            },
-            (resp: RefineResponse | undefined) => {
-              if (!currentState || currentState.requestId !== state.requestId) return;
-              if (chrome.runtime.lastError || !resp) {
-                setCurrentState({
-                  ...currentState,
-                  refineLoading: false,
-                  refineError:
-                    chrome.runtime.lastError?.message || '后台未响应，请稍后再试',
-                  refineStage: undefined,
-                  refinePartial: undefined,
-                  refineStartedAt: undefined,
-                });
-                renderPanel(currentState);
-                return;
-              }
-              if (!resp.ok) {
-                setCurrentState({
-                  ...currentState,
-                  refineLoading: false,
-                  refineError: resp.error,
-                  refineStage: undefined,
-                  refinePartial: undefined,
-                  refineStartedAt: undefined,
-                });
-                renderPanel(currentState);
-                return;
-              }
-              setCurrentState({
-                ...currentState,
-                refineLoading: false,
-                refineError: undefined,
-                refineInstruction: '',
-                refineOpen: false,
-                refineStage: undefined,
-                refinePartial: undefined,
-                refineStartedAt: undefined,
-                prompt: resp.prompt,
-                draft: resp.prompt,
-                versionsOpen: true,
-              });
-              void syncVersions(state.requestId);
-              renderPanel(currentState);
-            }
-          );
-        } catch {
-          setCurrentState({
-            ...currentState!,
-            refineLoading: false,
-            refineError: '扩展已更新，请刷新页面',
-            refineStage: undefined,
-            refinePartial: undefined,
-            refineStartedAt: undefined,
-          });
-          renderPanel(currentState!);
-        }
-        return;
-      }
-    });
+    el.addEventListener('click', (event) =>
+      handleDataAction(root, el, event as MouseEvent)
+    );
   });
 }
 

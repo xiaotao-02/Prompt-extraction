@@ -25,6 +25,11 @@ export interface PanelState {
   versionsOpen?: boolean;
   /** textarea 当前编辑值（脏值），与 prompt 不同则视为已编辑 */
   draft?: string;
+  /**
+   * 侧栏中高亮对应的版本 id（用户点击选中）。用于多条历史 prompt 文本相同时仍能
+   * 区分高亮条；编辑器 input 会与 canonical prompt 对齐时清理该字段。
+   */
+  selectedVersionId?: string;
   /** 是否展开"AI 调整"输入区 */
   refineOpen?: boolean;
   /** 调整中 */

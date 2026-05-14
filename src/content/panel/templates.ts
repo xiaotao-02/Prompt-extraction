@@ -146,9 +146,7 @@ export function panelHtml(state: PanelState): string {
             <button class="icon-btn" data-action="toggle-versions" title="收起">${ICON_CLOSE}</button>
           </div>
           <ul class="versions-list">
-            ${versions
-              .map((v, i) => versionItemHtml(v, i, versions.length, editorContent))
-              .join('')}
+            ${versionsListHtml(versions, editorContent, state.selectedVersionId)}
           </ul>
         </aside>
       `
@@ -304,20 +302,35 @@ export function panelHtml(state: PanelState): string {
   `;
 }
 
+/** 渲染历史版本 `<ul>` 内全部 `<li>`，供 panelHtml / syncVersions 局部 patch 复用。 */
+export function versionsListHtml(
+  versions: PromptVersion[],
+  editorContent: string,
+  selectedVersionId?: string
+): string {
+  return versions
+    .map((v, i) => versionItemHtml(v, i, versions.length, editorContent, selectedVersionId))
+    .join('');
+}
+
 export function versionItemHtml(
   v: PromptVersion,
   index: number,
   total: number,
-  editorContent: string
+  editorContent: string,
+  selectedVersionId?: string
 ): string {
   const isCurrent = index === 0;
   const time = formatTime(v.createdAt);
   const tag = sourceLabel(v.source);
   const ord = getVersionOrdinalLabel(total, index);
   const preview = v.prompt.replace(/\s+/g, ' ').slice(0, 120);
-  // selected：编辑器里显示的就是这条版本（dirty 状态下也成立）。
+  // selected：优先按「用户点选 id」；否则按正文与编辑器一致（兼容未设 id 的旧状态）。
   // 视觉高亮 + CSS 同时隐藏行内的"恢复此版本"按钮（再恢复一次没意义）。
-  const selected = v.prompt === editorContent;
+  const selected =
+    selectedVersionId != null && selectedVersionId !== ''
+      ? v.id === selectedVersionId
+      : v.prompt === editorContent;
   // 整行作为点击靶子（select-version），让用户像浏览文件那样一行一行切换
   // 看不同的历史版本。行内的 copy / restore 按钮在 events.ts 里 stop
   // propagation，不会被这个父级 action 抢走。

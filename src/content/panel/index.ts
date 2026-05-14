@@ -172,12 +172,17 @@ export function applyHistoryReady(
   // currentState.prompt 一般已经被 EXTRACT_RESULT 设过，但拿不到时用落库的 prompt 兜底。
   const nextDraft = currentState.draft ?? prompt;
   const nextPrompt = currentState.prompt ?? prompt;
+  let nextSel = currentState.selectedVersionId;
+  if (nextSel && !versions.some((v) => v.id === nextSel)) {
+    nextSel = undefined;
+  }
   setCurrentState({
     ...currentState,
     requestId: actualId,
     versions,
     prompt: nextPrompt,
     draft: nextDraft,
+    selectedVersionId: nextSel,
   });
   renderPanel(currentState!);
 }
