@@ -43,7 +43,7 @@ export function VersionsSidebar({
   );
 
   return (
-    <aside className="flex flex-col h-full bg-white dark:bg-zinc-900/98">
+    <aside className="flex flex-col h-full bg-white dark:bg-zinc-900 shadow-xl shadow-black/10 dark:shadow-black/30">
       {/* 头部 */}
       <div className="flex items-center justify-between px-3 py-2.5 border-b border-zinc-100 dark:border-zinc-800 flex-none">
         <span className="text-[11px] font-semibold text-zinc-600 dark:text-zinc-300">

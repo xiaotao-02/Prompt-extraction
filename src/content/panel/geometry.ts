@@ -21,6 +21,7 @@ const STORAGE_KEY = '__image_prompt_extractor_panel_geom__';
 export const MIN_WIDTH = 360;
 export const MIN_HEIGHT = 220;
 export const VIEWPORT_MARGIN = 8;
+export const SIDEBAR_WIDTH = 280;
 
 function readSession(): PanelGeometry | null {
   try {
@@ -143,4 +144,34 @@ export function reclampOnViewportChange(): void {
   setPanelGeometry(next);
   writeSession(next);
   if (panel) applyGeometryToPanel(panel, next);
+}
+
+// ── 侧栏展开 / 收起时自动调整面板宽度 ──────────────────────────────
+
+let _sidebarLeftShift = 0;
+
+/**
+ * 侧栏展开时：面板向左扩展 SIDEBAR_WIDTH，编辑区保持原始大小。
+ * 如果向左空间不足，剩余部分由 clampGeometry 向右扩展并截断。
+ */
+export function expandPanelForSidebar(): void {
+  if (!panel) return;
+  const base = panelGeometry ?? ensureGeometry();
+  const currentWidth = base.width ?? panel.offsetWidth;
+  const desiredLeft = base.left - SIDEBAR_WIDTH;
+  const clampedLeft = Math.max(VIEWPORT_MARGIN, desiredLeft);
+  _sidebarLeftShift = base.left - clampedLeft;
+  updateGeometry({ left: clampedLeft, width: currentWidth + SIDEBAR_WIDTH });
+}
+
+/**
+ * 侧栏收起时：面板向右收缩 SIDEBAR_WIDTH，恢复到展开前的位置与宽度。
+ */
+export function collapsePanelForSidebar(): void {
+  if (!panel) return;
+  const base = panelGeometry ?? ensureGeometry();
+  if (base.width === undefined) return;
+  const newWidth = Math.max(MIN_WIDTH, base.width - SIDEBAR_WIDTH);
+  updateGeometry({ left: base.left + _sidebarLeftShift, width: newWidth });
+  _sidebarLeftShift = 0;
 }

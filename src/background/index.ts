@@ -1,6 +1,6 @@
 import { extractPrompt, refinePrompt } from '@/lib/api';
 import { fetchImageAsBase64, makeStorageThumbnail } from '@/lib/image';
-import { addHistory, appendPromptVersion, getSettings, saveUpdateResult } from '@/lib/storage';
+import { addHistory, appendPromptVersion, getHistoryItem, getSettings, saveUpdateResult } from '@/lib/storage';
 import type { HistoryItem, RefineResponse, RuntimeMessage, UpdateCheckResult } from '@/lib/types';
 import { DEFAULT_FEED_URL, getCurrentVersion, performUpdateCheck } from '@/lib/updater';
 
@@ -188,30 +188,58 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     }
     void (async () => {
       try {
-        const target = await pickPanelTargetTab();
-        if (!target?.id) {
-          sendResponse({
-            ok: false,
-            error: '未找到可注入悬浮窗的网页标签页，请先打开任意普通网页（http/https/file）',
-          });
+        const item = await getHistoryItem(historyId);
+        if (!item) {
+          sendResponse({ ok: false, error: '未找到该条历史记录' });
           return;
         }
-        // 把目标 tab 激活并聚焦其窗口，确保用户的视线落到悬浮窗即将出现的那张页面。
-        // 失败（比如 tab 在用户点击和我们 update 之间被关掉了）也不致命，下面 postToTab
-        // 会再 catch 一次，最终通过 sendResponse 把错误反馈给前端。
-        try {
-          await chrome.tabs.update(target.id, { active: true });
-          if (target.windowId != null) {
-            await chrome.windows.update(target.windowId, { focused: true });
+
+        const imageUrl = item.imageUrl;
+        const isHttpImage = /^https?:/i.test(imageUrl);
+
+        let targetId: number | undefined;
+        let targetWindowId: number | undefined;
+
+        if (isHttpImage) {
+          // 先打开原图链接，让用户可以对照原图编辑提示词
+          const tab = await chrome.tabs.create({ url: imageUrl, active: true });
+          if (!tab.id) {
+            sendResponse({ ok: false, error: '打开原图失败' });
+            return;
           }
-        } catch {
-          /* ignore: tab/window 可能瞬时不可用 */
+          targetId = tab.id;
+          targetWindowId = tab.windowId;
+          if (tab.windowId != null) {
+            try { await chrome.windows.update(tab.windowId, { focused: true }); } catch { /* ignore */ }
+          }
+          await waitForTabComplete(targetId);
+        } else {
+          // imageUrl 是 data: URL，退回到原逻辑：找一个可注入的网页标签页
+          const target = await pickPanelTargetTab();
+          if (!target?.id) {
+            sendResponse({
+              ok: false,
+              error: '未找到可注入悬浮窗的网页标签页，请先打开任意普通网页（http/https/file）',
+            });
+            return;
+          }
+          targetId = target.id;
+          targetWindowId = target.windowId ?? undefined;
+          try {
+            await chrome.tabs.update(targetId, { active: true });
+            if (target.windowId != null) {
+              await chrome.windows.update(target.windowId, { focused: true });
+            }
+          } catch {
+            /* ignore: tab/window 可能瞬时不可用 */
+          }
         }
-        postToTab(target.id, {
+
+        postToTab(targetId, {
           type: 'PANEL_FROM_HISTORY',
           payload: { historyId },
         });
-        sendResponse({ ok: true, tabId: target.id, windowId: target.windowId });
+        sendResponse({ ok: true, tabId: targetId, windowId: targetWindowId });
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         sendResponse({ ok: false, error: msg });
@@ -558,6 +586,35 @@ async function pickPanelTargetTab(): Promise<chrome.tabs.Tab | null> {
   } catch {
     return null;
   }
+}
+
+/**
+ * 等待指定 tab 加载完成（status === 'complete'）。
+ * 用于在新建 tab 打开原图后、注入面板前确保页面和 content script 已就绪。
+ * 带 8 秒超时兜底，避免超慢页面永久挂起。
+ */
+function waitForTabComplete(tabId: number, timeoutMs = 8000): Promise<void> {
+  return new Promise((resolve) => {
+    let settled = false;
+    const done = () => {
+      if (settled) return;
+      settled = true;
+      chrome.tabs.onUpdated.removeListener(listener);
+      resolve();
+    };
+    const listener = (
+      updatedTabId: number,
+      changeInfo: chrome.tabs.TabChangeInfo
+    ) => {
+      if (updatedTabId === tabId && changeInfo.status === 'complete') done();
+    };
+    chrome.tabs.onUpdated.addListener(listener);
+    // 可能在我们挂监听之前就已经 complete 了
+    chrome.tabs.get(tabId).then((tab) => {
+      if (tab?.status === 'complete') done();
+    }).catch(() => done());
+    setTimeout(done, timeoutMs);
+  });
 }
 
 async function injectContentScript(tabId: number): Promise<boolean> {

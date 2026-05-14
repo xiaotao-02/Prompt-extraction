@@ -64,6 +64,12 @@ export const STYLE = `
 .panel.mounted {
   animation: none !important;
 }
+/* 侧栏展开/收起时临时加上，让面板宽度和位置与侧栏的 .22s 过渡同步动画。
+   .dragging / .resizing 的 transition:none!important 会覆盖，安全。 */
+.panel.sidebar-transition {
+  transition: width .22s cubic-bezier(.2,.9,.3,1.2),
+              left .22s cubic-bezier(.2,.9,.3,1.2);
+}
 .panel.dragging,
 .panel.resizing {
   /* 拖拽 / resize 中关掉动画/过渡，避免位置跳动；并提升一下阴影做拾起效果。 */

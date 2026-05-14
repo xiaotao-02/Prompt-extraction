@@ -15,6 +15,8 @@ import {
 import {
   updateGeometry,
   clampGeometry,
+  expandPanelForSidebar,
+  collapsePanelForSidebar,
   MIN_WIDTH,
   MIN_HEIGHT,
   VIEWPORT_MARGIN,
@@ -420,6 +422,22 @@ function handleDataAction(root: HTMLElement, el: HTMLElement, event: MouseEvent)
       '.meta-left [data-action="toggle-versions"]'
     );
     if (versionsBtn) versionsBtn.classList.toggle('active', next);
+
+    // 面板宽度同步：加过渡 class → 强制 reflow → expand/collapse → transitionend 清理
+    const p = panel;
+    if (p) {
+      p.classList.add('sidebar-transition');
+      void p.offsetWidth;
+      if (next) expandPanelForSidebar();
+      else collapsePanelForSidebar();
+      const cleanup = (e: TransitionEvent) => {
+        if (e.propertyName === 'width') {
+          p.classList.remove('sidebar-transition');
+          p.removeEventListener('transitionend', cleanup);
+        }
+      };
+      p.addEventListener('transitionend', cleanup);
+    }
     return;
   }
   if (action === 'reset') {
@@ -441,6 +459,7 @@ function handleDataAction(root: HTMLElement, el: HTMLElement, event: MouseEvent)
     if (draft === state.prompt) return;
     void appendPromptVersion(state.requestId, draft, 'edited').then((updated) => {
       if (!updated || !currentState || currentState.requestId !== state.requestId) return;
+      const wasOpen = currentState.versionsOpen;
       setCurrentState({
         ...currentState,
         prompt: updated.prompt,
@@ -449,6 +468,7 @@ function handleDataAction(root: HTMLElement, el: HTMLElement, event: MouseEvent)
         versionsOpen: true,
         selectedVersionId: updated.versions[0]?.id,
       });
+      if (!wasOpen) expandPanelForSidebar();
       renderPanel(currentState);
       flashCopied(el, '已保存 ✔');
     });
@@ -485,6 +505,7 @@ function handleDataAction(root: HTMLElement, el: HTMLElement, event: MouseEvent)
     if (!vid) return;
     void restorePromptVersion(state.requestId, vid).then((updated) => {
       if (!updated || !currentState || currentState.requestId !== state.requestId) return;
+      const wasOpen = currentState.versionsOpen;
       setCurrentState({
         ...currentState,
         prompt: updated.prompt,
@@ -493,6 +514,7 @@ function handleDataAction(root: HTMLElement, el: HTMLElement, event: MouseEvent)
         versionsOpen: true,
         selectedVersionId: updated.versions[0]?.id,
       });
+      if (!wasOpen) expandPanelForSidebar();
       renderPanel(currentState);
       flashCopied(el, '已恢复 ✔');
     });
@@ -625,6 +647,7 @@ function handleDataAction(root: HTMLElement, el: HTMLElement, event: MouseEvent)
             renderPanel(currentState);
             return;
           }
+          const wasOpen = currentState.versionsOpen;
           setCurrentState({
             ...currentState,
             refineLoading: false,
@@ -639,6 +662,7 @@ function handleDataAction(root: HTMLElement, el: HTMLElement, event: MouseEvent)
             versionsOpen: true,
             selectedVersionId: undefined,
           });
+          if (!wasOpen) expandPanelForSidebar();
           void syncVersions(state.requestId);
           renderPanel(currentState);
         }
