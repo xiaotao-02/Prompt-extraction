@@ -33,7 +33,7 @@ import {
   restorePromptVersion,
 } from '@/lib/storage';
 import type { HistoryItem, LibraryFolder, PromptVersion, RefineResponse } from '@/lib/types';
-import type { ExpandedTab, SortKey, ViewMode } from './types';
+import type { SortKey, ViewMode } from './types';
 import {
   PROJECT_COLORS,
   SYSTEM_NODE,
@@ -129,7 +129,6 @@ export default function PromptLibrary({ focusId, onConsumeFocus }: PromptLibrary
 
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [expandedId, setExpandedId] = useState<string | null>(null);
-  const [expandedTab, setExpandedTab] = useState<ExpandedTab>('editor');
 
   const [draft, setDraft] = useState<string>('');
   const [draftNote, setDraftNote] = useState<string>('');
@@ -214,7 +213,6 @@ export default function PromptLibrary({ focusId, onConsumeFocus }: PromptLibrary
     setFilterStyle('all');
     setShowPinnedOnly(false);
     setExpandedId(focusId);
-    setExpandedTab('editor');
     // 等一帧让上面的 state 渲染到 DOM 后再滚动定位
     const t = window.setTimeout(() => {
       const el = document.querySelector<HTMLElement>(`[data-history-id="${focusId}"]`);
@@ -413,12 +411,7 @@ export default function PromptLibrary({ focusId, onConsumeFocus }: PromptLibrary
   };
 
   const onExpand = (id: string) => {
-    if (expandedId === id) {
-      setExpandedId(null);
-    } else {
-      setExpandedId(id);
-      setExpandedTab('editor');
-    }
+    setExpandedId(expandedId === id ? null : id);
   };
 
   const onSaveDraft = async (item: HistoryItem) => {
@@ -1020,8 +1013,6 @@ export default function PromptLibrary({ focusId, onConsumeFocus }: PromptLibrary
                 {expanded && (
                   <ExpandedPanel
                     item={item}
-                    tab={expandedTab}
-                    onChangeTab={setExpandedTab}
                     draft={draft}
                     draftNote={draftNote}
                     onChangeDraft={setDraft}

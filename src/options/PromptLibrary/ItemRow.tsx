@@ -140,7 +140,7 @@ export function ItemRow({
         </div>
         <p
           className={`text-[13px] leading-relaxed text-zinc-700 dark:text-zinc-300 whitespace-pre-wrap break-words ${
-            expanded ? '' : 'line-clamp-3'
+            expanded ? 'line-clamp-2' : 'line-clamp-3'
           }`}
         >
           {item.prompt || <span className="text-zinc-400 italic">（空）</span>}
