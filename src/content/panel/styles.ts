@@ -454,12 +454,11 @@ export const STYLE = `
   outline-offset: -2px;
 }
 .version-item.current { background: rgba(16,185,129,0.06); }
-/* selected：editor 内容匹配的那一条。紫色背景，且把右下的"恢复此版本"
-   按钮直接 CSS 隐藏 —— 已经是当前编辑器内容，再恢复一次没意义。
+/* selected：editor 内容匹配的那一条。紫色背景只表示正在预览；
+   恢复历史版本仍必须显式点击"恢复此版本"。
    写在 .current 后面，覆盖它的绿色背景，让"选中态"优先于"最新版"。 */
 .version-item.selected { background: rgba(99,102,241,0.12); }
 .version-item.selected:hover { background: rgba(99,102,241,0.16); }
-.version-item.selected .restore-btn { display: none; }
 @media (prefers-color-scheme: dark) {
   .version-item { border-bottom-color: rgba(255,255,255,0.04); }
   .version-item:hover { background: rgba(139,92,246,0.10); }

@@ -33,6 +33,10 @@ const VERSION_ORD_TAG_CLASS: Record<VersionOrdinalKind, string> = {
   middle: 'bg-zinc-200/70 dark:bg-zinc-700/70 text-zinc-700 dark:text-zinc-200',
 };
 
+const VERSION_LIST_VISIBLE_COUNT = 15;
+const VERSION_LIST_ROW_HEIGHT = 82;
+const VERSION_LIST_MAX_HEIGHT = VERSION_LIST_VISIBLE_COUNT * VERSION_LIST_ROW_HEIGHT;
+
 const REFINE_SUGGESTIONS = [
   '翻译成英文',
   '改得更电影感',
@@ -458,7 +462,10 @@ function VersionList({
           <span className="font-normal text-zinc-400">同一张图反推 {extractedCount} 次</span>
         )}
       </div>
-      <ul className="divide-y divide-zinc-200/60 dark:divide-zinc-700/60 max-h-[200px] overflow-y-auto">
+      <ul
+        className="divide-y divide-zinc-200/60 dark:divide-zinc-700/60 overflow-y-auto"
+        style={{ maxHeight: VERSION_LIST_MAX_HEIGHT }}
+      >
         {item.versions.map((v, i) => {
           const isCurrent = i === 0;
           const cid = `${item.id}::${v.id}`;

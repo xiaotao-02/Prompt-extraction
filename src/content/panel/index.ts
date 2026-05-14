@@ -177,7 +177,10 @@ export function applyHistoryReady(
     nextSel = undefined;
   }
   if (!nextSel) {
-    nextSel = versions.find((v) => v.prompt === nextDraft)?.id;
+    nextSel =
+      nextDraft === prompt
+        ? versions[0]?.id
+        : versions.find((v) => v.prompt === nextDraft)?.id;
   }
   setCurrentState({
     ...currentState,

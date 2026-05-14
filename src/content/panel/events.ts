@@ -104,7 +104,10 @@ export async function syncVersions(requestId: string): Promise<void> {
     }
     const nextDraft = currentState.draft ?? item.prompt;
     if (!nextSel) {
-      nextSel = item.versions.find((v) => v.prompt === nextDraft)?.id;
+      nextSel =
+        nextDraft === item.prompt
+          ? item.versions[0]?.id
+          : item.versions.find((v) => v.prompt === nextDraft)?.id;
     }
     setCurrentState({
       ...currentState,
@@ -660,7 +663,7 @@ function handleDataAction(root: HTMLElement, el: HTMLElement, event: MouseEvent)
             prompt: resp.prompt,
             draft: resp.prompt,
             versionsOpen: true,
-            selectedVersionId: undefined,
+            selectedVersionId: resp.versionId,
           });
           if (!wasOpen) expandPanelForSidebar();
           void syncVersions(state.requestId);

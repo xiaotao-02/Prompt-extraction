@@ -352,7 +352,7 @@ export function versionItemHtml(
   const ord = getVersionOrdinalLabel(total, index);
   const preview = v.prompt.replace(/\s+/g, ' ').slice(0, 120);
   // selected：优先按「用户点选 id」；否则按正文与编辑器一致（兼容未设 id 的旧状态）。
-  // 视觉高亮 + CSS 同时隐藏行内的"恢复此版本"按钮（再恢复一次没意义）。
+  // 选中只负责预览到编辑器；真正恢复历史仍必须点击"恢复此版本"。
   const selected =
     selectedVersionId != null && selectedVersionId !== ''
       ? v.id === selectedVersionId
@@ -381,13 +381,13 @@ export function versionItemHtml(
         <button class="link-btn" data-action="copy-version" data-version-id="${escapeAttr(
           v.id
         )}">${ICON_COPY}<span>复制</span></button>
-        <button class="link-btn primary restore-btn" data-action="restore-version" data-version-id="${escapeAttr(
-          v.id
-        )}">${ICON_RESTORE}<span>恢复此版本</span></button>
         ${
           isCurrent
             ? ''
-            : `<button class="link-btn danger delete-btn" data-action="delete-version" data-version-id="${escapeAttr(
+            : `<button class="link-btn primary restore-btn" data-action="restore-version" data-version-id="${escapeAttr(
+                v.id
+              )}">${ICON_RESTORE}<span>恢复此版本</span></button>
+              <button class="link-btn danger delete-btn" data-action="delete-version" data-version-id="${escapeAttr(
                 v.id
               )}" title="删除此版本">${ICON_TRASH}</button>`
         }

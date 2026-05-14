@@ -5,6 +5,17 @@
 import type { HistoryItem, PromptVersion, PromptVersionSource } from '../types';
 import { getHistory, writeHistory, newVersionId } from './history';
 
+function moveUpdatedItemToFront(
+  list: HistoryItem[],
+  idx: number,
+  updated: HistoryItem
+): HistoryItem[] {
+  const next = list.slice();
+  next.splice(idx, 1);
+  next.unshift(updated);
+  return next;
+}
+
 /**
  * 在 id 对应的历史项上追加一条新版本，并把当前 prompt 切到新版本。
  * 若新内容与当前内容完全一致，则不创建新版本，直接返回原项。
@@ -39,8 +50,7 @@ export async function appendPromptVersion(
       : {}),
     versions: [version, ...(item.versions || [])],
   };
-  list[idx] = updated;
-  await writeHistory(list);
+  await writeHistory(moveUpdatedItemToFront(list, idx, updated));
   return updated;
 }
 
@@ -68,8 +78,7 @@ export async function restorePromptVersion(
     updatedAt: version.createdAt,
     versions: [version, ...item.versions],
   };
-  list[idx] = updated;
-  await writeHistory(list);
+  await writeHistory(moveUpdatedItemToFront(list, idx, updated));
   return updated;
 }
 

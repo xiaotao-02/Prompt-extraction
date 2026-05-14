@@ -17,6 +17,12 @@ import { RefineInline } from './tabs/RefineInline';
 
 type InlineSection = 'refine' | 'meta';
 
+const VERSION_SIDEBAR_VISIBLE_COUNT = 15;
+const VERSION_SIDEBAR_ROW_HEIGHT = 88;
+const VERSION_SIDEBAR_HEADER_HEIGHT = 44;
+const VERSION_SIDEBAR_MIN_HEIGHT =
+  VERSION_SIDEBAR_HEADER_HEIGHT + VERSION_SIDEBAR_VISIBLE_COUNT * VERSION_SIDEBAR_ROW_HEIGHT;
+
 export function ExpandedPanel({
   item,
   draft,
@@ -81,7 +87,10 @@ export function ExpandedPanel({
         className="absolute right-full top-0 z-10 overflow-hidden rounded-l-2xl transition-all duration-300 ease-[cubic-bezier(.2,.9,.3,1)]"
         style={{
           width: versionsOpen && versionCount > 0 ? 300 : 0,
-          height: versionsOpen && versionCount > 0 ? 'min(80vh, max(100%, 520px))' : '100%',
+          height:
+            versionsOpen && versionCount > 0
+              ? `max(100%, ${VERSION_SIDEBAR_MIN_HEIGHT}px)`
+              : '100%',
           opacity: versionsOpen && versionCount > 0 ? 1 : 0,
           pointerEvents: versionsOpen && versionCount > 0 ? 'auto' : 'none',
         }}

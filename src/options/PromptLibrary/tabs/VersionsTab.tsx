@@ -143,7 +143,7 @@ export function VersionsSidebar({
                     </>
                   )}
                 </button>
-                {!isSelected && !isCurrent && (
+                {!isCurrent && (
                   <button
                     onClick={(e) => { e.stopPropagation(); onRestoreVersion(v); }}
                     className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-violet-600 dark:text-violet-300 hover:bg-violet-100 dark:hover:bg-violet-500/20 transition"
