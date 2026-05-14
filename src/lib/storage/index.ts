@@ -14,6 +14,13 @@ export {
   removeHistoryItems,
   patchHistoryItem,
   getHistoryItem,
+  listHistoryGlobalDescPage,
+  listRecentHistory,
+  scanHistoryLibraryStats,
+  historyCount,
+  LIBRARY_REV_KEY,
+  exportAllHistoryPublic,
+  HISTORY_KEY,
 } from './history';
 export {
   appendPromptVersion,

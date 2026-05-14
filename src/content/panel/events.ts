@@ -33,6 +33,11 @@ function closePanel() {
 }
 
 let dirtyVersionHighlightRaf = 0;
+/** 防止连点「在来源页打开」重复建 tab / 重复发消息。 */
+let openInPanelBusy = false;
+
+/** `.panel` 根上 resize/mousedown/click/input 只绑一次；panel-surface 内 HTML 替换不重绑。 */
+const panelShellBound = new WeakSet<HTMLElement>();
 
 export function cancelPendingDirtyChromeDeferred(): void {
   if (dirtyVersionHighlightRaf !== 0) {
@@ -199,21 +204,6 @@ export function applyStoredPromptStrategy(strategy: StrategyId): void {
 }
 
 /**
- * 在 `.versions-list` 上挂一个事件委托，通过冒泡 + closest 找到实际的
- * `[data-action]` 元素。好处：`patchVersionList` 替换 innerHTML 之后
- * 不需要重新绑定——委托挂在 `<ul>` 上，它自身不会被销毁。
- */
-function bindVersionListDelegation(root: HTMLElement): void {
-  const list = root.querySelector<HTMLElement>('.versions-list');
-  if (!list) return;
-  list.addEventListener('click', (event) => {
-    const target = (event.target as HTMLElement).closest<HTMLElement>('[data-action]');
-    if (!target || !list.contains(target)) return;
-    handleDataAction(root, target, event as MouseEvent);
-  });
-}
-
-/**
  * 在 header 上挂 mousedown，拖动时改写 panel 的 left/top（视口坐标）。
  *
  * - 只在 header 空白区起拖（按到 button / textarea / .icon-btn 不算）
@@ -222,13 +212,14 @@ function bindVersionListDelegation(root: HTMLElement): void {
  *
  * 不监听 touchstart：MV3 内容脚本里浮动面板主要给桌面用，移动端 Chrome
  * 上右键扩展菜单的入口几乎没人用。如果以后要支持，再加 pointer events。
+ *
+ * 委托在 `.panel` 根上：panel-surface 替换后 header DOM 会变，根上监听器仍有效。
  */
 function bindHeaderDrag(root: HTMLElement): void {
-  const header = root.querySelector<HTMLElement>('.header');
-  if (!header) return;
-
-  header.addEventListener('mousedown', (e) => {
+  root.addEventListener('mousedown', (e) => {
     if (e.button !== 0) return;
+    const header = (e.target as HTMLElement).closest('.header');
+    if (!header || !root.contains(header)) return;
     const target = e.target as HTMLElement | null;
     // 按到 header 内的可交互控件时，让原本的点击 / 选择行为优先。
     if (target && target.closest('.icon-btn, button, a, input, textarea')) return;
@@ -238,9 +229,6 @@ function bindHeaderDrag(root: HTMLElement): void {
     const rect = root.getBoundingClientRect();
     const startLeft = rect.left;
     const startTop = rect.top;
-    // 用拖拽起始时刻的真实尺寸做 clamp 计算 —— panelGeometry 里的 width/height
-    // 在用户没主动拖右下角 resize 之前是 undefined，那时面板由 CSS 自适应宽高，
-    // 必须用真实尺寸才能算出正确的 maxLeft / maxTop，否则面板会被 clamp 到错位置。
     const lockedWidth = rect.width;
     const lockedHeight = rect.height;
 
@@ -254,8 +242,6 @@ function bindHeaderDrag(root: HTMLElement): void {
         width: panelGeometry?.width ?? lockedWidth,
         height: panelGeometry?.height ?? lockedHeight,
       });
-      // mousemove 不走 updateGeometry（不写 sessionStorage / setState），
-      // 直接改 inline style 走最快路径；松手时再 commit 一次最终位置。
       root.style.left = `${next.left}px`;
       root.style.top = `${next.top}px`;
     };
@@ -265,16 +251,10 @@ function bindHeaderDrag(root: HTMLElement): void {
       window.removeEventListener('mouseup', onUp);
       root.classList.remove('dragging');
       const r = root.getBoundingClientRect();
-      // 默认只 commit 位置，不动尺寸 —— 拖拽 header 不应固化用户没动过的尺寸。
       const patch: { left: number; top: number; width?: number; height?: number } = {
         left: r.left,
         top: r.top,
       };
-      // 防御性接管：如果 panel 上有 inline width/height（一般是 bindEdgeResize
-      // 写进去的）但 panelGeometry 还没记录到，把当前实际尺寸一并固化进 geometry。
-      // 否则下一次 updateGeometry → applyGeometryToPanel 会因为 panelGeometry.width
-      // 还是 undefined 而 removeProperty('width')，把用户拖出来的尺寸抹回 CSS 默认值
-      // —— 这就是"拖动窗口松手后窗口被重置大小"的根因之一。
       if (root.style.width && panelGeometry?.width === undefined) {
         patch.width = Math.round(r.width);
       }
@@ -327,7 +307,8 @@ function bindEdgeResize(root: HTMLElement): void {
       const startX = e.clientX;
       const startY = e.clientY;
 
-      // 加 .resizing class：关掉 backdrop-filter / 动画，避免毛玻璃 reflow 卡顿。
+      // 加 .resizing class：与 .dragging 共用「轻量 blur」分支，避免满载毛玻璃
+      // + 位移每帧全视口采样导致卡顿；动画在此关闭。
       root.classList.add('resizing');
       // 用户首次按下 resize 拉手时，把当前自适应尺寸固化进 geometry。
       // 这样即便用户只小拖一下也不会回到 auto 状态，下次切 tab / 切版本
@@ -427,7 +408,6 @@ function handleDataAction(root: HTMLElement, el: HTMLElement, event: MouseEvent)
       prompt: undefined,
       error: undefined,
       draft: undefined,
-      versionsOpen: false,
       selectedVersionId: undefined,
       stage: 'calling',
       partial: undefined,
@@ -448,6 +428,37 @@ function handleDataAction(root: HTMLElement, el: HTMLElement, event: MouseEvent)
   if (action === 'open-options') {
     if (!isExtensionContextValid()) return;
     safeSendMessage({ type: 'OPEN_OPTIONS' });
+    return;
+  }
+  if (action === 'open-in-panel') {
+    if (!isExtensionContextValid()) return;
+    if (openInPanelBusy) return;
+    const btn =
+      el instanceof HTMLButtonElement ? el : el.closest<HTMLButtonElement>('button');
+    if (!btn || btn.disabled) return;
+    openInPanelBusy = true;
+    btn.disabled = true;
+    const msg: RuntimeMessage = {
+      type: 'OPEN_IN_PANEL',
+      payload: { historyId: state.requestId },
+    };
+    safeSendMessage(msg, (raw) => {
+      openInPanelBusy = false;
+      if (btn.isConnected) btn.disabled = false;
+      if (!isExtensionContextValid()) return;
+      const lastErr = chrome.runtime.lastError?.message;
+      const resp = raw as { ok?: boolean; error?: string } | undefined;
+      if (lastErr) {
+        flashCopied(btn, lastErr.length > 40 ? `${lastErr.slice(0, 37)}…` : lastErr);
+        return;
+      }
+      if (!resp?.ok) {
+        const err = resp?.error || '打开失败';
+        flashCopied(btn, err.length > 40 ? `${err.slice(0, 37)}…` : err);
+        return;
+      }
+      flashCopied(btn, '已打开来源页 ✔');
+    });
     return;
   }
   if (action === 'open-in-library') {
@@ -497,6 +508,16 @@ function handleDataAction(root: HTMLElement, el: HTMLElement, event: MouseEvent)
     const ta = actionRoot.querySelector<HTMLTextAreaElement>('[data-role="editor"]');
     if (ta) ta.value = restored;
     updateDirtyChromeImmediate();
+    return;
+  }
+  if (
+    state.status === 'loading' &&
+    (action === 'copy-version' ||
+      action === 'select-version' ||
+      action === 'load-version' ||
+      action === 'restore-version' ||
+      action === 'delete-version')
+  ) {
     return;
   }
   if (action === 'save') {
@@ -744,52 +765,57 @@ function handleDataAction(root: HTMLElement, el: HTMLElement, event: MouseEvent)
   }
 }
 
-function bindStrategyDropdown(root: HTMLElement): void {
-  const dropdown = root.querySelector<HTMLElement>('[data-role="strategy-dropdown"]');
-  if (!dropdown) return;
-  const trigger = dropdown.querySelector<HTMLButtonElement>('.sd-trigger');
-  if (!trigger) return;
+/**
+ * 根委托：策略下拉、所有 `[data-action]`（含 .versions-list 内条目），
+ * panel-surface 替换 innerHTML 后无需重绑。
+ */
+function bindPanelDelegatedClicks(root: HTMLElement): void {
+  root.addEventListener('click', (event: MouseEvent) => {
+    const t = event.target as HTMLElement;
+    const dropdown = root.querySelector<HTMLElement>('[data-role="strategy-dropdown"]');
 
-  const close = () => dropdown.classList.remove('open');
-  const toggle = (e: Event) => {
-    e.stopPropagation();
-    dropdown.classList.toggle('open');
-  };
+    const sdItem = t.closest<HTMLElement>('.sd-item');
+    if (sdItem && dropdown?.contains(sdItem)) {
+      event.stopPropagation();
+      dropdown.classList.remove('open');
+      if (!currentState) return;
+      const newStrategy = sdItem.dataset.strategy as StrategyId;
+      if (!newStrategy || newStrategy === currentState.strategy) return;
+      if (currentState.status !== 'success' || !isExtensionContextValid()) return;
 
-  trigger.addEventListener('click', toggle);
+      setCurrentState({ ...currentState, strategy: newStrategy });
+      patchStrategyDropdownSelection(root, newStrategy);
+      patchVersionList();
+      safeSendMessage(
+        { type: 'SET_PROMPT_STRATEGY', payload: { strategy: newStrategy } } satisfies RuntimeMessage,
+        () => void chrome.runtime.lastError
+      );
+      return;
+    }
 
-  dropdown.addEventListener('click', (e) => {
-    const item = (e.target as HTMLElement).closest<HTMLElement>('.sd-item');
-    if (!item) return;
-    e.stopPropagation();
-    close();
-    if (!currentState) return;
-    const newStrategy = item.dataset.strategy as StrategyId;
-    if (!newStrategy || newStrategy === currentState.strategy) return;
+    const sdTrigger = t.closest<HTMLElement>('.sd-trigger');
+    if (sdTrigger && dropdown?.contains(sdTrigger)) {
+      event.stopPropagation();
+      dropdown.classList.toggle('open');
+      return;
+    }
 
-    // 仅在“已生成”态允许切换策略；首轮反推 loading 时不要打断当前请求。
-    if (currentState.status !== 'success' || !isExtensionContextValid()) return;
+    if (dropdown && !dropdown.contains(t)) {
+      dropdown.classList.remove('open');
+    }
 
-    setCurrentState({ ...currentState, strategy: newStrategy });
-    patchStrategyDropdownSelection(root, newStrategy);
-    patchVersionList();
-    safeSendMessage(
-      { type: 'SET_PROMPT_STRATEGY', payload: { strategy: newStrategy } } satisfies RuntimeMessage,
-      () => void chrome.runtime.lastError
-    );
-  });
-
-  root.addEventListener('click', (e) => {
-    if (!dropdown.contains(e.target as Node)) close();
+    const actionEl = t.closest<HTMLElement>('[data-action]');
+    if (!actionEl || !root.contains(actionEl)) return;
+    handleDataAction(root, actionEl, event);
   });
 }
 
-export function bindEvents(root: HTMLElement): void {
-  bindHeaderDrag(root);
-  bindEdgeResize(root);
-  const editor = root.querySelector<HTMLTextAreaElement>('[data-role="editor"]');
-  if (editor) {
-    editor.addEventListener('input', () => {
+function bindPanelDelegatedInput(root: HTMLElement): void {
+  root.addEventListener('input', (e: Event) => {
+    const t = e.target as HTMLElement;
+    if (!root.contains(t)) return;
+    if (t.matches('[data-role="editor"]')) {
+      const editor = t as HTMLTextAreaElement;
       if (!currentState) return;
       const val = editor.value;
       let nextSel = currentState.selectedVersionId;
@@ -799,38 +825,33 @@ export function bindEvents(root: HTMLElement): void {
       }
       setCurrentState({ ...currentState, draft: val, selectedVersionId: nextSel });
       updateDirtyChrome();
-    });
-  }
-
-  const refineInput = root.querySelector<HTMLTextAreaElement>('[data-role="refine-input"]');
-  if (refineInput) {
-    // 不每次按键 re-render，只是同步到状态以便重渲染时回填
-    refineInput.addEventListener('input', () => {
+      return;
+    }
+    if (t.matches('[data-role="refine-input"]')) {
+      const refineInput = t as HTMLTextAreaElement;
       if (!currentState) return;
       setCurrentState({ ...currentState, refineInstruction: refineInput.value });
-    });
-    // 自动聚焦
-    setTimeout(() => refineInput.focus(), 0);
-    // Ctrl/Cmd + Enter 触发
-    refineInput.addEventListener('keydown', (e) => {
-      if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
-        e.preventDefault();
-        const btn = root.querySelector<HTMLButtonElement>('[data-action="run-refine"]');
-        btn?.click();
-      }
-    });
-  }
-
-  bindVersionListDelegation(root);
-
-  bindStrategyDropdown(root);
-
-  root.querySelectorAll<HTMLElement>('[data-action]').forEach((el) => {
-    if (el.closest('.versions-list')) return;
-    el.addEventListener('click', (event) =>
-      handleDataAction(root, el, event as MouseEvent)
-    );
+    }
   });
+
+  root.addEventListener('keydown', (e: KeyboardEvent) => {
+    const t = e.target as HTMLElement;
+    if (!t.matches('[data-role="refine-input"]') || !root.contains(t)) return;
+    if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
+      e.preventDefault();
+      const btn = root.querySelector<HTMLButtonElement>('[data-action="run-refine"]');
+      btn?.click();
+    }
+  });
+}
+
+export function bindEvents(root: HTMLElement): void {
+  if (panelShellBound.has(root)) return;
+  panelShellBound.add(root);
+  bindHeaderDrag(root);
+  bindEdgeResize(root);
+  bindPanelDelegatedClicks(root);
+  bindPanelDelegatedInput(root);
 }
 
 export function flashCopied(btn: HTMLElement, text = '已复制 ✔'): void {

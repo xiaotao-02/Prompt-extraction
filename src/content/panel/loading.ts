@@ -7,6 +7,7 @@ import {
   setLoadingTickHandle,
   refineTickHandle,
   setRefineTickHandle,
+  panelActions,
 } from './state';
 import type { PanelState } from './state';
 
@@ -30,10 +31,47 @@ export function strategyLabel(id: StrategyId | undefined): string {
   return STRATEGY_LABELS[id] || STRATEGY_LABELS[DEFAULT_STRATEGY_ID];
 }
 
+/**
+ * 若长时间无任何 EXTRACT_PROGRESS / RESULT / ERROR（例如 postToTab 全丢、受限页面），
+ * 避免面板永久卡在 loading。每次收到进度补丁时重置计时。
+ */
+const LOADING_STALL_MS = 120_000;
+let loadingStallWatchHandle: number | null = null;
+
+export function stopLoadingStallWatchdog(): void {
+  if (loadingStallWatchHandle !== null) {
+    window.clearTimeout(loadingStallWatchHandle);
+    loadingStallWatchHandle = null;
+  }
+}
+
+export function manageLoadingStallWatchdog(state: PanelState): void {
+  stopLoadingStallWatchdog();
+  if (state.status !== 'loading' || !state.startedAt) return;
+  const watchedRequestId = state.requestId;
+  const watchedStartedAt = state.startedAt;
+  loadingStallWatchHandle = window.setTimeout(() => {
+    loadingStallWatchHandle = null;
+    if (!currentState || currentState.status !== 'loading') return;
+    if (currentState.requestId !== watchedRequestId || currentState.startedAt !== watchedStartedAt) {
+      return;
+    }
+    panelActions.renderPanel({
+      ...currentState,
+      status: 'error',
+      error:
+        '长时间未收到后台进度。可能是当前页无法与扩展通信（如受限页面），或网络异常。可刷新页面后重试，或关闭面板重新提取。',
+      stage: undefined,
+      partial: undefined,
+    });
+  }, LOADING_STALL_MS);
+}
+
 // 已用时计时：loading 中每 200ms 更新一次 .elapsed 文本节点。
 export function manageLoadingTicker(state: PanelState): void {
   if (state.status !== 'loading' || !state.startedAt) {
     stopLoadingTicker();
+    stopLoadingStallWatchdog();
     return;
   }
   if (loadingTickHandle !== null) return;

@@ -1,6 +1,6 @@
 /**
  * 全量备份 / 恢复。把 settings + history + folders 序列化为一份 JSON 文件，
- * 反过来也能从 JSON 把整个扩展的数据还原回 chrome.storage。
+ * 反过来也能从 JSON 把整个扩展的数据还原回 IndexedDB + chrome.storage。
  *
  * 备份格式版本：
  * - v1：仅 settings + history
@@ -10,7 +10,22 @@
  */
 import type { AppSettings, HistoryItem, LibraryFolder } from '../types';
 import { getSettings, saveSettings } from './settings';
-import { getHistory, writeHistory, migrateItem, HISTORY_LIMIT } from './history';
+import {
+  ensureLibraryReady,
+  finalizeHistoryMutation,
+  HISTORY_LIMIT,
+  migrateItem,
+  writeHistory,
+} from './history';
+import {
+  exportAllHistoryPublic,
+  getHistoryRecord,
+  historyCount,
+  putHistoryRecord,
+  toPublicHistory,
+  toStoredRecord,
+  trimOldestToMax,
+} from './historyDb';
 import { getFolders, mergeFolders, replaceFolders } from './folders';
 import { mirrorCurrentVersion, normalizePromptVersions } from './versionState';
 
@@ -28,9 +43,10 @@ export interface BackupPayload {
 }
 
 export async function buildBackup(appVersion?: string): Promise<BackupPayload> {
+  await ensureLibraryReady();
   const [settings, history, folders] = await Promise.all([
     getSettings(),
-    getHistory(),
+    exportAllHistoryPublic(),
     getFolders(),
   ]);
   return {
@@ -73,18 +89,20 @@ export async function restoreBackup(
 
   let added = 0;
   if (Array.isArray(payload.history)) {
+    await ensureLibraryReady();
     if (mode === 'replace') {
-      const next = payload.history.slice(0, HISTORY_LIMIT).map((item) => mirrorCurrentVersion(migrateItem(item)));
+      const next = payload.history
+        .slice(0, HISTORY_LIMIT)
+        .map((item) => mirrorCurrentVersion(migrateItem(item)));
       await writeHistory(next);
       added = next.length;
     } else {
-      const current = await getHistory();
-      const byId = new Map(current.map((i) => [i.id, i] as const));
       for (const incoming of payload.history) {
         const item = migrateItem(incoming);
-        const exist = byId.get(item.id);
+        const row = await getHistoryRecord(item.id);
+        const exist = row ? toPublicHistory(row) : null;
         if (!exist) {
-          byId.set(item.id, item);
+          await putHistoryRecord(toStoredRecord(item));
           added++;
         } else {
           const newer =
@@ -97,22 +115,20 @@ export async function restoreBackup(
           for (const v of older.versions) {
             if (!seen.has(v.id)) mergedVersions.push(v);
           }
-          byId.set(
-            item.id,
-            mirrorCurrentVersion({
-              ...newer,
-              versions: normalizePromptVersions(mergedVersions),
-            })
+          await putHistoryRecord(
+            toStoredRecord(
+              mirrorCurrentVersion({
+                ...newer,
+                versions: normalizePromptVersions(mergedVersions),
+              })
+            )
           );
         }
       }
-      const merged = Array.from(byId.values()).sort(
-        (a, b) => (b.updatedAt || b.createdAt || 0) - (a.updatedAt || a.createdAt || 0)
-      );
-      if (merged.length > HISTORY_LIMIT) merged.length = HISTORY_LIMIT;
-      await writeHistory(merged);
+      await trimOldestToMax(HISTORY_LIMIT);
+      await finalizeHistoryMutation();
     }
   }
-  const total = (await getHistory()).length;
+  const total = await historyCount();
   return { settingsRestored, historyAdded: added, historyTotal: total };
 }

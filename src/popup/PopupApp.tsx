@@ -14,11 +14,13 @@ import {
   Wand2,
   Loader2,
   PanelTopOpen,
+  ChevronRight,
 } from 'lucide-react';
 import {
   appendPromptVersion,
   clearHistory,
-  getHistory,
+  LIBRARY_REV_KEY,
+  listRecentHistory,
   removeHistory,
   removePromptVersion,
   restorePromptVersion,
@@ -59,10 +61,22 @@ export default function PopupApp() {
   const [refinePartial, setRefinePartial] = useState<string | undefined>(undefined);
   const refiningTargetRef = useRef<string | null>(null);
 
-  const load = () => getHistory().then(setList);
+  const load = () => listRecentHistory(80).then(setList);
 
   useEffect(() => {
     load();
+  }, []);
+
+  useEffect(() => {
+    const onStorage = (
+      changes: { [key: string]: chrome.storage.StorageChange },
+      area: chrome.storage.AreaName
+    ) => {
+      if (area !== 'local') return;
+      if (LIBRARY_REV_KEY in changes) load();
+    };
+    chrome.storage.onChanged.addListener(onStorage);
+    return () => chrome.storage.onChanged.removeListener(onStorage);
   }, []);
 
   useEffect(() => {
@@ -213,8 +227,15 @@ export default function PopupApp() {
     );
   };
 
-  const openOptions = () => {
+  const openExtensionPanel = () => {
     chrome.runtime.openOptionsPage();
+  };
+
+  const openOptionsSettingsTab = () => {
+    chrome.runtime.sendMessage(
+      { type: 'OPEN_OPTIONS', payload: { tab: 'settings' as const } },
+      () => void chrome.runtime.lastError
+    );
   };
 
   // 「在悬浮窗中编辑」：把这一条记录召回到当前活跃网页 tab 的浮动面板里继续编辑。
@@ -245,34 +266,44 @@ export default function PopupApp() {
 
   return (
     <div className="flex flex-col max-h-[600px]">
-      <header className="flex items-center justify-between px-4 py-3 border-b border-zinc-200 dark:border-zinc-800">
-        <div className="flex items-center gap-2">
+      <header className="flex items-center justify-between gap-2 px-4 py-3 border-b border-zinc-200/90 dark:border-zinc-800 bg-white/70 dark:bg-zinc-950/40 backdrop-blur-sm">
+        <div className="flex items-center gap-2.5 min-w-0">
           <img
             src={chrome.runtime.getURL('icons/icon-48.png')}
             alt="Prompt Extracto"
-            className="w-7 h-7 rounded-lg object-cover"
+            className="w-8 h-8 rounded-lg object-cover flex-none ring-1 ring-zinc-200/80 dark:ring-zinc-700"
           />
-          <div>
-            <div className="text-sm font-semibold leading-none">提示词提取器</div>
-            <div className="text-[10px] text-zinc-500 mt-0.5">右键图片 → 提取提示词</div>
+          <div className="text-[15px] font-semibold tracking-tight text-zinc-900 dark:text-zinc-100 truncate">
+            Prompt Extracto
           </div>
         </div>
-        <div className="flex items-center gap-1">
+        <div className="flex items-center gap-1.5 flex-none">
           {list.length > 0 && (
-            <button
-              onClick={onClear}
-              className="p-1.5 rounded-md hover:bg-zinc-100 dark:hover:bg-zinc-800 text-zinc-500"
-              title="清空历史"
-            >
-              <Trash2 className="w-4 h-4" />
-            </button>
+            <>
+              <button
+                type="button"
+                onClick={onClear}
+                className="p-2 rounded-lg hover:bg-zinc-100 dark:hover:bg-zinc-800 text-zinc-500 dark:text-zinc-400"
+                title="清空历史"
+                aria-label="清空历史记录"
+              >
+                <Trash2 className="w-4 h-4" />
+              </button>
+              <span
+                className="w-px h-5 bg-zinc-200 dark:bg-zinc-700"
+                aria-hidden
+              />
+            </>
           )}
           <button
-            onClick={openOptions}
-            className="p-1.5 rounded-md hover:bg-zinc-100 dark:hover:bg-zinc-800 text-zinc-500"
-            title="设置"
+            type="button"
+            onClick={openExtensionPanel}
+            title="打开扩展选项页面（插件面板）"
+            aria-label="打开扩展选项页面（插件面板）"
+            className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-[11px] font-medium bg-violet-600 hover:bg-violet-500 text-white shadow-sm"
           >
-            <Settings className="w-4 h-4" />
+            进入插件面板
+            <ChevronRight className="w-3.5 h-3.5 opacity-90" aria-hidden />
           </button>
         </div>
       </header>
@@ -290,11 +321,14 @@ export default function PopupApp() {
         </div>
       )}
 
-      <div className="flex-1 overflow-y-auto">
+      <div className="flex-1 overflow-y-auto bg-zinc-50/50 dark:bg-zinc-950/35">
         {list.length === 0 ? (
-          <EmptyState onOpenOptions={openOptions} />
+          <EmptyState
+            onOpenExtensionPanel={openExtensionPanel}
+            onOpenSettingsTab={openOptionsSettingsTab}
+          />
         ) : (
-          <ul className="divide-y divide-zinc-100 dark:divide-zinc-800">
+          <ul className="px-2 py-2 space-y-2">
             {list.map((item) => {
               const isEditing = editingId === item.id;
               const versionsOpen = openVersionsId === item.id;
@@ -307,7 +341,10 @@ export default function PopupApp() {
                 refinePartial !== '';
               const promptShown = streamPreview ? refinePartial! : item.prompt;
               return (
-                <li key={item.id} className="p-3 hover:bg-zinc-50 dark:hover:bg-zinc-800/50">
+                <li
+                  key={item.id}
+                  className="rounded-xl border border-zinc-200/80 dark:border-zinc-800 bg-white/90 dark:bg-zinc-900/45 p-3 shadow-sm hover:border-zinc-300 dark:hover:border-zinc-600 transition-colors"
+                >
                   <div className="flex gap-3">
                     <img
                       src={item.thumbnail}
@@ -322,7 +359,7 @@ export default function PopupApp() {
                         <span className="px-1.5 py-px rounded bg-zinc-100 dark:bg-zinc-800">
                           {item.provider}
                         </span>
-                        <span className="truncate max-w-[120px]">{item.model}</span>
+                        <span className="truncate min-w-0 max-w-[220px]">{item.model}</span>
                         <span>·</span>
                         <span>{formatTime(item.updatedAt || item.createdAt)}</span>
                         {versionCount > 1 && (
@@ -539,7 +576,7 @@ function VersionList({
                 <span className="inline-flex items-center gap-1 px-1.5 py-px rounded bg-white/80 dark:bg-zinc-800/80 text-zinc-600 dark:text-zinc-300 ring-1 ring-zinc-200/60 dark:ring-zinc-700/60">
                     <span className="font-medium">{meta.provider}</span>
                     <span className="text-zinc-300 dark:text-zinc-600">·</span>
-                    <span className="font-mono truncate max-w-[110px]">{meta.model}</span>
+                    <span className="font-mono truncate max-w-[168px]">{meta.model}</span>
                 </span>
               </div>
               <p className="text-[11px] leading-relaxed line-clamp-2 text-zinc-700 dark:text-zinc-300 whitespace-pre-wrap break-words">
@@ -706,21 +743,46 @@ function RefineForm({
   );
 }
 
-function EmptyState({ onOpenOptions }: { onOpenOptions: () => void }) {
+function EmptyState({
+  onOpenExtensionPanel,
+  onOpenSettingsTab,
+}: {
+  onOpenExtensionPanel: () => void;
+  onOpenSettingsTab: () => void;
+}) {
   return (
     <div className="px-6 py-10 text-center">
-      <div className="w-14 h-14 mx-auto rounded-2xl bg-gradient-to-br from-indigo-100 to-violet-100 dark:from-indigo-500/20 dark:to-violet-500/20 flex items-center justify-center mb-4">
+      <div className="w-14 h-14 mx-auto rounded-2xl bg-gradient-to-br from-indigo-100 to-violet-100 dark:from-indigo-500/20 dark:to-violet-500/20 flex items-center justify-center mb-4 ring-1 ring-zinc-200/60 dark:ring-zinc-700/60">
         <Sparkles className="w-6 h-6 text-violet-500" />
       </div>
-      <h3 className="text-sm font-semibold mb-1">还没有任何记录</h3>
-      <p className="text-xs text-zinc-500 leading-relaxed mb-4">
+      <h3 className="text-sm font-semibold mb-1 text-zinc-900 dark:text-zinc-100">还没有任何记录</h3>
+      <p className="text-xs text-zinc-500 dark:text-zinc-400 leading-relaxed mb-5">
         在任意网页上 <b>右键点击图片</b>，
         <br />
         选择"🎨 提取图片提示词"开始使用
       </p>
-      <button onClick={onOpenOptions} className="btn-primary text-xs px-3 py-1.5">
-        <Settings className="w-3.5 h-3.5" /> 配置 API Key
-      </button>
+      <div className="flex flex-col gap-2 max-w-[280px] mx-auto">
+        <button
+          type="button"
+          onClick={onOpenExtensionPanel}
+          title="打开扩展选项页面（插件面板）"
+          aria-label="打开扩展选项页面（插件面板）"
+          className="inline-flex items-center justify-center gap-1 w-full rounded-lg text-xs font-medium px-3 py-2 bg-violet-600 hover:bg-violet-500 text-white shadow-sm"
+        >
+          进入插件面板
+          <ChevronRight className="w-3.5 h-3.5 opacity-90" aria-hidden />
+        </button>
+        <button
+          type="button"
+          onClick={onOpenSettingsTab}
+          title="打开设置页并定位到模型与 API Key"
+          aria-label="打开设置页配置 API Key"
+          className="inline-flex items-center justify-center gap-1.5 w-full rounded-lg text-xs font-medium px-3 py-2 border border-zinc-200 dark:border-zinc-700 bg-white/90 dark:bg-zinc-900/50 text-zinc-700 dark:text-zinc-200 hover:bg-zinc-50 dark:hover:bg-zinc-800"
+        >
+          <Settings className="w-3.5 h-3.5" aria-hidden />
+          配置 API Key
+        </button>
+      </div>
     </div>
   );
 }

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Copy,
   Check,
@@ -18,8 +18,11 @@ import {
   appendPromptVersion,
   clearHistory,
   createFolder,
+  exportAllHistoryPublic,
   getFolders,
-  getHistory,
+  getHistoryItem,
+  LIBRARY_REV_KEY,
+  listHistoryGlobalDescPage,
   moveHistoryItemsToFolder,
   patchFolder,
   patchHistoryItem,
@@ -29,8 +32,10 @@ import {
   removePromptVersion,
   renameFolder,
   restorePromptVersion,
+  scanHistoryLibraryStats,
 } from '@/lib/storage';
 import type { HistoryItem, LibraryFolder, PromptVersion, RefineResponse } from '@/lib/types';
+import type { HistoryLibraryStats } from '@/lib/storage/historyDb';
 import type { SortKey, ViewMode } from './types';
 import {
   PROJECT_COLORS,
@@ -50,6 +55,8 @@ import { BulkActionBar } from './parts/BulkActionBar';
 import { EmptyState } from './parts/EmptyState';
 import { NoMatchState } from './parts/NoMatchState';
 
+const LIBRARY_PAGE_SIZE = 80;
+
 /**
  * 提示词管理后台。
  *
@@ -58,7 +65,7 @@ import { NoMatchState } from './parts/NoMatchState';
  * - 顶部统计卡片 + 大搜索框 + chip 化筛选与排序
  * - 单条展开：内部 Tab 切换「编辑器 / 版本历史 / AI 调整 / 详情」
  * - 多选时底部出现批量操作浮条，支持批量删除 / 导出 / 复制
- * - 与 popup 共享同一份 history（chrome.storage.local），任何变更都通过 storage 层完成
+ * - 与 popup / background 共享同一套 IndexedDB + `library_rev` 变更戳；写入走 storage 层。
  */
 /**
  * `focusId`：浮动面板点「在提示词库中编辑」时传过来的目标记录 id。
@@ -77,7 +84,13 @@ interface PromptLibraryProps {
 export default function PromptLibrary({ focusId, onConsumeFocus }: PromptLibraryProps) {
   const [list, setList] = useState<HistoryItem[]>([]);
   const [folders, setFolders] = useState<LibraryFolder[]>([]);
+  const [libraryStats, setLibraryStats] = useState<HistoryLibraryStats | null>(null);
+  const [listCursor, setListCursor] = useState<string | undefined>(undefined);
+  const [hasMore, setHasMore] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
   const [loading, setLoading] = useState(true);
+  const loadMoreSentinelRef = useRef<HTMLDivElement | null>(null);
+  const listCursorRef = useRef<string | undefined>(undefined);
 
   const [keyword, setKeyword] = useState('');
   const [filterProvider, setFilterProvider] = useState<string>('all');
@@ -137,31 +150,106 @@ export default function PromptLibrary({ focusId, onConsumeFocus }: PromptLibrary
   const refiningIdRef = useRef<string | null>(null);
   const [actionTip, setActionTip] = useState<{ ok: boolean; msg: string } | null>(null);
 
-  const load = async () => {
+  useEffect(() => {
+    listCursorRef.current = listCursor;
+  }, [listCursor]);
+
+  const deferredKeyword = useDeferredValue(keyword);
+
+  const usesFullLibraryScan = useCallback(() => {
+    return (
+      deferredKeyword.trim() !== '' ||
+      filterProvider !== 'all' ||
+      filterStyle !== 'all' ||
+      showPinnedOnly ||
+      selectedNode !== SYSTEM_NODE.ALL ||
+      sortKey !== 'updated'
+    );
+  }, [deferredKeyword, filterProvider, filterStyle, showPinnedOnly, selectedNode, sortKey]);
+
+  const load = useCallback(async () => {
     setLoading(true);
     try {
-      const [data, fs] = await Promise.all([getHistory(), getFolders()]);
-      setList(data);
+      const full = usesFullLibraryScan();
+      const [stats, fs] = await Promise.all([scanHistoryLibraryStats(), getFolders()]);
+      setLibraryStats(stats);
       setFolders(fs);
+      if (full) {
+        const data = await exportAllHistoryPublic();
+        setList(data);
+        setListCursor(undefined);
+        setHasMore(false);
+      } else {
+        const { items, nextCursor } = await listHistoryGlobalDescPage(LIBRARY_PAGE_SIZE);
+        setList(items);
+        setListCursor(nextCursor);
+        setHasMore(Boolean(nextCursor) && stats.total > items.length);
+      }
     } finally {
       setLoading(false);
     }
-  };
+  }, [usesFullLibraryScan]);
+
+  const reloadHistory = useCallback(async () => {
+    try {
+      const full = usesFullLibraryScan();
+      const stats = await scanHistoryLibraryStats();
+      setLibraryStats(stats);
+      if (full) {
+        const data = await exportAllHistoryPublic();
+        setList(data);
+        setListCursor(undefined);
+        setHasMore(false);
+      } else {
+        const { items, nextCursor } = await listHistoryGlobalDescPage(LIBRARY_PAGE_SIZE);
+        setList(items);
+        setListCursor(nextCursor);
+        setHasMore(Boolean(nextCursor) && stats.total > items.length);
+      }
+    } catch {
+      /* ignore */
+    }
+  }, [usesFullLibraryScan]);
+
+  const loadMore = useCallback(async () => {
+    if (!hasMore || loadingMore || loading || usesFullLibraryScan()) return;
+    setLoadingMore(true);
+    try {
+      const cur = listCursorRef.current;
+      const { items, nextCursor } = await listHistoryGlobalDescPage(LIBRARY_PAGE_SIZE, cur);
+      if (items.length === 0) {
+        setHasMore(false);
+        return;
+      }
+      setList((prev) => [...prev, ...items]);
+      setListCursor(nextCursor);
+      setHasMore(Boolean(nextCursor));
+    } finally {
+      setLoadingMore(false);
+    }
+  }, [hasMore, loadingMore, loading, usesFullLibraryScan]);
 
   // folders 单独 reload，用于树操作后只刷新树（避免 loading 闪烁）
   const reloadFolders = async () => {
     const fs = await getFolders();
     setFolders(fs);
   };
-  // 同样仅刷 history（移动 / patch 之后）
-  const reloadHistory = async () => {
-    const data = await getHistory();
-    setList(data);
-  };
 
   useEffect(() => {
     void load();
-  }, []);
+  }, [load]);
+
+  useEffect(() => {
+    const onStorage = (
+      changes: { [key: string]: chrome.storage.StorageChange },
+      area: chrome.storage.AreaName
+    ) => {
+      if (area !== 'local') return;
+      if (LIBRARY_REV_KEY in changes) void reloadHistory();
+    };
+    chrome.storage.onChanged.addListener(onStorage);
+    return () => chrome.storage.onChanged.removeListener(onStorage);
+  }, [reloadHistory]);
 
   useEffect(() => {
     const onMsg = (message: unknown) => {
@@ -217,16 +305,18 @@ export default function PromptLibrary({ focusId, onConsumeFocus }: PromptLibrary
     if (!focusId || loading) return;
     const target = list.find((i) => i.id === focusId);
     if (!target) {
-      // 目标不存在（被删了？），直接消费掉避免死循环
-      onConsumeFocus?.();
+      void getHistoryItem(focusId).then((one) => {
+        if (!one) onConsumeFocus?.();
+        else setList((prev) => (prev.some((x) => x.id === one.id) ? prev : [one, ...prev]));
+      });
       return;
     }
     setKeyword('');
     setFilterProvider('all');
     setFilterStyle('all');
     setShowPinnedOnly(false);
+    setSelectedNode(SYSTEM_NODE.ALL);
     setExpandedId(focusId);
-    // 等一帧让上面的 state 渲染到 DOM 后再滚动定位
     const t = window.setTimeout(() => {
       const el = document.querySelector<HTMLElement>(`[data-history-id="${focusId}"]`);
       el?.scrollIntoView({ behavior: 'smooth', block: 'center' });
@@ -249,7 +339,14 @@ export default function PromptLibrary({ focusId, onConsumeFocus }: PromptLibrary
     if (item) {
       setDraft(item.prompt);
       setDraftNote(item.note || '');
+      return;
     }
+    void getHistoryItem(expandedId).then((one) => {
+      if (one) {
+        setDraft(one.prompt);
+        setDraftNote(one.note || '');
+      }
+    });
   }, [expandedId, list, refineLoading]);
 
   const showTip = (ok: boolean, msg: string) => {
@@ -259,30 +356,18 @@ export default function PromptLibrary({ focusId, onConsumeFocus }: PromptLibrary
 
   // ===== 衍生数据 =====
 
-  const providerOptions = useMemo(() => {
-    const s = new Set<string>();
-    list.forEach((i) => s.add(i.provider));
-    return Array.from(s).sort();
-  }, [list]);
+  const providerOptions = useMemo(
+    () => libraryStats?.providers ?? [],
+    [libraryStats]
+  );
 
-  const styleOptions = useMemo(() => {
-    const s = new Set<string>();
-    list.forEach((i) => s.add(i.style));
-    return Array.from(s).sort();
-  }, [list]);
+  const styleOptions = useMemo(() => libraryStats?.styles ?? [], [libraryStats]);
 
-  // ===== folder 派生：每个 folder 自身记录数 + 节点祖先链工具 =====
+  const countByFolderId = useMemo(
+    () => libraryStats?.byFolderId ?? new Map<string, number>(),
+    [libraryStats]
+  );
 
-  const countByFolderId = useMemo(() => {
-    const m = new Map<string, number>();
-    for (const it of list) {
-      if (!it.folderId) continue;
-      m.set(it.folderId, (m.get(it.folderId) || 0) + 1);
-    }
-    return m;
-  }, [list]);
-
-  // 给定 root，返回它（含自身）下所有 folder.id 集合
   const collectSubtreeIds = useCallback(
     (rootId: string): Set<string> => {
       const acc = new Set<string>([rootId]);
@@ -301,53 +386,89 @@ export default function PromptLibrary({ focusId, onConsumeFocus }: PromptLibrary
     [folders]
   );
 
-  // 命中"当前选中节点"的记录子集（不含 search / chip 过滤），用于统计与展示
-  const nodeMatched = useMemo(() => {
-    if (selectedNode === SYSTEM_NODE.ALL) return list;
-    if (selectedNode === SYSTEM_NODE.UNSORTED) return list.filter((i) => !i.folderId);
-    if (selectedNode === SYSTEM_NODE.PINNED) return list.filter((i) => !!i.pinned);
-    // 选中具体 folder：包含其子树
+  const filterLibraryItems = useCallback(
+    (source: HistoryItem[]) => {
+      const lower = keyword.trim().toLowerCase();
+      let nm: HistoryItem[];
+      if (selectedNode === SYSTEM_NODE.ALL) nm = source;
+      else if (selectedNode === SYSTEM_NODE.UNSORTED) nm = source.filter((i) => !i.folderId);
+      else if (selectedNode === SYSTEM_NODE.PINNED) nm = source.filter((i) => !!i.pinned);
+      else {
+        const subtree = collectSubtreeIds(selectedNode as string);
+        nm = source.filter((i) => i.folderId && subtree.has(i.folderId));
+      }
+      let result = nm.filter((i) => {
+        if (showPinnedOnly && !i.pinned) return false;
+        if (filterProvider !== 'all' && i.provider !== filterProvider) return false;
+        if (filterStyle !== 'all' && i.style !== filterStyle) return false;
+        if (lower) {
+          const hay =
+            (i.prompt || '') +
+            ' ' +
+            (i.note || '') +
+            ' ' +
+            (i.pageTitle || '') +
+            ' ' +
+            (i.pageUrl || '');
+          if (!hay.toLowerCase().includes(lower)) return false;
+        }
+        return true;
+      });
+      result = result.sort((a, b) => {
+        if (!!a.pinned !== !!b.pinned) return a.pinned ? -1 : 1;
+        if (sortKey === 'created') return (b.createdAt || 0) - (a.createdAt || 0);
+        if (sortKey === 'versions') return (b.versions?.length || 0) - (a.versions?.length || 0);
+        return (b.updatedAt || b.createdAt || 0) - (a.updatedAt || a.createdAt || 0);
+      });
+      return result;
+    },
+    [
+      keyword,
+      selectedNode,
+      collectSubtreeIds,
+      showPinnedOnly,
+      filterProvider,
+      filterStyle,
+      sortKey,
+    ]
+  );
+
+  const filtered = useMemo(() => filterLibraryItems(list), [list, filterLibraryItems]);
+
+  const nodeMatchCount = useMemo(() => {
+    if (selectedNode === SYSTEM_NODE.ALL) return libraryStats?.total ?? 0;
+    if (selectedNode === SYSTEM_NODE.UNSORTED) return libraryStats?.unsorted ?? 0;
+    if (selectedNode === SYSTEM_NODE.PINNED) return libraryStats?.pinned ?? 0;
     const subtree = collectSubtreeIds(selectedNode as string);
-    return list.filter((i) => i.folderId && subtree.has(i.folderId));
-  }, [list, selectedNode, collectSubtreeIds]);
+    let n = 0;
+    for (const fid of subtree) {
+      n += countByFolderId.get(fid) || 0;
+    }
+    return n;
+  }, [selectedNode, libraryStats, collectSubtreeIds, countByFolderId]);
 
   const systemCounts = useMemo(
     () => ({
-      all: list.length,
-      unsorted: list.filter((i) => !i.folderId).length,
-      pinned: list.filter((i) => !!i.pinned).length,
+      all: libraryStats?.total ?? 0,
+      unsorted: libraryStats?.unsorted ?? 0,
+      pinned: libraryStats?.pinned ?? 0,
     }),
-    [list]
+    [libraryStats]
   );
 
-  const filtered = useMemo(() => {
-    const lower = keyword.trim().toLowerCase();
-    let result = nodeMatched.filter((i) => {
-      if (showPinnedOnly && !i.pinned) return false;
-      if (filterProvider !== 'all' && i.provider !== filterProvider) return false;
-      if (filterStyle !== 'all' && i.style !== filterStyle) return false;
-      if (lower) {
-        const hay =
-          (i.prompt || '') +
-          ' ' +
-          (i.note || '') +
-          ' ' +
-          (i.pageTitle || '') +
-          ' ' +
-          (i.pageUrl || '');
-        if (!hay.toLowerCase().includes(lower)) return false;
-      }
-      return true;
-    });
-    // 置顶优先；同分组内按用户选的排序键
-    result = result.sort((a, b) => {
-      if (!!a.pinned !== !!b.pinned) return a.pinned ? -1 : 1;
-      if (sortKey === 'created') return (b.createdAt || 0) - (a.createdAt || 0);
-      if (sortKey === 'versions') return (b.versions?.length || 0) - (a.versions?.length || 0);
-      return (b.updatedAt || b.createdAt || 0) - (a.updatedAt || a.createdAt || 0);
-    });
-    return result;
-  }, [nodeMatched, keyword, filterProvider, filterStyle, sortKey, showPinnedOnly]);
+  useEffect(() => {
+    if (!hasMore || loading || usesFullLibraryScan()) return;
+    const el = loadMoreSentinelRef.current;
+    if (!el) return;
+    const obs = new IntersectionObserver(
+      (entries) => {
+        if (entries[0]?.isIntersecting) void loadMore();
+      },
+      { root: null, rootMargin: '280px', threshold: 0 }
+    );
+    obs.observe(el);
+    return () => obs.disconnect();
+  }, [hasMore, loadMore, loading, usesFullLibraryScan, filtered.length, list.length]);
 
   const hasActiveFilter =
     keyword.trim() !== '' ||
@@ -410,7 +531,7 @@ export default function PromptLibrary({ focusId, onConsumeFocus }: PromptLibrary
 
   const onTogglePin = async (item: HistoryItem) => {
     await patchHistoryItem(item.id, { pinned: !item.pinned });
-    await load();
+    await reloadHistory();
   };
 
   const onExpand = (id: string) => {
@@ -429,13 +550,13 @@ export default function PromptLibrary({ focusId, onConsumeFocus }: PromptLibrary
     if (next.trim() !== item.prompt.trim()) {
       await appendPromptVersion(item.id, next, 'edited');
     }
-    await load();
+    await reloadHistory();
     showTip(true, '已保存为新版本');
   };
 
   const onRestoreVersion = async (item: HistoryItem, v: PromptVersion) => {
     await restorePromptVersion(item.id, v.id);
-    await load();
+    await reloadHistory();
     showTip(true, '已恢复为最新版本');
   };
 
@@ -450,7 +571,7 @@ export default function PromptLibrary({ focusId, onConsumeFocus }: PromptLibrary
       : '确定删除该版本吗？此操作不可撤销';
     if (!confirm(msg)) return;
     await removePromptVersion(item.id, v.id);
-    await load();
+    await reloadHistory();
     if (isCurrent) showTip(true, '已删除当前版本，已切换到下一版本');
   };
 
@@ -460,7 +581,7 @@ export default function PromptLibrary({ focusId, onConsumeFocus }: PromptLibrary
     if (expandedId === item.id) setExpandedId(null);
     selectedIds.delete(item.id);
     setSelectedIds(new Set(selectedIds));
-    await load();
+    await reloadHistory();
   };
 
   const onBulkDelete = async () => {
@@ -469,20 +590,23 @@ export default function PromptLibrary({ focusId, onConsumeFocus }: PromptLibrary
     await removeHistoryItems(Array.from(selectedIds));
     if (expandedId && selectedIds.has(expandedId)) setExpandedId(null);
     setSelectedIds(new Set());
-    await load();
+    await reloadHistory();
   };
 
   const onClearAll = async () => {
-    if (list.length === 0) return;
-    if (!confirm(`确定清空全部 ${list.length} 条记录吗？此操作不可撤销`)) return;
+    const total = libraryStats?.total ?? 0;
+    if (total === 0) return;
+    if (!confirm(`确定清空全部 ${total} 条记录吗？此操作不可撤销`)) return;
     await clearHistory();
     setExpandedId(null);
     setSelectedIds(new Set());
-    await load();
+    await reloadHistory();
   };
 
-  const onExport = () => {
-    const exportList = selectedIds.size > 0 ? list.filter((i) => selectedIds.has(i.id)) : list;
+  const onExport = async () => {
+    const full = await exportAllHistoryPublic();
+    const exportList =
+      selectedIds.size > 0 ? full.filter((i) => selectedIds.has(i.id)) : filterLibraryItems(full);
     if (exportList.length === 0) {
       showTip(false, '没有可导出的记录');
       return;
@@ -510,7 +634,9 @@ export default function PromptLibrary({ focusId, onConsumeFocus }: PromptLibrary
   };
 
   const onCopyAllPrompts = async () => {
-    const target = selectedIds.size > 0 ? list.filter((i) => selectedIds.has(i.id)) : filtered;
+    const full = await exportAllHistoryPublic();
+    const target =
+      selectedIds.size > 0 ? full.filter((i) => selectedIds.has(i.id)) : filterLibraryItems(full);
     if (target.length === 0) {
       showTip(false, '没有可复制的提示词');
       return;
@@ -569,8 +695,8 @@ export default function PromptLibrary({ focusId, onConsumeFocus }: PromptLibrary
   const handleDelete = async (folder: LibraryFolder) => {
     const subtreeIds = collectSubtreeIds(folder.id);
     let itemsInside = 0;
-    for (const it of list) {
-      if (it.folderId && subtreeIds.has(it.folderId)) itemsInside++;
+    for (const fid of subtreeIds) {
+      itemsInside += countByFolderId.get(fid) || 0;
     }
     const childCount = subtreeIds.size - 1;
     const isProject = folder.parentId === null;
@@ -785,7 +911,7 @@ export default function PromptLibrary({ focusId, onConsumeFocus }: PromptLibrary
               <span className="inline-flex items-center gap-1.5 px-2 py-1 rounded-lg bg-zinc-100 dark:bg-zinc-800 text-xs font-medium text-zinc-700 dark:text-zinc-200 flex-none">
                 <NodeIcon className="w-3 h-3 text-zinc-500 dark:text-zinc-400" />
                 <span className="truncate max-w-[200px]" title={selectedNodeLabel}>{selectedNodeLabel}</span>
-                <span className="text-zinc-400 dark:text-zinc-500 tabular-nums">{nodeMatched.length}</span>
+                <span className="text-zinc-400 dark:text-zinc-500 tabular-nums">{nodeMatchCount}</span>
               </span>
             );
           })()}
@@ -815,7 +941,7 @@ export default function PromptLibrary({ focusId, onConsumeFocus }: PromptLibrary
             <div className="h-5 w-px bg-zinc-200 dark:bg-zinc-700" />
             <button
               onClick={onCopyAllPrompts}
-              disabled={list.length === 0}
+              disabled={(libraryStats?.total ?? 0) === 0}
               className="btn-ghost text-[11px] !px-2 !py-1 disabled:opacity-50"
               title="复制（选中或全部筛选结果）的提示词"
             >
@@ -823,7 +949,7 @@ export default function PromptLibrary({ focusId, onConsumeFocus }: PromptLibrary
             </button>
             <button
               onClick={onExport}
-              disabled={list.length === 0}
+              disabled={(libraryStats?.total ?? 0) === 0}
               className="btn-ghost text-[11px] !px-2 !py-1 disabled:opacity-50"
               title="导出选中或全部记录为 JSON"
             >
@@ -831,7 +957,7 @@ export default function PromptLibrary({ focusId, onConsumeFocus }: PromptLibrary
             </button>
             <button
               onClick={onClearAll}
-              disabled={list.length === 0}
+              disabled={(libraryStats?.total ?? 0) === 0}
               className="inline-flex items-center gap-1 text-[11px] px-2 py-1 rounded-lg border border-zinc-200 dark:border-zinc-800 hover:border-rose-300 dark:hover:border-rose-500/40 hover:text-rose-500 disabled:opacity-50 transition"
               title="清空全部记录"
             >
@@ -913,7 +1039,7 @@ export default function PromptLibrary({ focusId, onConsumeFocus }: PromptLibrary
           <Loader2 className="w-5 h-5 mx-auto mb-2 animate-spin text-violet-500" />
           加载中…
         </div>
-      ) : list.length === 0 ? (
+      ) : (libraryStats?.total ?? 0) === 0 ? (
         <EmptyState />
       ) : filtered.length === 0 ? (
         <NoMatchState onClear={clearFilters} />
@@ -1009,6 +1135,16 @@ export default function PromptLibrary({ focusId, onConsumeFocus }: PromptLibrary
             );
           })}
         </ul>
+      )}
+
+      {hasMore && !usesFullLibraryScan() && (
+        <div
+          ref={loadMoreSentinelRef}
+          className="flex justify-center items-center gap-2 py-8 text-xs text-zinc-500"
+        >
+          {loadingMore ? <Loader2 className="w-4 h-4 animate-spin text-violet-500" /> : null}
+          <span>{loadingMore ? '加载更多…' : '下滑加载更多'}</span>
+        </div>
       )}
 
       {/* 批量操作浮条 */}

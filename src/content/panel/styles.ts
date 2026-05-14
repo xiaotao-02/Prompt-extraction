@@ -5,6 +5,8 @@
  * 注意：这是字符串常量，不是 .css 文件——content script 必须把它通过
  * <style>.textContent 注入到 Shadow Root，不能依赖 vite 的 CSS import。
  */
+import { UI_FONT_STACK_SANS } from '@/lib/uiFontStack';
+
 export const STYLE = `
 :host, * { box-sizing: border-box; }
 .panel {
@@ -26,11 +28,22 @@ export const STYLE = `
   border: 1px solid rgba(0,0,0,0.08);
   border-radius: 16px;
   box-shadow: 0 32px 80px -16px rgba(0,0,0,0.35), 0 8px 24px rgba(0,0,0,0.12);
-  font: 13px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+  font: 13px/1.5 ${UI_FONT_STACK_SANS};
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  font-feature-settings: "kern" 1;
   overflow: hidden;
   /* resize 由 JS 通过 8 个 .resize-handle 自实现（见 events.ts:bindEdgeResize），
      不再依赖 CSS 原生 resize: both，因为后者只支持右下角一个方向。 */
   animation: panelIn .22s cubic-bezier(.2,.9,.3,1.2);
+}
+/* 主 UI 在 panel-surface 内替换；根节点与拉手常驻，避免整板销毁导致闪断。 */
+.panel > [data-role="panel-surface"] {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
 }
 
 /* 8 个边缘 resize 拉手：分别贴在 panel 内侧的 4 边 + 4 角。
@@ -77,19 +90,18 @@ export const STYLE = `
   transition: none !important;
   box-shadow: 0 40px 90px -16px rgba(0,0,0,0.45), 0 12px 28px rgba(0,0,0,0.18);
   user-select: none;
-  /* 关掉 backdrop-filter：拖动 / resize 期间每帧重新对整个视口做高斯模糊
-     +饱和度运算，是主线程卡顿的最大元凶。换成接近不透明的纯色背景就行，
-     mouseup 后恢复毛玻璃。 */
-  backdrop-filter: none !important;
-  -webkit-backdrop-filter: none !important;
-  background: rgba(255,255,255,0.99);
+  /* 弱化而非关掉 blur：从「无毛玻璃」跳回满强度时合成路径突变最明显。
+     保留轻量 backdrop 以减轻 mouseup 闪感；成本仍低于满载 20px blur。 */
+  backdrop-filter: blur(12px) saturate(130%) !important;
+  -webkit-backdrop-filter: blur(12px) saturate(130%) !important;
+  background: rgba(255,255,255,0.97);
   /* will-change 告诉合成器为这个层准备好独立合成，避免 reflow 时重新提层。 */
   will-change: left, top, width, height;
 }
 @media (prefers-color-scheme: dark) {
   .panel.dragging,
   .panel.resizing {
-    background: rgba(24,24,27,0.99);
+    background: rgba(24,24,27,0.97);
   }
 }
 @media (prefers-color-scheme: dark) {
@@ -195,7 +207,7 @@ export const STYLE = `
   border: 1px solid rgba(0,0,0,0.1);
   background: rgba(0,0,0,0.02);
   color: inherit; font-size: 13px; line-height: 1.6;
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", sans-serif;
+  font-family: inherit;
   outline: none;
   transition: border-color .15s, box-shadow .15s;
 }

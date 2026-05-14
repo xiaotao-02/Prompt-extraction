@@ -3,23 +3,22 @@
  * 这些操作改的是单条 HistoryItem 里的 versions 数组与 prompt 字段。
  */
 import type { HistoryItem, PromptVersion, PromptVersionSource } from '../types';
-import { getHistory, writeHistory, newVersionId } from './history';
+import {
+  finalizeHistoryMutation,
+  ensureLibraryReady,
+  newVersionId,
+} from './history';
+import {
+  getHistoryRecord,
+  putHistoryRecord,
+  toPublicHistory,
+  toStoredRecord,
+} from './historyDb';
 import {
   getNextPromptVersionNo,
   mirrorCurrentVersion,
   normalizePromptVersions,
 } from './versionState';
-
-function moveUpdatedItemToFront(
-  list: HistoryItem[],
-  idx: number,
-  updated: HistoryItem
-): HistoryItem[] {
-  const next = list.slice();
-  next.splice(idx, 1);
-  next.unshift(updated);
-  return next;
-}
 
 /**
  * 在 id 对应的历史项上追加一条新版本，并把当前 prompt 切到新版本。
@@ -32,10 +31,10 @@ export async function appendPromptVersion(
   note?: string,
   meta?: PromptVersion['meta']
 ): Promise<HistoryItem | null> {
-  const list = await getHistory();
-  const idx = list.findIndex((i) => i.id === id);
-  if (idx < 0) return null;
-  const item = mirrorCurrentVersion(list[idx]);
+  await ensureLibraryReady();
+  const row = await getHistoryRecord(id);
+  if (!row) return null;
+  const item = mirrorCurrentVersion(toPublicHistory(row));
   const trimmed = prompt.replace(/\s+$/g, '');
   if (trimmed === item.prompt.replace(/\s+$/g, '')) return item;
   const version: PromptVersion = {
@@ -47,23 +46,22 @@ export async function appendPromptVersion(
     note,
     meta,
   };
-  const updated: HistoryItem = {
-    ...mirrorCurrentVersion({
-      ...item,
-      prompt: trimmed,
-      updatedAt: version.createdAt,
-      ...(meta
-        ? {
-            provider: meta.provider,
-            model: meta.model,
-            style: meta.style,
-            ...(meta.strategy ? { strategy: meta.strategy } : {}),
-          }
-        : {}),
-      versions: normalizePromptVersions([version, ...(item.versions || [])]),
-    }),
-  };
-  await writeHistory(moveUpdatedItemToFront(list, idx, updated));
+  const updated: HistoryItem = mirrorCurrentVersion({
+    ...item,
+    prompt: trimmed,
+    updatedAt: version.createdAt,
+    ...(meta
+      ? {
+          provider: meta.provider,
+          model: meta.model,
+          style: meta.style,
+          ...(meta.strategy ? { strategy: meta.strategy } : {}),
+        }
+      : {}),
+    versions: normalizePromptVersions([version, ...(item.versions || [])]),
+  });
+  await putHistoryRecord(toStoredRecord(updated));
+  await finalizeHistoryMutation();
   return updated;
 }
 
@@ -71,33 +69,32 @@ export async function restorePromptVersion(
   id: string,
   versionId: string
 ): Promise<HistoryItem | null> {
-  const list = await getHistory();
-  const idx = list.findIndex((i) => i.id === id);
-  if (idx < 0) return null;
-  const item = mirrorCurrentVersion(list[idx]);
+  await ensureLibraryReady();
+  const row = await getHistoryRecord(id);
+  if (!row) return null;
+  const item = mirrorCurrentVersion(toPublicHistory(row));
   const target = item.versions.find((v) => v.id === versionId);
   if (!target) return null;
   if (item.versions[0]?.id === versionId) return item;
   const restoredAt = Date.now();
   const nextVersionNo = getNextPromptVersionNo(item.versions);
-  const updated: HistoryItem = {
-    ...mirrorCurrentVersion({
-      ...item,
-      prompt: target.prompt,
-      updatedAt: restoredAt,
-      versions: normalizePromptVersions(
-        item.versions.map((version) =>
-          version.id === versionId
-            ? {
-                ...version,
-                versionNo: nextVersionNo,
-              }
-            : version
-        )
-      ),
-    }),
-  };
-  await writeHistory(moveUpdatedItemToFront(list, idx, updated));
+  const updated: HistoryItem = mirrorCurrentVersion({
+    ...item,
+    prompt: target.prompt,
+    updatedAt: restoredAt,
+    versions: normalizePromptVersions(
+      item.versions.map((version) =>
+        version.id === versionId
+          ? {
+              ...version,
+              versionNo: nextVersionNo,
+            }
+          : version
+      )
+    ),
+  });
+  await putHistoryRecord(toStoredRecord(updated));
+  await finalizeHistoryMutation();
   return updated;
 }
 
@@ -113,10 +110,10 @@ export async function removePromptVersion(
   itemId: string,
   versionId: string
 ): Promise<HistoryItem | null> {
-  const list = await getHistory();
-  const idx = list.findIndex((i) => i.id === itemId);
-  if (idx < 0) return null;
-  const item = list[idx];
+  await ensureLibraryReady();
+  const row = await getHistoryRecord(itemId);
+  if (!row) return null;
+  const item = toPublicHistory(row);
   if (!item.versions || item.versions.length <= 1) return item;
   const next = item.versions.filter((v) => v.id !== versionId);
   if (next.length === item.versions.length) return item;
@@ -124,7 +121,7 @@ export async function removePromptVersion(
   const updated: HistoryItem = wasCurrent
     ? mirrorCurrentVersion({ ...item, versions: next })
     : { ...item, versions: normalizePromptVersions(next) };
-  list[idx] = updated;
-  await writeHistory(list);
+  await putHistoryRecord(toStoredRecord(updated));
+  await finalizeHistoryMutation();
   return updated;
 }

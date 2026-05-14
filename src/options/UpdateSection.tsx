@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { RefreshCw, Check, AlertCircle, ExternalLink, Sparkles } from 'lucide-react';
 import { getUpdateSettings } from '@/lib/storage';
 import { getCurrentVersion } from '@/lib/updater';
-import type { UpdateSettings } from '@/lib/types';
+import type { UpdateCheckResult, UpdateSettings } from '@/lib/types';
 
 /**
  * 「检查更新」面板。
@@ -30,16 +30,27 @@ export default function UpdateSection() {
     setBusy(true);
     setTip(null);
     try {
-      const resp = await chrome.runtime.sendMessage({ type: 'CHECK_UPDATE' });
-      const result = resp?.result;
-      if (!resp?.ok || !result) {
-        setTip({ ok: false, msg: '检查失败，请稍后再试' });
-      } else if (result.error) {
-        setTip({ ok: false, msg: result.error });
-      } else if (result.hasUpdate && result.latest) {
-        setTip({ ok: true, msg: `发现新版本 v${result.latest.version}` });
+      const resp = (await chrome.runtime.sendMessage({ type: 'CHECK_UPDATE' })) as
+        | { ok: true; result: UpdateCheckResult }
+        | { ok: false; error?: string }
+        | undefined;
+      if (!resp || resp.ok !== true) {
+        const errMsg =
+          resp && typeof resp === 'object' && typeof resp.error === 'string' && resp.error
+            ? resp.error
+            : '检查失败，请稍后再试';
+        setTip({ ok: false, msg: errMsg });
       } else {
-        setTip({ ok: true, msg: '当前已是最新版本' });
+        const { result } = resp;
+        if (!result) {
+          setTip({ ok: false, msg: '检查失败，请稍后再试' });
+        } else if (result.error) {
+          setTip({ ok: false, msg: result.error });
+        } else if (result.hasUpdate && result.latest) {
+          setTip({ ok: true, msg: `发现新版本 v${result.latest.version}` });
+        } else {
+          setTip({ ok: true, msg: '当前已是最新版本' });
+        }
       }
     } finally {
       setBusy(false);

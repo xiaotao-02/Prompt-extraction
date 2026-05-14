@@ -12,7 +12,13 @@
  */
 import type { HistoryItem, LibraryFolder } from '../types';
 import { notifyBackupSubscribers } from './events';
-import { getHistory, writeHistory } from './history';
+import { ensureLibraryReady, finalizeHistoryMutation } from './history';
+import {
+  bulkPutHistoryItems,
+  forEachHistoryRecord,
+  getHistoryRecord,
+  toPublicHistory,
+} from './historyDb';
 
 const FOLDERS_KEY = 'library_folders_v1';
 
@@ -208,16 +214,17 @@ function isDescendantOrSelf(
 
 async function detachHistoryFromFolders(folderIds: Set<string>): Promise<void> {
   if (folderIds.size === 0) return;
-  const history = await getHistory();
-  let touched = false;
-  const next: HistoryItem[] = history.map((item) => {
+  await ensureLibraryReady();
+  const updates: HistoryItem[] = [];
+  await forEachHistoryRecord('prev', (row) => {
+    const item = toPublicHistory(row);
     if (item.folderId && folderIds.has(item.folderId)) {
-      touched = true;
-      return { ...item, folderId: null };
+      updates.push({ ...item, folderId: null });
     }
-    return item;
   });
-  if (touched) await writeHistory(next);
+  if (updates.length === 0) return;
+  await bulkPutHistoryItems(updates);
+  await finalizeHistoryMutation();
 }
 
 /** 把若干条历史记录移动到目标文件夹（`null` = 未分类）。 */
@@ -226,18 +233,23 @@ export async function moveHistoryItemsToFolder(
   folderId: string | null
 ): Promise<number> {
   if (ids.length === 0) return 0;
-  const set = new Set(ids);
-  const list = await getHistory();
+  await ensureLibraryReady();
+  const target = folderId ?? null;
   let touched = 0;
-  const next: HistoryItem[] = list.map((item) => {
-    if (!set.has(item.id)) return item;
+  const batch: HistoryItem[] = [];
+  for (const id of ids) {
+    const row = await getHistoryRecord(id);
+    if (!row) continue;
+    const item = toPublicHistory(row);
     const cur = item.folderId ?? null;
-    const target = folderId ?? null;
-    if (cur === target) return item;
+    if (cur === target) continue;
     touched++;
-    return { ...item, folderId: target };
-  });
-  if (touched > 0) await writeHistory(next);
+    batch.push({ ...item, folderId: target });
+  }
+  if (touched > 0) {
+    await bulkPutHistoryItems(batch);
+    await finalizeHistoryMutation();
+  }
   return touched;
 }
 

@@ -157,9 +157,16 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true;
   }
   if (message?.type === 'CHECK_UPDATE') {
-    runUpdateCheck().then((result) => {
-      sendResponse({ ok: true, result });
-    });
+    runUpdateCheck()
+      .then((result) => {
+        sendResponse({ ok: true, result });
+      })
+      .catch((e) => {
+        sendResponse({
+          ok: false,
+          error: e instanceof Error ? e.message : String(e),
+        });
+      });
     return true;
   }
   if (message?.type === 'REFINE_PROMPT') {
@@ -170,9 +177,14 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     }
     // sender.tab?.id 仅在 content script 浮动面板发起时存在；popup / options
     // 没有 tab，progress 直接 fire-and-forget 丢弃即可。
-    runRefine(historyId, current, instruction, sender.tab?.id).then((res) =>
-      sendResponse(res)
-    );
+    runRefine(historyId, current, instruction, sender.tab?.id)
+      .then((res) => sendResponse(res))
+      .catch((e) => {
+        sendResponse({
+          ok: false,
+          error: e instanceof Error ? e.message : String(e),
+        } satisfies RefineResponse);
+      });
     return true;
   }
   if (message?.type === 'CTX_MENU_PREP') {

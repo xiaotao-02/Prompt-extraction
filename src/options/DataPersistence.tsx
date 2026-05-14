@@ -32,6 +32,7 @@ import {
 } from '@/lib/fsBackup';
 import {
   buildBackup,
+  LIBRARY_REV_KEY,
   onLocalDataChange,
   restoreBackup,
   type BackupPayload,
@@ -181,6 +182,7 @@ export default function DataPersistence({ onDataRestored }: DataPersistenceProps
       if (
         SETTINGS_KEY in changes ||
         'history_v1' in changes ||
+        LIBRARY_REV_KEY in changes ||
         'library_folders_v1' in changes ||
         DISCOVERED_KEY in changes
       ) {

@@ -19,14 +19,21 @@ import {
 } from './state';
 import {
   manageLoadingTicker,
+  manageLoadingStallWatchdog,
   stopLoadingTicker,
+  stopLoadingStallWatchdog,
   applyLoadingPatch,
   manageRefineTicker,
   stopRefineTicker,
   applyRefinePatch,
 } from './loading';
 import { panelHtml } from './templates';
-import { bindEvents, syncVersions, cancelPendingDirtyChromeDeferred } from './events';
+import {
+  bindEvents,
+  syncVersions,
+  cancelPendingDirtyChromeDeferred,
+  updateDirtyChromeImmediate,
+} from './events';
 
 export { applyStoredPromptStrategy } from './events';
 import {
@@ -78,13 +85,50 @@ function appendResizeHandles(p: HTMLElement): void {
   }
 }
 
+/**
+ * 面板主内容容器：header / body / panel-row 等全部放在其内。
+ * `.panel` 根节点与 8 个 resize-handle 在会话内常驻，仅替换本容器 innerHTML，
+ * 避免整节点 `panel.remove()` 造成的合成层闪断（计划：stable shell）。
+ */
+const PANEL_SURFACE_SELECTOR = '[data-role="panel-surface"]';
+
+function setPanelSurfaceHtml(root: HTMLElement, state: PanelState): void {
+  let surface = root.querySelector<HTMLElement>(PANEL_SURFACE_SELECTOR);
+  if (!surface) {
+    surface = document.createElement('div');
+    surface.dataset.role = 'panel-surface';
+    root.insertBefore(surface, root.firstChild);
+  }
+  surface.innerHTML = panelHtml(state);
+}
+
 export function renderPanel(state: PanelState): void {
   const { shadow } = ensureHost();
   setCurrentState(state);
+
+  if (panel) {
+    const surface = panel.querySelector(PANEL_SURFACE_SELECTOR);
+    if (surface) {
+      setPanelSurfaceHtml(panel, state);
+      applyGeometryToPanel(panel, ensureGeometry());
+      bindEvents(panel);
+      if (state.status === 'success') {
+        updateDirtyChromeImmediate();
+      }
+      manageLoadingTicker(state);
+      manageLoadingStallWatchdog(state);
+      manageRefineTicker(state);
+      return;
+    }
+  }
+
+  // 无可用 shell（首次挂载或旧结构兜底）：创建完整 .panel。
+  // 同页第二次起 panel 时不再播 panelIn（避免 loading→success 整段淡入像「闪一下」）。
+  const hadExistingPanel = panel !== null;
   if (panel) panel.remove();
   const next = document.createElement('div');
   next.className = 'panel';
-  next.innerHTML = panelHtml(state);
+  setPanelSurfaceHtml(next, state);
   appendResizeHandles(next);
   shadow.appendChild(next);
   setPanel(next);
@@ -102,11 +146,21 @@ export function renderPanel(state: PanelState): void {
   // 兜底 setTimeout(260ms)：用户在 panelIn 还没播完（< 220ms）就立刻拖动 header
   // 会导致 animation 被中断、animationend 永远不触发；这种情况下也要按时挂上
   // .mounted，否则本次"修复"反而失效。重复 add class 是幂等的，安全。
+  //
+  // stable shell 路径下 .panel 节点不销毁，.mounted 一直保留，不再触发本节。
   const markMounted = () => next.classList.add('mounted');
-  next.addEventListener('animationend', markMounted, { once: true });
-  setTimeout(markMounted, 260);
+  if (hadExistingPanel) {
+    markMounted();
+  } else {
+    next.addEventListener('animationend', markMounted, { once: true });
+    setTimeout(markMounted, 260);
+  }
   bindEvents(next);
+  if (state.status === 'success') {
+    updateDirtyChromeImmediate();
+  }
   manageLoadingTicker(state);
+  manageLoadingStallWatchdog(state);
   manageRefineTicker(state);
 }
 
@@ -133,6 +187,7 @@ export function updatePanel(requestId: string, patch: Partial<PanelState>): void
   if (lightUpdate && panel) {
     applyLoadingPatch(merged);
     manageLoadingTicker(merged);
+    manageLoadingStallWatchdog(merged);
     return;
   }
 
@@ -202,6 +257,7 @@ export function applyHistoryReady(
 export function closePanel(): void {
   cancelPendingDirtyChromeDeferred();
   stopLoadingTicker();
+  stopLoadingStallWatchdog();
   stopRefineTicker();
   if (panel) {
     panel.remove();

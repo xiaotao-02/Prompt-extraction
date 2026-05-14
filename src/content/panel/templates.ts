@@ -10,6 +10,7 @@ import {
   ICON_HISTORY,
   ICON_RESTORE,
   ICON_SPARK,
+  ICON_EDIT,
   ICON_LIBRARY,
   ICON_TRASH,
 } from './icons';
@@ -164,9 +165,12 @@ function metaRowHtml(
     dirty: boolean;
     disableHistory?: boolean;
     disableLibrary?: boolean;
+    disableOpenPanel?: boolean;
   }
 ): string {
   const historyDisabled = options.disableHistory || options.versionCount === 0;
+  const openPanelDisabled = !!options.disableOpenPanel;
+  const libraryDisabled = !!options.disableLibrary;
   return `
         <div class="meta-row">
           <div class="meta-left">
@@ -182,10 +186,16 @@ function metaRowHtml(
             >${ICON_SPARK}<span>AI 调整</span></button>
             <button
               class="link-btn"
+              data-action="open-in-panel"
+              title="跳转到该条记录的来源网页，并在该页打开悬浮编辑窗"
+              ${openPanelDisabled ? 'disabled' : ''}
+            >${ICON_EDIT}<span>在来源页打开</span></button>
+            <button
+              class="link-btn"
               data-action="open-in-library"
               title="跳转到提示词库，进行更完整的编辑、备注、版本管理"
-              ${options.disableLibrary ? 'disabled' : ''}
-            >${ICON_LIBRARY}<span>在提示词库中编辑</span></button>
+              ${libraryDisabled ? 'disabled' : ''}
+            >${ICON_LIBRARY}<span>提示词库</span></button>
           </div>
           <span class="dirty-hint ${!state.refineLoading && options.dirty ? 'show' : ''}">已修改，未保存</span>
         </div>
@@ -216,6 +226,37 @@ function actionsHtml(
       `;
 }
 
+/**
+ * 历史版本侧栏与 `panel-row` 的 `.versions-open` class（success 与 loading 共用）。
+ */
+function versionsChromeForRow(
+  state: PanelState,
+  versions: PromptVersion[],
+  editorContent: string
+): { sidebar: string; openClassSuffix: string } {
+  const versionCount = versions.length;
+  if (versionCount === 0) {
+    return { sidebar: '', openClassSuffix: '' };
+  }
+  const openClassSuffix = state.versionsOpen ? ' versions-open' : '';
+  const sidebar = `
+        <aside class="versions-side" data-role="versions-side">
+          <div class="versions-head">
+            <span>历史版本 · ${versionCount}</span>
+            <button class="icon-btn" data-action="toggle-versions" title="收起">${ICON_CLOSE}</button>
+          </div>
+          <ul class="versions-list">
+            ${versionsListHtml(versions, editorContent, state.selectedVersionId, {
+              provider: state.provider,
+              model: state.model,
+              strategy: state.strategy,
+            })}
+          </ul>
+        </aside>
+      `;
+  return { sidebar, openClassSuffix };
+}
+
 export function panelHtml(state: PanelState): string {
   const safeImg = escapeAttr(state.imageUrl);
   if (state.status === 'loading') {
@@ -231,6 +272,14 @@ export function panelHtml(state: PanelState): string {
     const modelLabel = state.model
       ? `${state.provider ? state.provider + ' · ' : ''}${state.model}`
       : '';
+    const versions = state.versions || [];
+    const versionCount = versions.length;
+    const streamContent = state.partial ?? '';
+    const { sidebar: versionsSidebar, openClassSuffix: versionsOpenClass } = versionsChromeForRow(
+      state,
+      versions,
+      streamContent
+    );
     return `
       <div class="header">
         <div class="title">
@@ -245,7 +294,8 @@ export function panelHtml(state: PanelState): string {
         </div>
         <button class="icon-btn" data-action="close" title="关闭">${ICON_CLOSE}</button>
       </div>
-      <div class="panel-row">
+      <div class="panel-row${versionsOpenClass}">
+        ${versionsSidebar}
         <div class="body">
           <div class="thumb"><img src="${safeImg}" alt="" /></div>
           <div class="loader-wrap">
@@ -263,12 +313,13 @@ export function panelHtml(state: PanelState): string {
             readonly
             spellcheck="false"
             placeholder="正在接收模型回复…"
-          >${escapeText(state.partial || '')}</textarea>
+          >${escapeText(streamContent)}</textarea>
           ${metaRowHtml(state, {
-            versionCount: state.versions?.length ?? 0,
+            versionCount,
             dirty: false,
-            disableHistory: true,
+            disableHistory: versionCount === 0,
             disableLibrary: true,
+            disableOpenPanel: true,
           })}
           ${refineBlockHtml(state, {
             runDisabled: true,
@@ -315,24 +366,11 @@ export function panelHtml(state: PanelState): string {
   // 列表里"哪一条被高亮"以 editor 当前内容（draft，回落到 prompt）为准，
   // 这样在 dirty 状态下高亮也是用户**正在看的那条**，而不是被保存的主版本。
   const editorContent = state.draft ?? state.prompt ?? '';
-  const versionsSidebar =
-    versionCount > 0
-      ? `
-        <aside class="versions-side" data-role="versions-side">
-          <div class="versions-head">
-            <span>历史版本 · ${versionCount}</span>
-            <button class="icon-btn" data-action="toggle-versions" title="收起">${ICON_CLOSE}</button>
-          </div>
-          <ul class="versions-list">
-            ${versionsListHtml(versions, editorContent, state.selectedVersionId, {
-              provider: state.provider,
-              model: state.model,
-              strategy: state.strategy,
-            })}
-          </ul>
-        </aside>
-      `
-      : '';
+  const { sidebar: versionsSidebar, openClassSuffix: versionsOpenClass } = versionsChromeForRow(
+    state,
+    versions,
+    editorContent
+  );
 
   // refine-box 始终渲染在 DOM 里（用 .refine-slot.hidden 控制显隐），
   // 这样 toggle-refine 时只需要切 class，不必整面板重渲 → 不会 reset 几何、
@@ -342,12 +380,6 @@ export function panelHtml(state: PanelState): string {
   // 隐藏、按钮换 spinner 等）仍然走 renderPanel，因为那是用户主动确认操作
   // 后的"语义变化"，重渲一次是符合预期的。
   const refineBlock = refineBlockHtml(state);
-
-  // panel-row 的初始 class：版本侧栏的可见状态完全由 .versions-open 决定，
-  // 当用户没版本数据可看时（versionCount===0）也不要给开关 class，
-  // 避免出现"按钮看着是激活的，但 sidebar 空着滑出来"。
-  const versionsOpenClass =
-    state.versionsOpen && versionCount > 0 ? ' versions-open' : '';
 
   return `
     <div class="header">
