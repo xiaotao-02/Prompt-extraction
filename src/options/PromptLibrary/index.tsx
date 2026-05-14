@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   Copy,
   Check,
@@ -13,20 +13,36 @@ import {
   Images,
   Layers,
   SlidersHorizontal,
+  FolderTree as FolderTreeIcon,
+  Inbox,
 } from 'lucide-react';
 import {
   appendPromptVersion,
   clearHistory,
+  createFolder,
+  getFolders,
   getHistory,
+  moveHistoryItemsToFolder,
+  patchFolder,
   patchHistoryItem,
+  removeFolder,
   removeHistory,
   removeHistoryItems,
   removePromptVersion,
+  renameFolder,
   restorePromptVersion,
 } from '@/lib/storage';
-import type { HistoryItem, PromptVersion, RefineResponse } from '@/lib/types';
+import type { HistoryItem, LibraryFolder, PromptVersion, RefineResponse } from '@/lib/types';
 import type { ExpandedTab, SortKey, ViewMode } from './types';
-import { VIEW_STORAGE_KEY } from './types';
+import {
+  PROJECT_COLORS,
+  SYSTEM_NODE,
+  TREE_EXPANDED_KEY,
+  TREE_SELECTED_KEY,
+  TREE_WIDTH_KEY,
+  VIEW_STORAGE_KEY,
+} from './types';
+import { FolderTree, type SelectedNodeId } from './FolderTree';
 import { ItemRow } from './ItemRow';
 import { ItemGridCard } from './ItemGridCard';
 import { ExpandedPanel } from './ExpandedPanel';
@@ -63,6 +79,7 @@ interface PromptLibraryProps {
 
 export default function PromptLibrary({ focusId, onConsumeFocus }: PromptLibraryProps) {
   const [list, setList] = useState<HistoryItem[]>([]);
+  const [folders, setFolders] = useState<LibraryFolder[]>([]);
   const [loading, setLoading] = useState(true);
 
   const [keyword, setKeyword] = useState('');
@@ -77,6 +94,37 @@ export default function PromptLibrary({ focusId, onConsumeFocus }: PromptLibrary
     } catch {
       return 'list';
     }
+  });
+
+  // 侧边栏：当前选中的节点（系统节点 / folder.id）
+  const [selectedNode, setSelectedNode] = useState<SelectedNodeId>(() => {
+    try {
+      const saved = localStorage.getItem(TREE_SELECTED_KEY);
+      if (saved) return saved as SelectedNodeId;
+    } catch {
+      /* ignore */
+    }
+    return SYSTEM_NODE.ALL;
+  });
+  const [expandedFolderIds, setExpandedFolderIds] = useState<Set<string>>(() => {
+    try {
+      const saved = localStorage.getItem(TREE_EXPANDED_KEY);
+      if (saved) return new Set(JSON.parse(saved) as string[]);
+    } catch {
+      /* ignore */
+    }
+    return new Set();
+  });
+  const [showSidebar, setShowSidebar] = useState(true);
+  const [sidebarWidth, setSidebarWidth] = useState<number>(() => {
+    try {
+      const saved = localStorage.getItem(TREE_WIDTH_KEY);
+      const n = saved ? Number(saved) : NaN;
+      if (Number.isFinite(n) && n >= 180 && n <= 480) return n;
+    } catch {
+      /* ignore */
+    }
+    return 248;
   });
 
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
@@ -94,11 +142,23 @@ export default function PromptLibrary({ focusId, onConsumeFocus }: PromptLibrary
   const load = async () => {
     setLoading(true);
     try {
-      const data = await getHistory();
+      const [data, fs] = await Promise.all([getHistory(), getFolders()]);
       setList(data);
+      setFolders(fs);
     } finally {
       setLoading(false);
     }
+  };
+
+  // folders 单独 reload，用于树操作后只刷新树（避免 loading 闪烁）
+  const reloadFolders = async () => {
+    const fs = await getFolders();
+    setFolders(fs);
+  };
+  // 同样仅刷 history（移动 / patch 之后）
+  const reloadHistory = async () => {
+    const data = await getHistory();
+    setList(data);
   };
 
   useEffect(() => {
@@ -112,6 +172,30 @@ export default function PromptLibrary({ focusId, onConsumeFocus }: PromptLibrary
       /* ignore */
     }
   }, [view]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(TREE_SELECTED_KEY, String(selectedNode));
+    } catch {
+      /* ignore */
+    }
+  }, [selectedNode]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(TREE_EXPANDED_KEY, JSON.stringify(Array.from(expandedFolderIds)));
+    } catch {
+      /* ignore */
+    }
+  }, [expandedFolderIds]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(TREE_WIDTH_KEY, String(sidebarWidth));
+    } catch {
+      /* ignore */
+    }
+  }, [sidebarWidth]);
 
   // deep-link：父组件传来 focusId 时，等首批 list 加载完后自动展开 + 滚动到目标。
   // - 用 list/loading 联合监听，避免 list 还没就绪就尝试聚焦。
@@ -175,20 +259,69 @@ export default function PromptLibrary({ focusId, onConsumeFocus }: PromptLibrary
     return Array.from(s).sort();
   }, [list]);
 
+  // ===== folder 派生：每个 folder 自身记录数 + 节点祖先链工具 =====
+
+  const countByFolderId = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const it of list) {
+      if (!it.folderId) continue;
+      m.set(it.folderId, (m.get(it.folderId) || 0) + 1);
+    }
+    return m;
+  }, [list]);
+
+  // 给定 root，返回它（含自身）下所有 folder.id 集合
+  const collectSubtreeIds = useCallback(
+    (rootId: string): Set<string> => {
+      const acc = new Set<string>([rootId]);
+      const stack = [rootId];
+      while (stack.length > 0) {
+        const cur = stack.pop()!;
+        for (const f of folders) {
+          if ((f.parentId ?? null) === cur && !acc.has(f.id)) {
+            acc.add(f.id);
+            stack.push(f.id);
+          }
+        }
+      }
+      return acc;
+    },
+    [folders]
+  );
+
+  // 命中"当前选中节点"的记录子集（不含 search / chip 过滤），用于统计与展示
+  const nodeMatched = useMemo(() => {
+    if (selectedNode === SYSTEM_NODE.ALL) return list;
+    if (selectedNode === SYSTEM_NODE.UNSORTED) return list.filter((i) => !i.folderId);
+    if (selectedNode === SYSTEM_NODE.PINNED) return list.filter((i) => !!i.pinned);
+    // 选中具体 folder：包含其子树
+    const subtree = collectSubtreeIds(selectedNode as string);
+    return list.filter((i) => i.folderId && subtree.has(i.folderId));
+  }, [list, selectedNode, collectSubtreeIds]);
+
   const stats = useMemo(() => {
-    const totalImages = list.length;
-    const totalVersions = list.reduce((sum, i) => sum + (i.versions?.length || 0), 0);
-    const pinnedCount = list.filter((i) => i.pinned).length;
-    const aiRefined = list.reduce(
+    const totalImages = nodeMatched.length;
+    const totalVersions = nodeMatched.reduce((sum, i) => sum + (i.versions?.length || 0), 0);
+    const pinnedCount = nodeMatched.filter((i) => i.pinned).length;
+    const aiRefined = nodeMatched.reduce(
       (n, i) => n + (i.versions?.filter((v) => v.source === 'refined').length || 0),
       0
     );
     return { totalImages, totalVersions, pinnedCount, aiRefined };
-  }, [list]);
+  }, [nodeMatched]);
+
+  const systemCounts = useMemo(
+    () => ({
+      all: list.length,
+      unsorted: list.filter((i) => !i.folderId).length,
+      pinned: list.filter((i) => !!i.pinned).length,
+    }),
+    [list]
+  );
 
   const filtered = useMemo(() => {
     const lower = keyword.trim().toLowerCase();
-    let result = list.filter((i) => {
+    let result = nodeMatched.filter((i) => {
       if (showPinnedOnly && !i.pinned) return false;
       if (filterProvider !== 'all' && i.provider !== filterProvider) return false;
       if (filterStyle !== 'all' && i.style !== filterStyle) return false;
@@ -213,20 +346,43 @@ export default function PromptLibrary({ focusId, onConsumeFocus }: PromptLibrary
       return (b.updatedAt || b.createdAt || 0) - (a.updatedAt || a.createdAt || 0);
     });
     return result;
-  }, [list, keyword, filterProvider, filterStyle, sortKey, showPinnedOnly]);
+  }, [nodeMatched, keyword, filterProvider, filterStyle, sortKey, showPinnedOnly]);
 
   const hasActiveFilter =
     keyword.trim() !== '' ||
     filterProvider !== 'all' ||
     filterStyle !== 'all' ||
-    showPinnedOnly;
+    showPinnedOnly ||
+    selectedNode !== SYSTEM_NODE.ALL;
 
   const clearFilters = () => {
     setKeyword('');
     setFilterProvider('all');
     setFilterStyle('all');
     setShowPinnedOnly(false);
+    setSelectedNode(SYSTEM_NODE.ALL);
   };
+
+  // 当前选中节点的可读标题（用于面包屑 / 列表头部）
+  const selectedNodeLabel = useMemo(() => {
+    if (selectedNode === SYSTEM_NODE.ALL) return '全部';
+    if (selectedNode === SYSTEM_NODE.UNSORTED) return '未分类';
+    if (selectedNode === SYSTEM_NODE.PINNED) return '置顶';
+    const f = folders.find((x) => x.id === selectedNode);
+    if (!f) return '全部';
+    // 拼出从顶层项目到当前节点的路径，例如「项目 A › 子文件夹 B」
+    const path: string[] = [];
+    let cur: string | null = f.id;
+    const guard = new Set<string>();
+    while (cur && !guard.has(cur)) {
+      guard.add(cur);
+      const node = folders.find((x) => x.id === cur);
+      if (!node) break;
+      path.unshift(node.name);
+      cur = node.parentId ?? null;
+    }
+    return path.join(' › ');
+  }, [selectedNode, folders]);
 
   // ===== 操作 handlers =====
 
@@ -369,6 +525,121 @@ export default function PromptLibrary({ focusId, onConsumeFocus }: PromptLibrary
     showTip(true, `已复制 ${target.length} 条提示词`);
   };
 
+  // ===== 项目 / 文件夹 操作 =====
+
+  const handleToggleExpand = (id: string) => {
+    setExpandedFolderIds((s) => {
+      const next = new Set(s);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const handleCreateProject = async () => {
+    const name = prompt('给新项目起个名字（例如「电商插画」「卡通头像」…）');
+    if (!name || !name.trim()) return;
+    const colorIdx = Math.floor(Math.random() * PROJECT_COLORS.length);
+    const f = await createFolder({
+      name: name.trim(),
+      parentId: null,
+      color: PROJECT_COLORS[colorIdx].id,
+    });
+    await reloadFolders();
+    setSelectedNode(f.id);
+    showTip(true, `已创建项目「${f.name}」`);
+  };
+
+  const handleCreateChild = async (parentId: string) => {
+    const name = prompt('新建子文件夹的名字');
+    if (!name || !name.trim()) return;
+    const f = await createFolder({ name: name.trim(), parentId });
+    setExpandedFolderIds((s) => new Set(s).add(parentId));
+    await reloadFolders();
+    setSelectedNode(f.id);
+    showTip(true, `已创建文件夹「${f.name}」`);
+  };
+
+  const handleRename = async (folder: LibraryFolder) => {
+    const next = prompt('重命名为：', folder.name);
+    if (next == null) return;
+    if (!next.trim() || next.trim() === folder.name) return;
+    await renameFolder(folder.id, next.trim());
+    await reloadFolders();
+    showTip(true, '已重命名');
+  };
+
+  const handleDelete = async (folder: LibraryFolder) => {
+    const subtreeIds = collectSubtreeIds(folder.id);
+    let itemsInside = 0;
+    for (const it of list) {
+      if (it.folderId && subtreeIds.has(it.folderId)) itemsInside++;
+    }
+    const childCount = subtreeIds.size - 1;
+    const isProject = folder.parentId === null;
+
+    let cascade = false;
+    if (childCount > 0 || itemsInside > 0) {
+      const summary = [
+        childCount > 0 ? `${childCount} 个子文件夹` : null,
+        itemsInside > 0 ? `${itemsInside} 条记录` : null,
+      ]
+        .filter(Boolean)
+        .join('、');
+      const choice = window.confirm(
+        `「${folder.name}」下包含 ${summary}。\n\n` +
+          `点「确定」继续删除：${isProject ? '项目' : '文件夹'}本身会被删除，记录会变为「未分类」（不会丢）。\n` +
+          `点「取消」放弃此次操作。`
+      );
+      if (!choice) return;
+      if (childCount > 0) {
+        cascade = window.confirm(
+          `是否级联删除「${folder.name}」下的全部子文件夹？\n\n` +
+            `点「确定」= 一并删除整个子树（记录依旧变为「未分类」，不会丢）。\n` +
+            `点「取消」= 仅删除当前${isProject ? '项目' : '文件夹'}，子文件夹自动上移。`
+        );
+      }
+    } else {
+      if (!confirm(`确认删除${isProject ? '项目' : '文件夹'}「${folder.name}」？`)) return;
+    }
+
+    await removeFolder(folder.id, { cascade });
+    if (selectedNode === folder.id) setSelectedNode(SYSTEM_NODE.ALL);
+    await reloadFolders();
+    await reloadHistory();
+    showTip(true, '已删除');
+  };
+
+  const handleChangeColor = async (folder: LibraryFolder, color: string) => {
+    await patchFolder(folder.id, { color });
+    await reloadFolders();
+  };
+
+  const handleMoveItems = async (itemIds: string[], folderId: string | null) => {
+    if (itemIds.length === 0) return;
+    const moved = await moveHistoryItemsToFolder(itemIds, folderId);
+    await reloadHistory();
+    if (moved > 0) {
+      const targetName =
+        folderId == null
+          ? '未分类'
+          : folders.find((f) => f.id === folderId)?.name || '目标文件夹';
+      showTip(true, `已移动 ${moved} 条到「${targetName}」`);
+    } else {
+      showTip(true, '已在该位置，无需移动');
+    }
+  };
+
+  const handleMoveOne = (item: HistoryItem) => async (folderId: string | null) => {
+    await handleMoveItems([item.id], folderId);
+  };
+
+  const onBulkMove = async (folderId: string | null) => {
+    if (selectedIds.size === 0) return;
+    await handleMoveItems(Array.from(selectedIds), folderId);
+    setSelectedIds(new Set());
+  };
+
   // 「召回到悬浮窗」：把这条记录扔到当前活跃网页 tab 的浮动面板里继续编辑。
   // 因为 options 自己就是一个 tab，用户在这里点的瞬间 active tab = options 页本身，
   // 没法注入 content script。background 的 pickPanelTargetTab 会自动挑一个最近
@@ -430,7 +701,81 @@ export default function PromptLibrary({ focusId, onConsumeFocus }: PromptLibrary
   // ===== UI =====
 
   return (
-    <div className="space-y-5">
+    <div className="flex gap-5 items-start">
+      {/* 左侧目录树侧边栏：可折叠，宽度可拖拽并持久化 */}
+      {showSidebar && (
+        <div className="hidden md:flex sticky top-[88px] max-h-[calc(100vh-120px)] flex-none items-stretch">
+          <aside
+            className="card !p-3 overflow-auto"
+            style={{ width: sidebarWidth }}
+          >
+            <FolderTree
+              folders={folders}
+              countByFolderId={countByFolderId}
+              systemCounts={systemCounts}
+              selectedId={selectedNode}
+              expandedIds={expandedFolderIds}
+              onSelect={setSelectedNode}
+              onToggleExpand={handleToggleExpand}
+              onCreateProject={handleCreateProject}
+              onCreateChild={handleCreateChild}
+              onRename={handleRename}
+              onDelete={handleDelete}
+              onChangeColor={handleChangeColor}
+              onDropItems={(ids, fid) => void handleMoveItems(ids, fid)}
+            />
+          </aside>
+          {/* 拖拽手柄：按下后跟随鼠标调宽度，松开持久化 */}
+          <div
+            role="separator"
+            aria-orientation="vertical"
+            title="拖动调整目录宽度"
+            onMouseDown={(e) => {
+              e.preventDefault();
+              const startX = e.clientX;
+              const startW = sidebarWidth;
+              const onMove = (ev: MouseEvent) => {
+                const next = Math.max(180, Math.min(480, startW + (ev.clientX - startX)));
+                setSidebarWidth(next);
+              };
+              const onUp = () => {
+                window.removeEventListener('mousemove', onMove);
+                window.removeEventListener('mouseup', onUp);
+              };
+              window.addEventListener('mousemove', onMove);
+              window.addEventListener('mouseup', onUp);
+            }}
+            className="w-1.5 mx-1 rounded-full cursor-col-resize bg-transparent hover:bg-violet-300/40 dark:hover:bg-violet-500/30 transition"
+          />
+        </div>
+      )}
+
+      <div className="flex-1 min-w-0 space-y-5">
+      {/* 当前节点面包屑 + 折叠侧栏按钮 */}
+      <section className="flex items-center gap-2 text-[12px] text-zinc-500 dark:text-zinc-400 -mb-1">
+        <button
+          onClick={() => setShowSidebar((v) => !v)}
+          className="hidden md:inline-flex items-center gap-1 px-2 py-1 rounded-md hover:bg-zinc-100 dark:hover:bg-zinc-800 text-zinc-500 dark:text-zinc-400 transition"
+          title={showSidebar ? '隐藏目录侧栏' : '显示目录侧栏'}
+        >
+          <FolderTreeIcon className="w-3.5 h-3.5" />
+        </button>
+        <span className="inline-flex items-center gap-1">
+          {selectedNode === SYSTEM_NODE.UNSORTED ? (
+            <Inbox className="w-3.5 h-3.5" />
+          ) : selectedNode === SYSTEM_NODE.PINNED ? (
+            <Pin className="w-3.5 h-3.5" />
+          ) : (
+            <Layers className="w-3.5 h-3.5" />
+          )}
+          <span className="font-medium text-zinc-700 dark:text-zinc-200">
+            {selectedNodeLabel}
+          </span>
+          <span>·</span>
+          <span>{nodeMatched.length} 条</span>
+        </span>
+      </section>
+
       {/* 顶部统计指标 */}
       <section className="grid grid-cols-2 md:grid-cols-4 gap-3">
         <StatCard
@@ -596,12 +941,15 @@ export default function PromptLibrary({ focusId, onConsumeFocus }: PromptLibrary
               checked={selectedIds.has(item.id)}
               expanded={expandedId === item.id}
               copiedKey={copiedKey}
+              folders={folders}
+              selectedIds={selectedIds}
               onToggleSelect={() => toggleSelect(item.id)}
               onCopy={onCopy}
               onTogglePin={() => onTogglePin(item)}
               onExpand={() => onExpand(item.id)}
               onDelete={() => onDeleteItem(item)}
               onRecallToPanel={() => onRecallToPanel(item)}
+              onMoveTo={handleMoveOne(item)}
             />
           ))}
         </div>
@@ -628,12 +976,15 @@ export default function PromptLibrary({ focusId, onConsumeFocus }: PromptLibrary
                   checked={selectedIds.has(item.id)}
                   expanded={expanded}
                   copiedKey={copiedKey}
+                  folders={folders}
+                  selectedIds={selectedIds}
                   onToggleSelect={() => toggleSelect(item.id)}
                   onCopy={onCopy}
                   onTogglePin={() => onTogglePin(item)}
                   onExpand={() => onExpand(item.id)}
                   onDelete={() => onDeleteItem(item)}
                   onRecallToPanel={() => onRecallToPanel(item)}
+                  onMoveTo={handleMoveOne(item)}
                 />
                 {expanded && (
                   <ExpandedPanel
@@ -681,13 +1032,16 @@ export default function PromptLibrary({ focusId, onConsumeFocus }: PromptLibrary
         <BulkActionBar
           count={selectedIds.size}
           allVisibleSelected={filtered.length > 0 && filtered.every((i) => selectedIds.has(i.id))}
+          folders={folders}
           onSelectAll={selectAllVisible}
           onClear={clearSelection}
           onCopy={onCopyAllPrompts}
           onExport={onExport}
           onDelete={onBulkDelete}
+          onMoveTo={onBulkMove}
         />
       )}
+      </div>
     </div>
   );
 }

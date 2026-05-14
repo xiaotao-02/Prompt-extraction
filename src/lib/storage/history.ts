@@ -325,7 +325,7 @@ export async function removeHistoryItems(ids: string[]): Promise<void> {
  */
 export async function patchHistoryItem(
   id: string,
-  patch: Partial<Pick<HistoryItem, 'pinned' | 'note' | 'thumbnail' | 'pageTitle'>>
+  patch: Partial<Pick<HistoryItem, 'pinned' | 'note' | 'thumbnail' | 'pageTitle' | 'folderId'>>
 ): Promise<HistoryItem | null> {
   const list = await getHistory();
   const idx = list.findIndex((i) => i.id === id);

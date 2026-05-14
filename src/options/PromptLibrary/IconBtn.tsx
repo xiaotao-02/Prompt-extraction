@@ -13,21 +13,24 @@ export function IconBtn({
   onClick: () => void;
   active?: boolean;
   activeColor?: 'emerald' | 'amber' | 'violet';
-  hoverColor?: 'rose' | 'indigo';
+  hoverColor?: 'rose' | 'indigo' | 'amber';
 }) {
   const activeMap = {
     emerald: 'text-emerald-500',
-    amber: 'text-amber-400',
+    amber: 'text-amber-500',
     violet: 'text-violet-400',
   } as const;
   // hover 默认跟"主操作色"violet 走；rose 用于危险动作（删除），
-  // indigo 用于"跳到其它编辑容器"这类导航类操作（如召回到悬浮窗）。
+  // indigo 用于"跳到其它编辑容器"这类导航类操作（如召回到悬浮窗），
+  // amber 用于「移动到 / 文件夹」这类归类操作。
   const hoverClass =
     hoverColor === 'rose'
       ? 'hover:text-rose-500'
       : hoverColor === 'indigo'
         ? 'hover:text-indigo-600 dark:hover:text-indigo-300'
-        : 'hover:text-violet-600 dark:hover:text-violet-300';
+        : hoverColor === 'amber'
+          ? 'hover:text-amber-600 dark:hover:text-amber-300'
+          : 'hover:text-violet-600 dark:hover:text-violet-300';
   return (
     <button
       onClick={(e) => {

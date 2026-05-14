@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { useState } from 'react';
 import {
   Copy,
   Check,
@@ -10,10 +11,14 @@ import {
   Trash2,
   StickyNote,
   PanelTopOpen,
+  FolderInput,
+  Folder,
 } from 'lucide-react';
-import type { HistoryItem } from '@/lib/types';
+import type { HistoryItem, LibraryFolder } from '@/lib/types';
 import { formatTime } from '../_shared/time';
 import { Thumb } from './Thumb';
+import { MoveToMenu } from './parts/MoveToMenu';
+import { getProjectColor } from './types';
 
 // ============== 列表行卡片 ==============
 
@@ -22,17 +27,23 @@ export function ItemRow({
   checked,
   expanded,
   copiedKey,
+  folders,
+  selectedIds,
   onToggleSelect,
   onCopy,
   onTogglePin,
   onExpand,
   onDelete,
   onRecallToPanel,
+  onMoveTo,
 }: {
   item: HistoryItem;
   checked: boolean;
   expanded: boolean;
   copiedKey: string | null;
+  folders: LibraryFolder[];
+  /** 用于拖拽时携带的「同时被选中的 id 集合」，单条拖拽时也只带自身 id */
+  selectedIds: Set<string>;
   onToggleSelect: () => void;
   onCopy: (text: string, key: string) => void;
   onTogglePin: () => void;
@@ -40,8 +51,13 @@ export function ItemRow({
   onDelete: () => void;
   /** 把这条记录召回到当前活跃网页 tab 的浮动面板里继续编辑 */
   onRecallToPanel?: () => void;
+  /** 单条移动到目标文件夹（null = 未分类） */
+  onMoveTo?: (folderId: string | null) => void;
 }) {
   const versionCount = item.versions?.length || 0;
+  const [moveOpen, setMoveOpen] = useState(false);
+  const folder = item.folderId ? folders.find((f) => f.id === item.folderId) : undefined;
+  const folderColor = folder ? getProjectColor(folder.color) : null;
   // 让用户点击整行任意空白处都能 toggle 展开/收起；同时仍要支持划选 prompt 文本
   // 与点击内部按钮、checkbox、来源链接（这些 handler 自己已 stopPropagation）。
   const onRowClick = (e: React.MouseEvent<HTMLDivElement>) => {
@@ -51,12 +67,24 @@ export function ItemRow({
     onExpand();
   };
   const stop = (e: React.SyntheticEvent) => e.stopPropagation();
+  // 拖拽：把当前 id（如已多选则带整个选中集合）放到 dataTransfer 里，
+  // 让 FolderTree 节点的 onDrop 能识别目标记录。
+  const onDragStart = (e: React.DragEvent<HTMLDivElement>) => {
+    const ids = selectedIds.size > 1 && selectedIds.has(item.id)
+      ? Array.from(selectedIds)
+      : [item.id];
+    e.dataTransfer.effectAllowed = 'move';
+    e.dataTransfer.setData('application/x-history-ids', JSON.stringify(ids));
+  };
+
   return (
     <div
       className="group flex gap-3 p-3.5 cursor-pointer select-text"
       onClick={onRowClick}
       role="button"
       tabIndex={0}
+      draggable
+      onDragStart={onDragStart}
       onKeyDown={(e) => {
         if (e.key === 'Enter' || e.key === ' ') {
           e.preventDefault();
@@ -91,6 +119,15 @@ export function ItemRow({
           {versionCount > 0 && (
             <span className="px-1.5 py-px rounded bg-violet-100 dark:bg-violet-500/20 text-violet-700 dark:text-violet-300">
               v{versionCount}
+            </span>
+          )}
+          {folder && folderColor && (
+            <span
+              className="px-1.5 py-px rounded bg-zinc-100 dark:bg-zinc-800 inline-flex items-center gap-1 max-w-[160px] truncate"
+              title={`项目 / 文件夹：${folder.name}`}
+            >
+              <span className={`w-2 h-2 rounded-full ${folderColor.dot} flex-none`} />
+              <span className="truncate">{folder.name}</span>
             </span>
           )}
           {item.note && (
@@ -193,6 +230,37 @@ export function ItemRow({
             >
               <PanelTopOpen className="w-3 h-3" /> 悬浮窗编辑
             </button>
+          )}
+          {onMoveTo && (
+            <div className="relative">
+              <button
+                onClick={(e) => {
+                  stop(e);
+                  setMoveOpen((v) => !v);
+                }}
+                className={`inline-flex items-center gap-1 px-2 py-1 rounded-md transition ${
+                  folder
+                    ? 'text-amber-600 dark:text-amber-300 hover:bg-amber-50 dark:hover:bg-amber-500/10'
+                    : 'text-zinc-600 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800'
+                }`}
+                title={folder ? `当前在「${folder.name}」` : '把这条移动到项目 / 文件夹'}
+              >
+                {folder ? <Folder className="w-3 h-3" /> : <FolderInput className="w-3 h-3" />}
+                {folder ? '所在' : '移动到'}
+              </button>
+              {moveOpen && (
+                <MoveToMenu
+                  folders={folders}
+                  currentFolderId={item.folderId ?? null}
+                  onClose={() => setMoveOpen(false)}
+                  onPick={(fid) => {
+                    setMoveOpen(false);
+                    onMoveTo(fid);
+                  }}
+                  align="left"
+                />
+              )}
+            </div>
           )}
           <button
             onClick={(e) => {

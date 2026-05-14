@@ -1,24 +1,32 @@
-import { CheckCheck, Copy, Download, Trash2, X } from 'lucide-react';
+import { useState } from 'react';
+import { CheckCheck, Copy, Download, FolderInput, Trash2, X } from 'lucide-react';
+import type { LibraryFolder } from '@/lib/types';
+import { MoveToMenu } from './MoveToMenu';
 
 // ============== 多选浮条 ==============
 
 export function BulkActionBar({
   count,
   allVisibleSelected,
+  folders,
   onSelectAll,
   onClear,
   onCopy,
   onExport,
   onDelete,
+  onMoveTo,
 }: {
   count: number;
   allVisibleSelected: boolean;
+  folders: LibraryFolder[];
   onSelectAll: () => void;
   onClear: () => void;
   onCopy: () => void;
   onExport: () => void;
   onDelete: () => void;
+  onMoveTo?: (folderId: string | null) => void;
 }) {
+  const [moveOpen, setMoveOpen] = useState(false);
   return (
     <div className="sticky bottom-4 z-20 flex justify-center pointer-events-none">
       <div className="pointer-events-auto flex items-center gap-2 px-3 py-2 rounded-2xl bg-zinc-900/95 dark:bg-zinc-800/95 text-zinc-100 shadow-2xl shadow-black/20 backdrop-blur ring-1 ring-white/10">
@@ -47,6 +55,28 @@ export function BulkActionBar({
         >
           <Download className="w-3.5 h-3.5" /> 导出
         </button>
+        {onMoveTo && (
+          <div className="relative">
+            <button
+              onClick={() => setMoveOpen((v) => !v)}
+              className="inline-flex items-center gap-1 text-xs px-2 py-1 rounded-md hover:bg-white/10 transition"
+            >
+              <FolderInput className="w-3.5 h-3.5" /> 移动到
+            </button>
+            {moveOpen && (
+              <MoveToMenu
+                folders={folders}
+                onClose={() => setMoveOpen(false)}
+                onPick={(fid) => {
+                  setMoveOpen(false);
+                  onMoveTo(fid);
+                }}
+                align="right"
+                placement="top"
+              />
+            )}
+          </div>
+        )}
         <button
           onClick={onDelete}
           className="inline-flex items-center gap-1 text-xs px-2 py-1 rounded-md text-rose-300 hover:bg-rose-500/20 transition"

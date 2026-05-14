@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { useState } from 'react';
 import {
   Copy,
   Check,
@@ -7,11 +8,14 @@ import {
   ChevronUp,
   Trash2,
   PanelTopOpen,
+  FolderInput,
 } from 'lucide-react';
-import type { HistoryItem } from '@/lib/types';
+import type { HistoryItem, LibraryFolder } from '@/lib/types';
 import { formatTime } from '../_shared/time';
 import { Thumb } from './Thumb';
 import { IconBtn } from './IconBtn';
+import { MoveToMenu } from './parts/MoveToMenu';
+import { getProjectColor } from './types';
 
 // ============== 网格卡片 ==============
 
@@ -20,17 +24,22 @@ export function ItemGridCard({
   checked,
   expanded,
   copiedKey,
+  folders,
+  selectedIds,
   onToggleSelect,
   onCopy,
   onTogglePin,
   onExpand,
   onDelete,
   onRecallToPanel,
+  onMoveTo,
 }: {
   item: HistoryItem;
   checked: boolean;
   expanded: boolean;
   copiedKey: string | null;
+  folders: LibraryFolder[];
+  selectedIds: Set<string>;
   onToggleSelect: () => void;
   onCopy: (text: string, key: string) => void;
   onTogglePin: () => void;
@@ -38,14 +47,25 @@ export function ItemGridCard({
   onDelete: () => void;
   /** 把这条记录召回到当前活跃网页 tab 的浮动面板里继续编辑 */
   onRecallToPanel?: () => void;
+  onMoveTo?: (folderId: string | null) => void;
 }) {
   const versionCount = item.versions?.length || 0;
+  const [moveOpen, setMoveOpen] = useState(false);
+  const folder = item.folderId ? folders.find((f) => f.id === item.folderId) : undefined;
+  const folderColor = folder ? getProjectColor(folder.color) : null;
   // 网格卡片整卡可点击：和列表行一致，避免划选文本时误触发
   const stop = (e: React.SyntheticEvent) => e.stopPropagation();
   const onCardClick = (e: React.MouseEvent<HTMLDivElement>) => {
     const sel = typeof window !== 'undefined' ? window.getSelection() : null;
     if (sel && sel.toString().length > 0 && sel.containsNode(e.currentTarget, true)) return;
     onExpand();
+  };
+  const onDragStart = (e: React.DragEvent<HTMLDivElement>) => {
+    const ids = selectedIds.size > 1 && selectedIds.has(item.id)
+      ? Array.from(selectedIds)
+      : [item.id];
+    e.dataTransfer.effectAllowed = 'move';
+    e.dataTransfer.setData('application/x-history-ids', JSON.stringify(ids));
   };
   return (
     <div
@@ -56,6 +76,8 @@ export function ItemGridCard({
       onClick={onCardClick}
       role="button"
       tabIndex={0}
+      draggable
+      onDragStart={onDragStart}
       onKeyDown={(e) => {
         if (e.key === 'Enter' || e.key === ' ') {
           e.preventDefault();
@@ -116,6 +138,31 @@ export function ItemGridCard({
               <PanelTopOpen className="w-3.5 h-3.5" />
             </IconBtn>
           )}
+          {onMoveTo && (
+            <div className="relative" onClick={stop}>
+              <IconBtn
+                onClick={() => setMoveOpen((v) => !v)}
+                title={folder ? `当前在「${folder.name}」，点击移动到其他文件夹` : '移动到项目 / 文件夹'}
+                hoverColor="amber"
+                active={!!folder}
+                activeColor="amber"
+              >
+                <FolderInput className="w-3.5 h-3.5" />
+              </IconBtn>
+              {moveOpen && (
+                <MoveToMenu
+                  folders={folders}
+                  currentFolderId={item.folderId ?? null}
+                  onClose={() => setMoveOpen(false)}
+                  onPick={(fid) => {
+                    setMoveOpen(false);
+                    onMoveTo(fid);
+                  }}
+                  align="right"
+                />
+              )}
+            </div>
+          )}
           <IconBtn onClick={onDelete} title="删除" hoverColor="rose">
             <Trash2 className="w-3.5 h-3.5" />
           </IconBtn>
@@ -130,6 +177,15 @@ export function ItemGridCard({
           <span>{item.style}</span>
           <span className="text-zinc-300 dark:text-zinc-600">·</span>
           <span>{formatTime(item.updatedAt || item.createdAt)}</span>
+          {folder && folderColor && (
+            <span
+              className="inline-flex items-center gap-1 px-1.5 py-px rounded bg-zinc-100 dark:bg-zinc-800 max-w-[120px] truncate"
+              title={`项目 / 文件夹：${folder.name}`}
+            >
+              <span className={`w-1.5 h-1.5 rounded-full ${folderColor.dot} flex-none`} />
+              <span className="truncate">{folder.name}</span>
+            </span>
+          )}
         </div>
         <p className="text-[12px] leading-relaxed text-zinc-700 dark:text-zinc-300 line-clamp-3 whitespace-pre-wrap break-words flex-1">
           {item.prompt || <span className="text-zinc-400 italic">（空）</span>}

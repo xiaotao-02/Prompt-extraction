@@ -149,6 +149,41 @@ export interface HistoryItem {
   pinned?: boolean;
   /** 用户给这条记录写的备注/标签，便于检索 */
   note?: string;
+  /**
+   * 所属「项目 / 文件夹」的 id（指向 {@link LibraryFolder.id}）。
+   * - `undefined` 或 `null` 表示「未分类」，仍出现在「全部」与「未分类」筛选下。
+   * - 文件夹删除时，该字段会被清空（归还到未分类），不会孤儿化。
+   */
+  folderId?: string | null;
+}
+
+/**
+ * 「提示词库」的项目 / 文件夹节点。
+ *
+ * 一棵简单的有根森林：`parentId === null` 的节点视为「项目」（顶层容器），
+ * 其余视为子文件夹。允许任意层级嵌套，UI 上仅在视觉上区分项目 / 文件夹，
+ * 数据结构是统一的，避免维护两套 CRUD。
+ *
+ * 节点本身不直接持有 HistoryItem id 列表；归属关系反向存放在
+ * {@link HistoryItem.folderId}，这样移动 / 删除记录都不需要同步另一份索引。
+ */
+export interface LibraryFolder {
+  id: string;
+  name: string;
+  /** 父节点 id；`null` 即为顶层「项目」 */
+  parentId: string | null;
+  createdAt: number;
+  updatedAt?: number;
+  /**
+   * 同级节点排序权重，越小越靠前。新建时取「同级最大 sortKey + 1」，
+   * 不持久化拖拽位移之外的中间值。
+   */
+  sortKey?: number;
+  /**
+   * 用户挑选的颜色 token（顶层项目主要使用），可选。
+   * 取值与 PROJECT_COLORS 中定义的 key 对应（如 `'violet' | 'indigo' | …`）。
+   */
+  color?: string;
 }
 
 // === 消息协议 ===

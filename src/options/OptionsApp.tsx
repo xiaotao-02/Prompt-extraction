@@ -106,23 +106,18 @@ export default function OptionsApp() {
   return (
     <div className="min-h-screen w-full flex flex-col items-center">
       <header className="w-full border-b border-zinc-200 dark:border-zinc-800 bg-white/60 dark:bg-zinc-950/60 backdrop-blur sticky top-0 z-10">
-        <div className="max-w-5xl mx-auto px-8 py-4 flex items-center justify-between gap-4">
-          <div className="flex items-center gap-3 min-w-0">
+        <div className="max-w-5xl mx-auto px-8 py-4 hidden sm:grid grid-cols-[1fr_auto_1fr] items-center gap-4">
+          <div className="flex items-center gap-2 min-w-0 justify-self-start">
             <img
               src={chrome.runtime.getURL('icons/icon-128.png')}
               alt="Prompt Extracto"
-              className="w-10 h-10 rounded-xl shadow-sm flex-none object-cover"
+              className="w-7 h-7 rounded-lg shadow-sm flex-none object-cover"
             />
-            <div className="min-w-0">
-              <h1 className="text-lg font-semibold truncate">Prompt Extracto</h1>
-              <p className="text-xs text-zinc-500 truncate">
-                右键任意图片，反推 AI 绘画提示词
-              </p>
-            </div>
+            <h1 className="text-base font-semibold truncate">Prompt Extracto</h1>
           </div>
 
-          {/* Tab 切换 */}
-          <nav className="hidden sm:flex items-center gap-1 p-1 rounded-xl bg-zinc-100 dark:bg-zinc-800/60">
+          {/* Tab 切换：放在 grid 的中间列，天然居中于 header 容器 */}
+          <nav className="flex items-center gap-1 p-1 rounded-xl bg-zinc-100 dark:bg-zinc-800/60 justify-self-center">
             <TabButton
               active={tab === 'settings'}
               onClick={() => setTab('settings')}
@@ -141,6 +136,32 @@ export default function OptionsApp() {
               避免按钮出现/消失让中间 Tab 栏位置左右跳动。
               dirty=true → 紫色「保存设置」可点击；dirty=false → 绿色「已保存」禁用。 */}
           <button
+            className={`${SAVE_BUTTON_BASE} justify-self-end ${
+              dirty
+                ? 'bg-gradient-to-br from-indigo-500 to-violet-500 text-white hover:brightness-110 active:scale-[0.98] cursor-pointer'
+                : 'bg-emerald-50 dark:bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-500/30 cursor-default'
+            } ${tab === 'settings' ? '' : 'invisible'}`}
+            onClick={onSave}
+            disabled={!dirty}
+            aria-hidden={tab !== 'settings'}
+            tabIndex={tab === 'settings' && dirty ? 0 : -1}
+          >
+            {dirty ? <Save className="w-4 h-4" /> : <Check className="w-4 h-4" />}
+            {dirty ? '保存设置' : '已保存'}
+          </button>
+        </div>
+
+        {/* 小屏：logo + 保存按钮一行，Tab 第二行 */}
+        <div className="sm:hidden max-w-5xl mx-auto px-4 py-3 flex items-center justify-between gap-3">
+          <div className="flex items-center gap-2 min-w-0">
+            <img
+              src={chrome.runtime.getURL('icons/icon-128.png')}
+              alt="Prompt Extracto"
+              className="w-7 h-7 rounded-lg shadow-sm flex-none object-cover"
+            />
+            <h1 className="text-base font-semibold truncate">Prompt Extracto</h1>
+          </div>
+          <button
             className={`${SAVE_BUTTON_BASE} ${
               dirty
                 ? 'bg-gradient-to-br from-indigo-500 to-violet-500 text-white hover:brightness-110 active:scale-[0.98] cursor-pointer'
@@ -156,20 +177,22 @@ export default function OptionsApp() {
           </button>
         </div>
 
-        {/* 小屏：把 Tab 单独放到第二行 */}
-        <div className="sm:hidden border-t border-zinc-200 dark:border-zinc-800 px-4 py-2 flex items-center gap-1">
-          <TabButton
-            active={tab === 'settings'}
-            onClick={() => setTab('settings')}
-            icon={<SettingsIcon className="w-3.5 h-3.5" />}
-            label="设置"
-          />
-          <TabButton
-            active={tab === 'library'}
-            onClick={() => setTab('library')}
-            icon={<BookOpen className="w-3.5 h-3.5" />}
-            label="提示词库"
-          />
+        {/* 小屏：把 Tab 单独放到第二行，并居中显示 */}
+        <div className="sm:hidden border-t border-zinc-200 dark:border-zinc-800 px-4 py-2 flex justify-center">
+          <nav className="inline-flex items-center gap-1 p-1 rounded-xl bg-zinc-100 dark:bg-zinc-800/60">
+            <TabButton
+              active={tab === 'settings'}
+              onClick={() => setTab('settings')}
+              icon={<SettingsIcon className="w-3.5 h-3.5" />}
+              label="设置"
+            />
+            <TabButton
+              active={tab === 'library'}
+              onClick={() => setTab('library')}
+              icon={<BookOpen className="w-3.5 h-3.5" />}
+              label="提示词库"
+            />
+          </nav>
         </div>
       </header>
 

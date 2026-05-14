@@ -20,5 +20,14 @@ export {
   restorePromptVersion,
   removePromptVersion,
 } from './versions';
+export {
+  getFolders,
+  createFolder,
+  renameFolder,
+  patchFolder,
+  removeFolder,
+  moveHistoryItemsToFolder,
+  type CreateFolderInput,
+} from './folders';
 export { onLocalDataChange } from './events';
 export { buildBackup, restoreBackup, type BackupPayload } from './backup';
