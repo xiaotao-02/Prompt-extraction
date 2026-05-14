@@ -78,9 +78,10 @@ export function ExpandedPanel({
     <div className="border-t border-zinc-200 dark:border-zinc-800 bg-zinc-50/60 dark:bg-zinc-950/30 relative">
       {/* 版本侧边栏：向左挂出卡片外，不遮挡编辑区 */}
       <div
-        className="absolute right-full top-0 bottom-0 z-10 overflow-hidden rounded-l-2xl transition-all duration-300 ease-[cubic-bezier(.2,.9,.3,1)]"
+        className="absolute right-full top-0 z-10 overflow-hidden rounded-l-2xl transition-all duration-300 ease-[cubic-bezier(.2,.9,.3,1)]"
         style={{
           width: versionsOpen && versionCount > 0 ? 300 : 0,
+          height: versionsOpen && versionCount > 0 ? 'min(80vh, max(100%, 520px))' : '100%',
           opacity: versionsOpen && versionCount > 0 ? 1 : 0,
           pointerEvents: versionsOpen && versionCount > 0 ? 'auto' : 'none',
         }}

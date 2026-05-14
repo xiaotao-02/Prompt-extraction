@@ -509,51 +509,111 @@ export const STYLE = `
   flex-wrap: wrap;
 }
 
-/* 策略选择器：紧凑的下拉框，和 meta-row 里的 link-btn 视觉一致。 */
-.strategy-select {
-  appearance: none;
-  -webkit-appearance: none;
+/* ── 自定义策略下拉选择器 ── */
+.strategy-dropdown {
+  position: relative;
+  display: inline-flex;
+  max-width: 160px;
+}
+.sd-trigger {
+  display: inline-flex; align-items: center; gap: 4px;
   border: 1px solid rgba(99,102,241,0.25);
   background: rgba(99,102,241,0.06);
   color: #4f46e5;
-  font-size: 11px;
-  font-weight: 500;
-  font-family: inherit;
-  padding: 3px 22px 3px 8px;
+  font-size: 11px; font-weight: 500; font-family: inherit;
+  padding: 3px 8px;
   border-radius: 6px;
-  cursor: pointer;
-  outline: none;
+  cursor: pointer; outline: none;
   transition: background .12s, border-color .15s, box-shadow .15s;
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' fill='none'%3E%3Cpath d='M1 1l4 4 4-4' stroke='%234f46e5' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
-  background-repeat: no-repeat;
-  background-position: right 6px center;
-  max-width: 150px;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  max-width: 160px;
   white-space: nowrap;
 }
-.strategy-select:hover {
-  background-color: rgba(99,102,241,0.12);
+.sd-label {
+  overflow: hidden; text-overflow: ellipsis;
+}
+.sd-arrow {
+  flex: none;
+  width: 10px; height: 6px;
+  transition: transform .18s ease;
+}
+.strategy-dropdown.open .sd-arrow { transform: rotate(180deg); }
+.sd-trigger:hover {
+  background: rgba(99,102,241,0.12);
   border-color: rgba(99,102,241,0.4);
 }
-.strategy-select:focus {
+.sd-trigger:focus-visible {
   border-color: rgba(99,102,241,0.55);
   box-shadow: 0 0 0 3px rgba(99,102,241,0.18);
 }
+.sd-menu {
+  display: none;
+  position: absolute;
+  bottom: calc(100% + 6px);
+  left: 0;
+  min-width: 140px;
+  max-width: 220px;
+  list-style: none;
+  margin: 0; padding: 4px;
+  background: rgba(255,255,255,0.98);
+  backdrop-filter: blur(16px) saturate(140%);
+  -webkit-backdrop-filter: blur(16px) saturate(140%);
+  border: 1px solid rgba(0,0,0,0.10);
+  border-radius: 10px;
+  box-shadow: 0 8px 24px -4px rgba(0,0,0,0.18), 0 2px 8px rgba(0,0,0,0.08);
+  z-index: 20;
+  animation: sdIn .14s ease-out;
+}
+.strategy-dropdown.open .sd-menu { display: block; }
+@keyframes sdIn {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.sd-item {
+  padding: 6px 10px;
+  font-size: 12px; font-weight: 400; font-family: inherit;
+  color: #1f2937;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background .1s, color .1s;
+  white-space: nowrap;
+  overflow: hidden; text-overflow: ellipsis;
+}
+.sd-item:hover {
+  background: rgba(99,102,241,0.08);
+  color: #4338ca;
+}
+.sd-item.active {
+  background: rgba(99,102,241,0.12);
+  color: #4338ca;
+  font-weight: 600;
+}
 @media (prefers-color-scheme: dark) {
-  .strategy-select {
-    background-color: rgba(139,92,246,0.12);
+  .sd-trigger {
+    background: rgba(139,92,246,0.12);
     border-color: rgba(139,92,246,0.35);
     color: #c4b5fd;
-    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' fill='none'%3E%3Cpath d='M1 1l4 4 4-4' stroke='%23c4b5fd' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
   }
-  .strategy-select:hover {
-    background-color: rgba(139,92,246,0.20);
+  .sd-trigger:hover {
+    background: rgba(139,92,246,0.20);
     border-color: rgba(139,92,246,0.5);
   }
-  .strategy-select:focus {
+  .sd-trigger:focus-visible {
     border-color: rgba(139,92,246,0.6);
     box-shadow: 0 0 0 3px rgba(139,92,246,0.2);
+  }
+  .sd-menu {
+    background: rgba(30,30,34,0.98);
+    border-color: rgba(255,255,255,0.10);
+    box-shadow: 0 8px 28px -4px rgba(0,0,0,0.5), 0 2px 10px rgba(0,0,0,0.3);
+  }
+  .sd-item { color: #d1d5db; }
+  .sd-item:hover {
+    background: rgba(139,92,246,0.16);
+    color: #e0d4fc;
+  }
+  .sd-item.active {
+    background: rgba(139,92,246,0.22);
+    color: #e0d4fc;
   }
 }
 

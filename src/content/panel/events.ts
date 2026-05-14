@@ -682,6 +682,61 @@ function handleDataAction(root: HTMLElement, el: HTMLElement, event: MouseEvent)
   }
 }
 
+function bindStrategyDropdown(root: HTMLElement): void {
+  const dropdown = root.querySelector<HTMLElement>('[data-role="strategy-dropdown"]');
+  if (!dropdown) return;
+  const trigger = dropdown.querySelector<HTMLButtonElement>('.sd-trigger');
+  if (!trigger) return;
+
+  const close = () => dropdown.classList.remove('open');
+  const toggle = (e: Event) => {
+    e.stopPropagation();
+    dropdown.classList.toggle('open');
+  };
+
+  trigger.addEventListener('click', toggle);
+
+  dropdown.addEventListener('click', (e) => {
+    const item = (e.target as HTMLElement).closest<HTMLElement>('.sd-item');
+    if (!item) return;
+    e.stopPropagation();
+    close();
+    if (!currentState || !isContextValid()) return;
+    const newStrategy = item.dataset.strategy as StrategyId;
+    if (!newStrategy || newStrategy === currentState.strategy) return;
+
+    safeSendMessage({ type: 'PING' });
+    renderPanel({
+      ...currentState,
+      status: 'loading',
+      prompt: undefined,
+      error: undefined,
+      draft: undefined,
+      versions: undefined,
+      versionsOpen: false,
+      selectedVersionId: undefined,
+      stage: 'calling',
+      partial: undefined,
+      startedAt: Date.now(),
+      strategy: newStrategy,
+    });
+    safeSendMessage({
+      type: 'EXTRACT_PROMPT',
+      payload: {
+        imageUrl: currentState.imageUrl,
+        pageUrl: location.href,
+        pageTitle: document.title,
+        requestId: currentState.requestId,
+        strategyOverride: newStrategy,
+      },
+    });
+  });
+
+  root.addEventListener('click', (e) => {
+    if (!dropdown.contains(e.target as Node)) close();
+  });
+}
+
 export function bindEvents(root: HTMLElement): void {
   bindHeaderDrag(root);
   bindEdgeResize(root);
@@ -721,40 +776,7 @@ export function bindEvents(root: HTMLElement): void {
 
   bindVersionListDelegation(root);
 
-  const strategySelect = root.querySelector<HTMLSelectElement>('[data-role="strategy-select"]');
-  if (strategySelect) {
-    strategySelect.addEventListener('change', () => {
-      if (!currentState || !isContextValid()) return;
-      const newStrategy = strategySelect.value as StrategyId;
-      if (newStrategy === currentState.strategy) return;
-
-      safeSendMessage({ type: 'PING' });
-      renderPanel({
-        ...currentState,
-        status: 'loading',
-        prompt: undefined,
-        error: undefined,
-        draft: undefined,
-        versions: undefined,
-        versionsOpen: false,
-        selectedVersionId: undefined,
-        stage: 'calling',
-        partial: undefined,
-        startedAt: Date.now(),
-        strategy: newStrategy,
-      });
-      safeSendMessage({
-        type: 'EXTRACT_PROMPT',
-        payload: {
-          imageUrl: currentState.imageUrl,
-          pageUrl: location.href,
-          pageTitle: document.title,
-          requestId: currentState.requestId,
-          strategyOverride: newStrategy,
-        },
-      });
-    });
-  }
+  bindStrategyDropdown(root);
 
   root.querySelectorAll<HTMLElement>('[data-action]').forEach((el) => {
     if (el.closest('.versions-list')) return;

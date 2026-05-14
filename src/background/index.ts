@@ -247,7 +247,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           }
         }
 
-        postToTab(targetId, {
+        await sendToTabReliably(targetId, {
           type: 'PANEL_FROM_HISTORY',
           payload: { historyId },
         });
@@ -528,6 +528,57 @@ async function runRefine(
     const msg = err instanceof Error ? err.message : String(err);
     return { ok: false, error: msg };
   }
+}
+
+/**
+ * 可靠地向 tab 发送消息：用 PING 确认 content script 就绪后再发。
+ *
+ * 用于 OPEN_IN_PANEL 等用户主动操作——必须保证消息送达，不能 fire-and-forget。
+ * 新建 tab 场景下 content script 在 document_idle 注入，`waitForTabComplete`
+ * 只等页面 complete，listener 可能还没注册完，直接发消息会丢。这里通过
+ * PING→ACK 轮询确认就绪，失败时自动注入 + 重试。
+ */
+async function sendToTabReliably(
+  tabId: number,
+  message: RuntimeMessage,
+  maxAttempts = 8,
+  intervalMs = 150,
+): Promise<boolean> {
+  for (let i = 0; i < maxAttempts; i++) {
+    const alive = await pingTab(tabId);
+    if (alive) {
+      chrome.tabs.sendMessage(tabId, message, () => void chrome.runtime.lastError);
+      return true;
+    }
+    // 第一次 ping 失败时主动注入一次，后续轮询只等
+    if (i === 0) {
+      await injectContentScript(tabId);
+    }
+    await sleep(intervalMs);
+  }
+  // 兜底：超时后仍然尝试发一次
+  chrome.tabs.sendMessage(tabId, message, () => void chrome.runtime.lastError);
+  return false;
+}
+
+function pingTab(tabId: number): Promise<boolean> {
+  return new Promise((resolve) => {
+    try {
+      chrome.tabs.sendMessage(tabId, { type: 'PING' }, () => {
+        if (chrome.runtime.lastError) {
+          resolve(false);
+        } else {
+          resolve(true);
+        }
+      });
+    } catch {
+      resolve(false);
+    }
+  });
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((r) => setTimeout(r, ms));
 }
 
 /**

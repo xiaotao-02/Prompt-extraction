@@ -44,18 +44,27 @@ function formatTime(t: number): string {
 }
 
 /**
- * 生成策略选择器 `<select>` 的 HTML。在成功状态的 meta-row 里渲染，
- * 让用户一键切换策略并重新反推，方便对比不同策略的输出效果。
+ * 自定义策略下拉选择器。用 div 代替原生 `<select>`，
+ * 以便完全控制下拉列表在亮/暗色模式下的外观。
  */
 function strategySelectHtml(currentStrategy: StrategyId | undefined): string {
   const entries = Object.entries(STRATEGY_LABELS) as [StrategyId, string][];
-  const options = entries
+  const currentLabel =
+    (currentStrategy && STRATEGY_LABELS[currentStrategy]) || entries[0]?.[1] || '';
+  const items = entries
     .map(([id, label]) => {
-      const selected = id === currentStrategy ? ' selected' : '';
-      return `<option value="${escapeAttr(id)}"${selected}>${escapeText(label)}</option>`;
+      const active = id === currentStrategy ? ' active' : '';
+      return `<li class="sd-item${active}" data-strategy="${escapeAttr(id)}">${escapeText(label)}</li>`;
     })
     .join('');
-  return `<select class="strategy-select" data-role="strategy-select" title="切换策略后将重新反推">${options}</select>`;
+  return `
+    <div class="strategy-dropdown" data-role="strategy-dropdown" title="切换策略后将重新反推">
+      <button class="sd-trigger" type="button">
+        <span class="sd-label">${escapeText(currentLabel)}</span>
+        <svg class="sd-arrow" width="10" height="6" viewBox="0 0 10 6" fill="none"><path d="M1 1l4 4 4-4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      </button>
+      <ul class="sd-menu">${items}</ul>
+    </div>`;
 }
 
 export const SUGGESTIONS = [
