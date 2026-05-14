@@ -353,9 +353,9 @@ export type RuntimeMessage =
     }
   | {
       /**
-       * AI 调整流式进度。仅当请求来源是 content script 浮动面板时，
-       * 后台会回放给该 tab；popup / options 页面发起的 refine 不会收到，
-       * 它们目前仍按"等结果就行"的非流式模式工作。
+       * AI 调整流式进度。来自浮动面板时由后台 postToTab 投递到对应 tab；
+       * popup / options 发起时由后台 chrome.runtime.sendMessage 广播，由当前
+       * 正在 refine 的页面监听并更新 UI。
        */
       type: 'REFINE_PROGRESS';
       payload: {
@@ -381,6 +381,14 @@ export type RuntimeMessage =
        */
       type: 'CTX_MENU_PREP';
       payload: { imageUrl: string };
+    }
+  | {
+      /**
+       * 浮动面板切换策略档位后请求后台写回 `app_settings_v1.promptStrategy`，
+       * 与选项页、其它上下文共用同一份默认策略（content 不直链接 storage/settings）。
+       */
+      type: 'SET_PROMPT_STRATEGY';
+      payload: { strategy: StrategyId };
     }
   | {
       /**

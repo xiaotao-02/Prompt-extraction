@@ -468,8 +468,12 @@ export const STYLE = `
 }
 .version-head {
   display: flex; align-items: center; gap: 6px; font-size: 11px; margin-bottom: 4px;
+  flex-wrap: nowrap;
+  min-width: 0;
 }
 .version-tag {
+  flex: none;
+  white-space: nowrap;
   padding: 1px 6px; border-radius: 4px; font-size: 10px; font-weight: 500;
   background: rgba(99,102,241,0.12); color: #4f46e5;
 }
@@ -483,8 +487,14 @@ export const STYLE = `
   .version-tag.restored { background: rgba(139,92,246,0.20); color: #c4b5fd; }
   .version-tag.refined { background: rgba(168,85,247,0.25); color: #d8b4fe; }
 }
-.version-time { opacity: 0.65; }
+.version-time {
+  flex: none;
+  white-space: nowrap;
+  margin-left: auto;
+  opacity: 0.65;
+}
 .version-meta, .version-strategy {
+  min-width: 0;
   max-width: 150px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   padding: 1px 6px; border-radius: 4px; font-size: 10px; font-weight: 500;
   background: rgba(255,255,255,0.70); color: #52525b;
@@ -505,6 +515,8 @@ export const STYLE = `
    "初始 / 版本N / 当前"。当前 = emerald，初始 = sky 蓝（与 emerald 区分），
    中间版本 = 中性灰。 */
 .version-ord {
+  flex: none;
+  white-space: nowrap;
   padding: 1px 6px; border-radius: 4px; font-size: 10px; font-weight: 600;
   background: rgba(113,113,122,0.18); color: #3f3f46;
 }

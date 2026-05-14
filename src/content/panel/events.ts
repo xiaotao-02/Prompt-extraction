@@ -1,10 +1,12 @@
+import { safeSendMessage, isExtensionContextValid } from '@/content/extensionBridge';
 import {
   appendPromptVersion,
   getHistoryItem,
   removePromptVersion,
   restorePromptVersion,
 } from '@/lib/storage';
-import type { RefineResponse, StrategyId } from '@/lib/types';
+import type { RefineResponse, RuntimeMessage, StrategyId } from '@/lib/types';
+import { STRATEGY_LABELS } from '@/lib/strategies-meta';
 import {
   currentState,
   setCurrentState,
@@ -30,23 +32,13 @@ function closePanel() {
   return panelActions.closePanel();
 }
 
-function isContextValid(): boolean {
-  try {
-    return !!chrome.runtime?.id;
-  } catch {
-    return false;
-  }
-}
+let dirtyVersionHighlightRaf = 0;
 
-function safeSendMessage(message: unknown, callback?: (response: any) => void): void {
-  if (!isContextValid()) return;
-  try {
-    if (callback) {
-      chrome.runtime.sendMessage(message, callback);
-    } else {
-      chrome.runtime.sendMessage(message);
-    }
-  } catch { /* context invalidated */ }
+export function cancelPendingDirtyChromeDeferred(): void {
+  if (dirtyVersionHighlightRaf !== 0) {
+    cancelAnimationFrame(dirtyVersionHighlightRaf);
+    dirtyVersionHighlightRaf = 0;
+  }
 }
 
 /**
@@ -56,14 +48,15 @@ function safeSendMessage(message: unknown, callback?: (response: any) => void): 
  * 可能不再匹配 draft；用户也可能改着改着又改回了某条版本的内容，需要重新
  * 把高亮挪到那条上。这个同步是纯 DOM 操作，不触发重渲。
  */
-export function updateDirtyChrome(): void {
+function syncDirtyHintsImmediate(): void {
   if (!panel || !currentState) return;
+  const root = panel;
   const draft = currentState.draft ?? '';
   const dirty = draft !== (currentState.prompt ?? '');
-  const hint = panel.querySelector<HTMLElement>('.dirty-hint');
+  const hint = root.querySelector<HTMLElement>('.dirty-hint');
   if (hint) hint.classList.toggle('show', dirty);
   const setDisabled = (sel: string, disabled: boolean) => {
-    const btn = panel!.querySelector<HTMLButtonElement>(sel);
+    const btn = root.querySelector<HTMLButtonElement>(sel);
     if (!btn) return;
     btn.disabled = disabled;
     btn.classList.toggle('disabled', disabled);
@@ -74,7 +67,11 @@ export function updateDirtyChrome(): void {
   };
   setDisabled('[data-action="reset"]', !dirty);
   setDisabled('[data-action="save"]', !dirty);
+}
 
+function syncVersionHighlightFromState(): void {
+  if (!panel || !currentState) return;
+  const draft = currentState.draft ?? '';
   const versions = currentState.versions || [];
   const sel = currentState.selectedVersionId;
   let matchedId: string | undefined;
@@ -91,6 +88,26 @@ export function updateDirtyChrome(): void {
       !!matchedId && item.dataset.versionId === matchedId
     );
   });
+}
+
+/**
+ * 编辑器连续输入等高噪声路径：脏提示即时刷新；版本列表 `.selected` 延后到动画帧，
+ * 减少 textarea 打字时对每个 `.version-item` 的遍历。
+ */
+export function updateDirtyChrome(): void {
+  syncDirtyHintsImmediate();
+  cancelPendingDirtyChromeDeferred();
+  dirtyVersionHighlightRaf = requestAnimationFrame(() => {
+    dirtyVersionHighlightRaf = 0;
+    syncVersionHighlightFromState();
+  });
+}
+
+/** DOM 结构刚替换或与用户单击强一致时需同步；取消排队的 RAF 再高亮一遍。 */
+export function updateDirtyChromeImmediate(): void {
+  cancelPendingDirtyChromeDeferred();
+  syncDirtyHintsImmediate();
+  syncVersionHighlightFromState();
 }
 
 export async function syncVersions(requestId: string): Promise<void> {
@@ -158,7 +175,27 @@ function patchVersionList(): void {
       strategy: st.strategy,
     }
   );
-  updateDirtyChrome();
+  updateDirtyChromeImmediate();
+}
+
+function patchStrategyDropdownSelection(root: HTMLElement, strategy: StrategyId): void {
+  const dropdown = root.querySelector<HTMLElement>('[data-role="strategy-dropdown"]');
+  if (!dropdown) return;
+  const labelEl = dropdown.querySelector<HTMLElement>('.sd-label');
+  if (labelEl) labelEl.textContent = STRATEGY_LABELS[strategy] ?? strategy;
+  dropdown.querySelectorAll<HTMLElement>('.sd-item').forEach((li) => {
+    li.classList.toggle('active', li.dataset.strategy === strategy);
+  });
+}
+
+/** storage / 其它上下文更新 `promptStrategy` 后，在 success 态面板上同步下拉与历史 chip，不重渲整板。 */
+export function applyStoredPromptStrategy(strategy: StrategyId): void {
+  const st = currentState;
+  if (!st || !panel || st.status !== 'success') return;
+  if (st.strategy === strategy) return;
+  setCurrentState({ ...st, strategy });
+  patchStrategyDropdownSelection(panel, strategy);
+  patchVersionList();
 }
 
 /**
@@ -374,7 +411,7 @@ function handleDataAction(root: HTMLElement, el: HTMLElement, event: MouseEvent)
   if (!state) return;
   if (action === 'close') return closePanel();
   if (action === 'copy') {
-    const text = state.draft ?? state.prompt ?? '';
+    const text = state.draft ?? state.prompt ?? state.partial ?? '';
     navigator.clipboard
       .writeText(text)
       .then(() => flashCopied(el))
@@ -382,7 +419,7 @@ function handleDataAction(root: HTMLElement, el: HTMLElement, event: MouseEvent)
     return;
   }
   if (action === 'retry') {
-    if (!isContextValid()) return;
+    if (!isExtensionContextValid()) return;
     safeSendMessage({ type: 'PING' });
     renderPanel({
       ...state,
@@ -390,7 +427,6 @@ function handleDataAction(root: HTMLElement, el: HTMLElement, event: MouseEvent)
       prompt: undefined,
       error: undefined,
       draft: undefined,
-      versions: undefined,
       versionsOpen: false,
       selectedVersionId: undefined,
       stage: 'calling',
@@ -404,17 +440,18 @@ function handleDataAction(root: HTMLElement, el: HTMLElement, event: MouseEvent)
         pageUrl: location.href,
         pageTitle: document.title,
         requestId: state.requestId,
+        ...(state.strategy !== undefined ? { strategyOverride: state.strategy } : {}),
       },
     });
     return;
   }
   if (action === 'open-options') {
-    if (!isContextValid()) return;
+    if (!isExtensionContextValid()) return;
     safeSendMessage({ type: 'OPEN_OPTIONS' });
     return;
   }
   if (action === 'open-in-library') {
-    if (!isContextValid()) return;
+    if (!isExtensionContextValid()) return;
     safeSendMessage({
       type: 'OPEN_OPTIONS',
       payload: { tab: 'library', focusId: state.requestId },
@@ -459,7 +496,7 @@ function handleDataAction(root: HTMLElement, el: HTMLElement, event: MouseEvent)
     const actionRoot = root.isConnected ? root : panel ?? root;
     const ta = actionRoot.querySelector<HTMLTextAreaElement>('[data-role="editor"]');
     if (ta) ta.value = restored;
-    updateDirtyChrome();
+    updateDirtyChromeImmediate();
     return;
   }
   if (action === 'save') {
@@ -505,7 +542,7 @@ function handleDataAction(root: HTMLElement, el: HTMLElement, event: MouseEvent)
     const actionRoot = root.isConnected ? root : panel ?? root;
     const ta = actionRoot.querySelector<HTMLTextAreaElement>('[data-role="editor"]');
     if (ta) ta.value = v.prompt;
-    updateDirtyChrome();
+    updateDirtyChromeImmediate();
     return;
   }
   if (action === 'restore-version') {
@@ -622,7 +659,7 @@ function handleDataAction(root: HTMLElement, el: HTMLElement, event: MouseEvent)
       refineStartedAt: Date.now(),
     });
     renderPanel(currentState!);
-    if (!isContextValid()) {
+    if (!isExtensionContextValid()) {
       setCurrentState({
         ...currentState!,
         refineLoading: false,
@@ -726,35 +763,20 @@ function bindStrategyDropdown(root: HTMLElement): void {
     if (!item) return;
     e.stopPropagation();
     close();
-    if (!currentState || !isContextValid()) return;
+    if (!currentState) return;
     const newStrategy = item.dataset.strategy as StrategyId;
     if (!newStrategy || newStrategy === currentState.strategy) return;
 
-    safeSendMessage({ type: 'PING' });
-    renderPanel({
-      ...currentState,
-      status: 'loading',
-      prompt: undefined,
-      error: undefined,
-      draft: undefined,
-      versions: undefined,
-      versionsOpen: false,
-      selectedVersionId: undefined,
-      stage: 'calling',
-      partial: undefined,
-      startedAt: Date.now(),
-      strategy: newStrategy,
-    });
-    safeSendMessage({
-      type: 'EXTRACT_PROMPT',
-      payload: {
-        imageUrl: currentState.imageUrl,
-        pageUrl: location.href,
-        pageTitle: document.title,
-        requestId: currentState.requestId,
-        strategyOverride: newStrategy,
-      },
-    });
+    // 仅在“已生成”态允许切换策略；首轮反推 loading 时不要打断当前请求。
+    if (currentState.status !== 'success' || !isExtensionContextValid()) return;
+
+    setCurrentState({ ...currentState, strategy: newStrategy });
+    patchStrategyDropdownSelection(root, newStrategy);
+    patchVersionList();
+    safeSendMessage(
+      { type: 'SET_PROMPT_STRATEGY', payload: { strategy: newStrategy } } satisfies RuntimeMessage,
+      () => void chrome.runtime.lastError
+    );
   });
 
   root.addEventListener('click', (e) => {

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   Copy,
   Settings,
@@ -56,11 +56,27 @@ export default function PopupApp() {
   const [refineInput, setRefineInput] = useState('');
   const [refineLoading, setRefineLoading] = useState(false);
   const [refineError, setRefineError] = useState<string | null>(null);
+  const [refinePartial, setRefinePartial] = useState<string | undefined>(undefined);
+  const refiningTargetRef = useRef<string | null>(null);
 
   const load = () => getHistory().then(setList);
 
   useEffect(() => {
     load();
+  }, []);
+
+  useEffect(() => {
+    const onMsg = (message: unknown) => {
+      if (!message || typeof message !== 'object' || !('type' in message)) return;
+      if ((message as { type: string }).type !== 'REFINE_PROGRESS') return;
+      const payload = (message as { payload?: { historyId?: string; partial?: string } })
+        .payload;
+      const hid = payload?.historyId;
+      if (!hid || hid !== refiningTargetRef.current) return;
+      if (payload.partial !== undefined) setRefinePartial(payload.partial);
+    };
+    chrome.runtime.onMessage.addListener(onMsg);
+    return () => chrome.runtime.onMessage.removeListener(onMsg);
   }, []);
 
   const onCopy = async (text: string, id: string) => {
@@ -134,6 +150,8 @@ export default function PopupApp() {
     setRefineInput('');
     setRefineError(null);
     setRefineLoading(false);
+    setRefinePartial(undefined);
+    refiningTargetRef.current = null;
     setEditingId(null);
   };
 
@@ -142,6 +160,8 @@ export default function PopupApp() {
     setRefineInput('');
     setRefineError(null);
     setRefineLoading(false);
+    setRefinePartial(undefined);
+    refiningTargetRef.current = null;
   };
 
   const runRefine = (item: HistoryItem) => {
@@ -150,6 +170,8 @@ export default function PopupApp() {
       setRefineError('请先输入修改要求');
       return;
     }
+    refiningTargetRef.current = item.id;
+    setRefinePartial(undefined);
     setRefineLoading(true);
     setRefineError(null);
     chrome.runtime.sendMessage(
@@ -163,20 +185,30 @@ export default function PopupApp() {
       },
       (resp: RefineResponse | undefined) => {
         if (chrome.runtime.lastError || !resp) {
+          refiningTargetRef.current = null;
+          setRefinePartial(undefined);
           setRefineLoading(false);
           setRefineError(chrome.runtime.lastError?.message || '后台未响应');
           return;
         }
         if (!resp.ok) {
+          refiningTargetRef.current = null;
+          setRefinePartial(undefined);
           setRefineLoading(false);
           setRefineError(resp.error);
           return;
         }
-        setRefineLoading(false);
         setRefineInput('');
-        setRefiningId(null);
-        setOpenVersionsId(item.id);
-        load();
+        refiningTargetRef.current = null;
+        setRefinePartial(undefined);
+        void load()
+          .then(() => {
+            setOpenVersionsId(item.id);
+            setRefiningId(null);
+          })
+          .finally(() => {
+            setRefineLoading(false);
+          });
       }
     );
   };
@@ -268,6 +300,12 @@ export default function PopupApp() {
               const versionsOpen = openVersionsId === item.id;
               const versionCount = item.versions?.length || 0;
               const isRefining = refiningId === item.id;
+              const streamPreview =
+                refineLoading &&
+                isRefining &&
+                refinePartial !== undefined &&
+                refinePartial !== '';
+              const promptShown = streamPreview ? refinePartial! : item.prompt;
               return (
                 <li key={item.id} className="p-3 hover:bg-zinc-50 dark:hover:bg-zinc-800/50">
                   <div className="flex gap-3">
@@ -302,8 +340,14 @@ export default function PopupApp() {
                           className="w-full text-xs leading-relaxed rounded-md border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 px-2 py-1.5 outline-none focus:border-violet-400 focus:ring-2 focus:ring-violet-400/30 resize-y min-h-[80px] max-h-[180px]"
                         />
                       ) : (
-                        <p className="text-xs leading-relaxed line-clamp-3 text-zinc-700 dark:text-zinc-300 whitespace-pre-wrap break-words">
-                          {item.prompt}
+                        <p
+                          className={`text-xs leading-relaxed text-zinc-700 dark:text-zinc-300 whitespace-pre-wrap break-words ${
+                            streamPreview
+                              ? 'max-h-[180px] overflow-y-auto'
+                              : 'line-clamp-3'
+                          }`}
+                        >
+                          {promptShown}
                         </p>
                       )}
 
@@ -326,7 +370,7 @@ export default function PopupApp() {
                         ) : (
                           <>
                             <button
-                              onClick={() => onCopy(item.prompt, item.id)}
+                              onClick={() => onCopy(promptShown, item.id)}
                               className="inline-flex items-center gap-1 px-2 py-1 rounded-md hover:bg-zinc-100 dark:hover:bg-zinc-800 text-zinc-600 dark:text-zinc-300"
                             >
                               {copiedId === item.id ? (

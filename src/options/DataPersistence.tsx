@@ -36,6 +36,7 @@ import {
   restoreBackup,
   type BackupPayload,
 } from '@/lib/storage';
+import { DISCOVERED_KEY, SETTINGS_KEY } from '@/lib/storage/keys';
 import { getCurrentVersion } from '@/lib/updater';
 
 /**
@@ -178,10 +179,10 @@ export default function DataPersistence({ onDataRestored }: DataPersistenceProps
       // 只对 settings / history / folders 的变更触发同步；忽略我们自己写的 SyncMeta 等
       // 否则会形成"写 meta → onChanged → 再同步 → 写 meta"的死循环。
       if (
-        'app_settings_v1' in changes ||
+        SETTINGS_KEY in changes ||
         'history_v1' in changes ||
         'library_folders_v1' in changes ||
-        'discovered_models_v1' in changes
+        DISCOVERED_KEY in changes
       ) {
         doSync();
       }

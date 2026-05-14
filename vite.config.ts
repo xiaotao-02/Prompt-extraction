@@ -30,6 +30,17 @@ export default defineConfig({
     rollupOptions: {
       output: {
         chunkFileNames: 'assets/chunk-[hash].js',
+        manualChunks(id) {
+          if (/[/\\]node_modules[/\\](react-dom|scheduler)[/\\]/.test(id)) {
+            return 'vendor-react-dom';
+          }
+          if (/[/\\]node_modules[/\\]react[/\\]/.test(id)) {
+            return 'vendor-react';
+          }
+          if (/[/\\]node_modules[/\\]lucide-react[/\\]/.test(id)) {
+            return 'vendor-lucide';
+          }
+        },
       },
     },
   },

@@ -1,30 +1,10 @@
-import type { RuntimeMessage } from '@/lib/types';
+import type { RuntimeMessage, StrategyId } from '@/lib/types';
 import { getHistoryItem } from '@/lib/storage';
-import { renderPanel, updatePanel, closePanel, applyHistoryReady } from './panel';
+import { SETTINGS_KEY } from '@/lib/storage/keys';
+import { renderPanel, updatePanel, closePanel, applyHistoryReady, applyStoredPromptStrategy } from './panel';
+import { isExtensionContextValid, safeSendMessage } from '@/content/extensionBridge';
 
-function isContextValid(): boolean {
-  try {
-    return !!chrome.runtime?.id;
-  } catch {
-    return false;
-  }
-}
-
-/**
- * 安全发送消息。上下文失效时静默忽略，避免 Uncaught Error。
- */
-export function safeSendMessage(message: unknown, callback?: (response: any) => void): void {
-  if (!isContextValid()) return;
-  try {
-    if (callback) {
-      chrome.runtime.sendMessage(message, callback);
-    } else {
-      chrome.runtime.sendMessage(message);
-    }
-  } catch {
-    // Extension context invalidated
-  }
-}
+export { safeSendMessage } from '@/content/extensionBridge';
 
 try {
   chrome.runtime.onMessage.addListener((message: RuntimeMessage, _sender, sendResponse) => {
@@ -127,6 +107,13 @@ try {
     }
     return false;
   });
+  chrome.storage.onChanged.addListener((changes, _area) => {
+    const ch = changes[SETTINGS_KEY];
+    if (!ch?.newValue || typeof ch.newValue !== 'object') return;
+    const ps = (ch.newValue as { promptStrategy?: StrategyId }).promptStrategy;
+    if (ps == null) return;
+    applyStoredPromptStrategy(ps);
+  });
 } catch {
   // Extension context already invalidated at registration time
 }
@@ -158,7 +145,7 @@ window.addEventListener(
   'contextmenu',
   (ev: MouseEvent) => {
     try {
-      if (!isContextValid()) return;
+      if (!isExtensionContextValid()) return;
       const url = captureMediaUrlAtPoint(ev);
       safeSendMessage(
         {

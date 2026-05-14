@@ -241,8 +241,10 @@ export async function addHistory(item: HistoryItem): Promise<HistoryItem> {
     const existing = list[existingIdx];
     // 把"这次反推产生的那一条版本"提出来，加上 meta，方便版本列表里区分。
     const incomingHead = incoming.versions[0];
+    // 同会话「重新生成」复用 requestId，incoming 仍是 requestId:v0；若沿用该 id
+    // 会与 oldVersions 首条冲突，normalizePromptVersions 按 id 去重会丢掉旧记录。
     const newVersion: PromptVersion = {
-      id: incomingHead?.id || newVersionId(),
+      id: newVersionId(),
       prompt: incoming.prompt,
       versionNo: getNextPromptVersionNo(existing.versions),
       createdAt: incomingHead?.createdAt || incoming.createdAt || Date.now(),

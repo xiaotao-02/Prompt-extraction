@@ -133,7 +133,21 @@ export function applyLoadingPatch(state: PanelState): void {
     elapsedEl.textContent = formatElapsed(Date.now() - state.startedAt);
   }
 
-  // 流式预览：如果还没有 partial，则隐藏整块；有了就 lazy 渲染一个 textarea
+  const copyBtn = panel.querySelector<HTMLButtonElement>('[data-role="copy-button"]');
+  if (copyBtn) {
+    copyBtn.disabled = !hasPartial;
+    copyBtn.classList.toggle('disabled', !hasPartial);
+  }
+
+  const editor = panel.querySelector<HTMLTextAreaElement>('[data-role="editor"]');
+  if (editor) {
+    const atBottom =
+      Math.abs(editor.scrollHeight - editor.clientHeight - editor.scrollTop) < 8;
+    editor.value = state.partial || '';
+    if (atBottom) editor.scrollTop = editor.scrollHeight;
+  }
+
+  // 兼容旧 DOM：如果页面上仍有 stream-preview，则继续按旧逻辑刷新。
   const previewBox = panel.querySelector<HTMLElement>('[data-role="stream-preview"]');
   if (previewBox) {
     if (hasPartial) {

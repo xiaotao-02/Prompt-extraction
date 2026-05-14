@@ -3,19 +3,9 @@ import { PROVIDERS } from '../providers';
 import { DEFAULT_STRATEGY_ID } from '../strategies';
 import { DEFAULT_UPDATE_SETTINGS } from '../updater';
 import { notifyBackupSubscribers } from './events';
+import { DISCOVERED_KEY, SETTINGS_KEY } from './keys';
 
-export const SETTINGS_KEY = 'app_settings_v1';
-/**
- * 「从端点拉取的模型列表」缓存。
- *
- * 单独放到 chrome.storage.local 而不是塞进 SETTINGS_KEY 一起 sync，
- * 否则以下场景会**静默丢失 API Key**：
- * 中转站经常一次返回几百个模型 → providers.<id>.discoveredModels 拼一起轻松 >8KB
- * → chrome.storage.sync.set 抛 QUOTA_BYTES_PER_ITEM → 整个 settings 写入失败 → 用户
- * 看见「保存成功」但重启后回滚。把这部分缓存挪到 local 后，sync 里的 settings 始终在
- * 数百字节级别，永不会撑爆。
- */
-export const DISCOVERED_KEY = 'discovered_models_v1';
+export { DISCOVERED_KEY, SETTINGS_KEY } from './keys';
 
 interface DiscoveredCache {
   models: string[];

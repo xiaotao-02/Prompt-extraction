@@ -26,8 +26,14 @@ import {
   applyRefinePatch,
 } from './loading';
 import { panelHtml } from './templates';
-import { bindEvents, syncVersions } from './events';
-import { ensureGeometry, applyGeometryToPanel, reclampOnViewportChange } from './geometry';
+import { bindEvents, syncVersions, cancelPendingDirtyChromeDeferred } from './events';
+
+export { applyStoredPromptStrategy } from './events';
+import {
+  ensureGeometry,
+  applyGeometryToPanel,
+  scheduleReclampOnViewportChange,
+} from './geometry';
 
 let viewportListenerBound = false;
 
@@ -49,7 +55,7 @@ function ensureHost(): { host: HTMLDivElement; shadow: ShadowRoot } {
   setShadow(s);
   // 视口尺寸变化时，把当前几何 clamp 回安全范围；避免「窗口缩小后面板留在屏幕外」。
   if (!viewportListenerBound) {
-    window.addEventListener('resize', reclampOnViewportChange);
+    window.addEventListener('resize', scheduleReclampOnViewportChange);
     viewportListenerBound = true;
   }
   return { host: h, shadow: s };
@@ -194,6 +200,7 @@ export function applyHistoryReady(
 }
 
 export function closePanel(): void {
+  cancelPendingDirtyChromeDeferred();
   stopLoadingTicker();
   stopRefineTicker();
   if (panel) {

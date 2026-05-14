@@ -31,6 +31,7 @@ export function ExpandedPanel({
   onDeleteVersion,
   refineInput,
   refineLoading,
+  refinePartial,
   refineError,
   onChangeRefine,
   onRunRefine,
@@ -49,6 +50,8 @@ export function ExpandedPanel({
   onDeleteVersion: (v: PromptVersion) => void;
   refineInput: string;
   refineLoading: boolean;
+  /** 流式累计正文；有内容时主编辑器展示此字段以与浮动面板一致 */
+  refinePartial?: string;
   refineError: string | null;
   onChangeRefine: (v: string) => void;
   onRunRefine: () => void;
@@ -63,6 +66,10 @@ export function ExpandedPanel({
   useEffect(() => {
     if (refineLoading) setOpenInline('refine');
   }, [refineLoading]);
+
+  const refineHasPartial = !!refinePartial;
+  const editorValue =
+    refineLoading && refineHasPartial ? refinePartial! : draft;
 
   const dirtyPrompt = draft.trim() !== item.prompt.trim();
   const dirtyNote = (draftNote || '') !== (item.note || '');
@@ -99,7 +106,7 @@ export function ExpandedPanel({
         <div className="h-full" style={{ minWidth: 300 }}>
           <VersionsSidebar
             item={item}
-            editorContent={draft}
+            editorContent={editorValue}
             selectedVersionId={selectedVersionId}
             onCopy={onCopy}
             copiedKey={copiedKey}
@@ -120,18 +127,25 @@ export function ExpandedPanel({
               可在此修改提示词
             </span>
             <span className="text-[10px] text-zinc-400 dark:text-zinc-500 tabular-nums">
-              {draft.length} 字
+              {editorValue.length} 字
             </span>
           </div>
           <textarea
-            value={draft}
+            value={editorValue}
+            readOnly={refineLoading}
             onChange={(e) => {
               onChangeDraft(e.target.value);
               setSelectedVersionId(null);
             }}
             spellCheck={false}
-            placeholder="可在此修改提示词…"
-            className="input min-h-[280px] max-h-[520px] resize-y leading-relaxed font-mono text-[13px] w-full"
+            placeholder={
+              refineLoading
+                ? '正在接收 AI 调整后的提示词…'
+                : '可在此修改提示词…'
+            }
+            className={`input min-h-[280px] max-h-[520px] resize-y leading-relaxed font-mono text-[13px] w-full${
+              refineLoading ? ' opacity-[0.97]' : ''
+            }`}
           />
         </div>
 
@@ -200,7 +214,7 @@ export function ExpandedPanel({
             <Save className="w-3.5 h-3.5" /> 保存为新版本
           </button>
           <button
-            onClick={() => onCopy(draft, `draft:${item.id}`)}
+            onClick={() => onCopy(editorValue, `draft:${item.id}`)}
             className="inline-flex items-center gap-1 text-[11px] px-2.5 py-1 rounded-md hover:bg-zinc-100 dark:hover:bg-zinc-800 text-zinc-600 dark:text-zinc-300 transition"
           >
             {copiedKey === `draft:${item.id}` ? (

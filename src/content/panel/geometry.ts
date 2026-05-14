@@ -146,6 +146,21 @@ export function reclampOnViewportChange(): void {
   if (panel) applyGeometryToPanel(panel, next);
 }
 
+let reclampViewportRafQueued = false;
+
+/**
+ * 把视口 clamp 延后到下一帧：resize 拖拽会连续触发，合并到单次 rAF
+ * 减少 clamp + sessionStorage + style 写入的抖动。
+ */
+export function scheduleReclampOnViewportChange(): void {
+  if (reclampViewportRafQueued) return;
+  reclampViewportRafQueued = true;
+  requestAnimationFrame(() => {
+    reclampViewportRafQueued = false;
+    reclampOnViewportChange();
+  });
+}
+
 // ── 侧栏展开 / 收起时自动调整面板宽度 ──────────────────────────────
 
 let _sidebarLeftShift = 0;

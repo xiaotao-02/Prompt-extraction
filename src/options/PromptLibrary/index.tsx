@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Copy,
   Check,
@@ -132,7 +132,9 @@ export default function PromptLibrary({ focusId, onConsumeFocus }: PromptLibrary
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
   const [refineInput, setRefineInput] = useState('');
   const [refineLoading, setRefineLoading] = useState(false);
+  const [refinePartial, setRefinePartial] = useState<string | undefined>(undefined);
   const [refineError, setRefineError] = useState<string | null>(null);
+  const refiningIdRef = useRef<string | null>(null);
   const [actionTip, setActionTip] = useState<{ ok: boolean; msg: string } | null>(null);
 
   const load = async () => {
@@ -159,6 +161,20 @@ export default function PromptLibrary({ focusId, onConsumeFocus }: PromptLibrary
 
   useEffect(() => {
     void load();
+  }, []);
+
+  useEffect(() => {
+    const onMsg = (message: unknown) => {
+      if (!message || typeof message !== 'object' || !('type' in message)) return;
+      if ((message as { type: string }).type !== 'REFINE_PROGRESS') return;
+      const payload = (message as { payload?: { historyId?: string; partial?: string } })
+        .payload;
+      const hid = payload?.historyId;
+      if (!hid || hid !== refiningIdRef.current) return;
+      if (payload.partial !== undefined) setRefinePartial(payload.partial);
+    };
+    chrome.runtime.onMessage.addListener(onMsg);
+    return () => chrome.runtime.onMessage.removeListener(onMsg);
   }, []);
 
   useEffect(() => {
@@ -228,12 +244,13 @@ export default function PromptLibrary({ focusId, onConsumeFocus }: PromptLibrary
       setRefineError(null);
       return;
     }
+    if (refineLoading) return;
     const item = list.find((i) => i.id === expandedId);
     if (item) {
       setDraft(item.prompt);
       setDraftNote(item.note || '');
     }
-  }, [expandedId, list]);
+  }, [expandedId, list, refineLoading]);
 
   const showTip = (ok: boolean, msg: string) => {
     setActionTip({ ok, msg });
@@ -648,6 +665,8 @@ export default function PromptLibrary({ focusId, onConsumeFocus }: PromptLibrary
       setRefineError('请先输入修改要求');
       return;
     }
+    refiningIdRef.current = item.id;
+    setRefinePartial(undefined);
     setRefineLoading(true);
     setRefineError(null);
     chrome.runtime.sendMessage(
@@ -661,19 +680,29 @@ export default function PromptLibrary({ focusId, onConsumeFocus }: PromptLibrary
       },
       (resp: RefineResponse | undefined) => {
         if (chrome.runtime.lastError || !resp) {
+          refiningIdRef.current = null;
+          setRefinePartial(undefined);
           setRefineLoading(false);
           setRefineError(chrome.runtime.lastError?.message || '后台未响应');
           return;
         }
         if (!resp.ok) {
+          refiningIdRef.current = null;
+          setRefinePartial(undefined);
           setRefineLoading(false);
           setRefineError(resp.error);
           return;
         }
-        setRefineLoading(false);
         setRefineInput('');
-        showTip(true, 'AI 已生成新版本');
-        void load();
+        refiningIdRef.current = null;
+        setRefinePartial(undefined);
+        void reloadHistory()
+          .then(() => {
+            showTip(true, 'AI 已生成新版本');
+          })
+          .finally(() => {
+            setRefineLoading(false);
+          });
       }
     );
   };
@@ -960,6 +989,7 @@ export default function PromptLibrary({ focusId, onConsumeFocus }: PromptLibrary
                     onDeleteVersion={(v) => onDeleteVersion(item, v)}
                     refineInput={refineInput}
                     refineLoading={refineLoading}
+                    refinePartial={refinePartial}
                     refineError={refineError}
                     onChangeRefine={(v) => {
                       setRefineInput(v);

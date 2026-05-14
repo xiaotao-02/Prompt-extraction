@@ -13,6 +13,7 @@ import {
 } from 'lucide-react';
 import { PROVIDER_LIST, PROVIDERS } from '@/lib/providers';
 import { getSettings, saveSettings } from '@/lib/storage';
+import { SETTINGS_KEY } from '@/lib/storage/keys';
 import {
   getStrategyList,
   STYLE_PROMPT_SETS,
@@ -88,6 +89,42 @@ export default function SettingsView({ registerSaveHandler, onDirtyChange }: Pro
    * - 切 provider 时按 pid 隔离，互不影响。
    */
   const autoFetchedRef = useRef<Map<ProviderId, string>>(new Map());
+  const settingsRef = useRef<AppSettings | null>(null);
+  const lastSavedSigRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    settingsRef.current = settings;
+  }, [settings]);
+  useEffect(() => {
+    lastSavedSigRef.current = lastSavedSig;
+  }, [lastSavedSig]);
+
+  useEffect(() => {
+    const onStorage = (
+      changes: { [key: string]: chrome.storage.StorageChange },
+      _area: chrome.storage.AreaName
+    ) => {
+      if (!(SETTINGS_KEY in changes)) return;
+      void getSettings().then((fresh) => {
+        const prev = settingsRef.current;
+        const sig = lastSavedSigRef.current;
+        if (prev === null || sig === null) {
+          setSettings(fresh);
+          setLastSavedSig(JSON.stringify(fresh));
+          return;
+        }
+        const isDirty = JSON.stringify(prev) !== sig;
+        if (!isDirty) {
+          setSettings(fresh);
+          setLastSavedSig(JSON.stringify(fresh));
+        } else {
+          setSettings({ ...prev, promptStrategy: fresh.promptStrategy });
+        }
+      });
+    };
+    chrome.storage.onChanged.addListener(onStorage);
+    return () => chrome.storage.onChanged.removeListener(onStorage);
+  }, []);
 
   useEffect(() => {
     getSettings().then((s) => {

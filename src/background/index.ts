@@ -1,7 +1,7 @@
 import { extractPrompt, refinePrompt } from '@/lib/api';
 import { fetchImageAsBase64, makeStorageThumbnail } from '@/lib/image';
-import { addHistory, appendPromptVersion, getHistoryItem, getSettings, saveUpdateResult } from '@/lib/storage';
-import type { HistoryItem, RefineResponse, RuntimeMessage, UpdateCheckResult } from '@/lib/types';
+import { addHistory, appendPromptVersion, getHistoryItem, getSettings, saveSettings, saveUpdateResult } from '@/lib/storage';
+import type { HistoryItem, RefineResponse, RuntimeMessage, StrategyId, UpdateCheckResult } from '@/lib/types';
 import { DEFAULT_FEED_URL, getCurrentVersion, performUpdateCheck } from '@/lib/updater';
 
 const MENU_ID = 'extract-image-prompt';
@@ -137,6 +137,23 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       }
     });
     sendResponse({ ok: true });
+    return true;
+  }
+  if (message?.type === 'SET_PROMPT_STRATEGY') {
+    const strategy = message.payload?.strategy as StrategyId | undefined;
+    if (!strategy) {
+      sendResponse({ ok: false, error: '缺少 strategy' });
+      return true;
+    }
+    void (async () => {
+      try {
+        const s = await getSettings();
+        await saveSettings({ ...s, promptStrategy: strategy });
+        sendResponse({ ok: true });
+      } catch (e) {
+        sendResponse({ ok: false, error: e instanceof Error ? e.message : String(e) });
+      }
+    })();
     return true;
   }
   if (message?.type === 'CHECK_UPDATE') {
@@ -493,19 +510,21 @@ async function runRefine(
 ): Promise<RefineResponse> {
   try {
     const settings = await getSettings();
-    // 只有在面板里发起 refine（带 tabId）的场景才订阅流式进度——避免给 popup /
-    // options 这类无面板的调用方发无人接收的 REFINE_PROGRESS。同时 onProgress
-    // 自身被传入会触发 provider 切到 stream:true，所以这里"不传 onProgress"也
-    // 顺带保住了非面板路径继续走老的非流式 JSON 接口，行为零变化。
-    const onProgress =
-      tabId != null
-        ? (ev: { stage: 'calling' | 'streaming'; partial?: string }) => {
-            postToTab(tabId, {
-              type: 'REFINE_PROGRESS',
-              payload: { historyId, stage: ev.stage, partial: ev.partial },
-            });
-          }
-        : undefined;
+    // 面板路径：把进度发到对应 tab 的 content script。
+    // popup / options 无 tab：用 runtime.sendMessage 广播给扩展页（谁正在 refine 谁消费）。
+    const onProgress = (ev: {
+      stage: 'calling' | 'streaming';
+      partial?: string;
+    }) => {
+      const payload = { historyId, stage: ev.stage, partial: ev.partial };
+      if (tabId != null) {
+        postToTab(tabId, { type: 'REFINE_PROGRESS', payload });
+        return;
+      }
+      chrome.runtime.sendMessage({ type: 'REFINE_PROGRESS', payload }, () => {
+        void chrome.runtime.lastError;
+      });
+    };
     const result = await refinePrompt({ settings, current, instruction, onProgress });
     if (!result.prompt) {
       return { ok: false, error: '模型返回了空提示词' };
