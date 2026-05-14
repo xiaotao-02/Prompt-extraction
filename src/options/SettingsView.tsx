@@ -278,22 +278,14 @@ export default function SettingsView({ registerSaveHandler, onDirtyChange }: Pro
   };
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-4">
       {savedAt && (
         <div className="rounded-xl border border-emerald-200 dark:border-emerald-500/30 bg-emerald-50/70 dark:bg-emerald-500/10 px-4 py-2 text-xs text-emerald-700 dark:text-emerald-300 flex items-center gap-2">
           <Check className="w-4 h-4" /> 设置已保存
         </div>
       )}
 
-      {/* 数据持久化：卸载/重装/换机后能拿回数据的核心保险（FSA 数据目录 + 手动导入导出） */}
-      <DataPersistence
-        onDataRestored={async () => {
-          const next = await getSettings();
-          setSettings(next);
-        }}
-      />
-
-      {/* 配置指南：去掉内置默认 API 后，引导用户自带 Key 完成配置 */}
+      {/* 配置指南：新用户引导放最前，配置完成后自然折叠 */}
       <SetupGuide settings={settings} applyConfig={applyConfig} />
 
       {/* 模型供应商 */}
@@ -314,16 +306,14 @@ export default function SettingsView({ registerSaveHandler, onDirtyChange }: Pro
                 onClick={() =>
                   setSettings({ ...settings, activeProvider: p.id as ProviderId })
                 }
-                className={`text-left p-3 rounded-xl border transition relative ${
+                className={`text-left px-2.5 py-2 rounded-xl border transition relative ${
                   active
                     ? 'border-violet-500 bg-violet-50 dark:bg-violet-500/10 ring-2 ring-violet-500/20'
                     : 'border-zinc-200 dark:border-zinc-800 hover:border-zinc-300 dark:hover:border-zinc-700'
                 }`}
+                title={p.description}
               >
-                <div className="text-sm font-medium">{p.label}</div>
-                <div className="text-[11px] text-zinc-500 mt-0.5 line-clamp-2">
-                  {p.description}
-                </div>
+                <div className="text-sm font-medium pr-5">{p.label}</div>
                 {active && (
                   <div className="absolute top-2 right-2 w-4 h-4 rounded-full bg-violet-500 flex items-center justify-center">
                     <Check className="w-2.5 h-2.5 text-white" />
@@ -520,8 +510,66 @@ export default function SettingsView({ registerSaveHandler, onDirtyChange }: Pro
         </div>
       </section>
 
-      {/* 策略版本：每一档 = 3 个组件维度（stylePromptSet / sampling / customJoin）的版本号组合。
-          底层模型见 src/lib/strategies.ts 的注释，这里只渲染。 */}
+      {/* 输出风格：紧跟供应商，形成"用什么模型 → 出什么格式"的连贯认知流 */}
+      <section className="card">
+        <h2 className="text-sm font-semibold mb-1">输出风格</h2>
+        <p className="text-xs text-zinc-500 mb-4">决定生成的提示词使用什么语言和格式</p>
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2">
+          {STYLE_OPTIONS.map((s) => {
+            const active = settings.outputStyle === s.value;
+            return (
+              <button
+                key={s.value}
+                onClick={() => setSettings({ ...settings, outputStyle: s.value })}
+                className={`text-left p-3 rounded-xl border transition ${
+                  active
+                    ? 'border-violet-500 bg-violet-50 dark:bg-violet-500/10'
+                    : 'border-zinc-200 dark:border-zinc-800 hover:border-zinc-300'
+                }`}
+              >
+                <div className="text-sm font-medium">{s.label}</div>
+                <div className="text-[11px] text-zinc-500 mt-0.5">{s.desc}</div>
+              </button>
+            );
+          })}
+        </div>
+
+        <div className="mt-5">
+          <label className="label">额外提示词（可选）</label>
+          <textarea
+            className="input min-h-[100px] resize-y leading-relaxed font-mono text-[13px]"
+            placeholder="例如：注重画面氛围与光影描写；输出不超过 100 字。&#10;可以多行输入，详细描述你想要的提示词风格、约束和示例。"
+            value={settings.customPromptTemplate}
+            onChange={(e) =>
+              setSettings({ ...settings, customPromptTemplate: e.target.value })
+            }
+          />
+          <p className="text-[11px] text-zinc-400 mt-1.5">
+            拼接位置由「策略版本」决定：高保真档把它放在最前面让模型优先遵守，经典档以"额外要求：…"形式追加到末尾。
+          </p>
+        </div>
+
+        <div className="mt-4 pt-4 border-t border-zinc-200 dark:border-zinc-800">
+          <label className="flex items-center gap-3 cursor-pointer select-none">
+            <input
+              type="checkbox"
+              checked={settings.saveHistory}
+              onChange={(e) =>
+                setSettings({ ...settings, saveHistory: e.target.checked })
+              }
+              className="w-4 h-4 accent-violet-500"
+            />
+            <div>
+              <div className="text-sm">保存历史记录</div>
+              <div className="text-xs text-zinc-500">
+                最近 300 条提取记录会保存在浏览器本地，可在「提示词库」中管理
+              </div>
+            </div>
+          </label>
+        </div>
+      </section>
+
+      {/* 策略版本：高级调优，频率低，放在输出风格之后 */}
       <section className="card">
         <h2 className="text-sm font-semibold mb-1">策略版本</h2>
         <p className="text-xs text-zinc-500 mb-4">
@@ -556,79 +604,13 @@ export default function SettingsView({ registerSaveHandler, onDirtyChange }: Pro
                   temperature {s.temperature} · max_tokens {s.maxTokens} ·{' '}
                   {s.customPosition === 'prepend' ? '自定义前置' : '自定义追加'}
                 </div>
-                {/* 组件版本指纹：让"选这档 = 选了 3 个组件版本"这件事在 UI 上一眼可见。
-                    两档之间只要有一个版本号不同，这一行就会差异化高亮可读。 */}
-                <div className="text-[10px] text-zinc-400 mt-0.5 font-mono">
-                  指令集@{s.components.stylePromptSet} · 采样@{s.components.sampling} · 拼接@{s.components.customJoin}
-                </div>
               </button>
             );
           })}
         </div>
       </section>
 
-      {/* 输出风格 */}
-      <section className="card">
-        <h2 className="text-sm font-semibold mb-1">输出风格</h2>
-        <p className="text-xs text-zinc-500 mb-4">决定生成的提示词使用什么语言和格式</p>
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2">
-          {STYLE_OPTIONS.map((s) => {
-            const active = settings.outputStyle === s.value;
-            return (
-              <button
-                key={s.value}
-                onClick={() => setSettings({ ...settings, outputStyle: s.value })}
-                className={`text-left p-3 rounded-xl border transition ${
-                  active
-                    ? 'border-violet-500 bg-violet-50 dark:bg-violet-500/10'
-                    : 'border-zinc-200 dark:border-zinc-800 hover:border-zinc-300'
-                }`}
-              >
-                <div className="text-sm font-medium">{s.label}</div>
-                <div className="text-[11px] text-zinc-500 mt-0.5">{s.desc}</div>
-              </button>
-            );
-          })}
-        </div>
-
-        <div className="mt-5">
-          <label className="label">额外提示词（可选）</label>
-          <textarea
-            className="input min-h-[200px] resize-y leading-relaxed font-mono text-[13px]"
-            placeholder="例如：注重画面氛围与光影描写；输出不超过 100 字。&#10;可以多行输入，详细描述你想要的提示词风格、约束和示例。"
-            value={settings.customPromptTemplate}
-            onChange={(e) =>
-              setSettings({ ...settings, customPromptTemplate: e.target.value })
-            }
-          />
-          <p className="text-[11px] text-zinc-400 mt-1.5">
-            拼接位置由「策略版本」决定：高保真档把它放在最前面让模型优先遵守，经典档以"额外要求：…"形式追加到末尾。
-          </p>
-        </div>
-      </section>
-
-      {/* 其他 */}
-      <section className="card">
-        <h2 className="text-sm font-semibold mb-3">其他</h2>
-        <label className="flex items-center gap-3 cursor-pointer select-none">
-          <input
-            type="checkbox"
-            checked={settings.saveHistory}
-            onChange={(e) =>
-              setSettings({ ...settings, saveHistory: e.target.checked })
-            }
-            className="w-4 h-4 accent-violet-500"
-          />
-          <div>
-            <div className="text-sm">保存历史记录</div>
-            <div className="text-xs text-zinc-500">
-              最近 300 条提取记录会保存在浏览器本地，可在「提示词库」中管理
-            </div>
-          </div>
-        </label>
-      </section>
-
-      {/* 测试 */}
+      {/* 联通性测试：所有配置完成后一键验证 */}
       <section className="card">
         <h2 className="text-sm font-semibold mb-1 flex items-center gap-2">
           <ImageIcon className="w-4 h-4 text-violet-500" /> 联通性测试
@@ -656,35 +638,24 @@ export default function SettingsView({ registerSaveHandler, onDirtyChange }: Pro
           )}
         </div>
         {testResult && (
-          <pre className="mt-3 text-xs whitespace-pre-wrap p-4 rounded-lg bg-zinc-50 dark:bg-zinc-800/50 max-h-[420px] overflow-auto leading-relaxed">
+          <pre className="mt-3 text-xs whitespace-pre-wrap p-4 rounded-lg bg-zinc-50 dark:bg-zinc-800/50 max-h-[200px] overflow-auto leading-relaxed">
             {testResult.msg}
           </pre>
         )}
       </section>
 
+      {/* 数据持久化：维护操作下沉到底部 */}
+      <DataPersistence
+        onDataRestored={async () => {
+          const next = await getSettings();
+          setSettings(next);
+        }}
+      />
+
       <UpdateSection />
 
-      <footer className="text-xs text-zinc-400 dark:text-zinc-500 py-6 space-y-2 leading-relaxed">
-        <div className="text-center">
-          数据仅保存在你的浏览器本地，不会上传到任何第三方服务器。
-        </div>
-        <div className="max-w-2xl mx-auto rounded-lg bg-zinc-50 dark:bg-zinc-900/40 border border-zinc-100 dark:border-zinc-800 p-3 space-y-1">
-          <div className="font-medium text-zinc-500 dark:text-zinc-400">关于数据丢失风险</div>
-          <ul className="list-disc pl-4 space-y-0.5">
-            <li>
-              <b>更新插件不会丢</b>：商店推送的版本更新、`npm run build` 重新加载，
-              chrome.storage 都会原样保留。
-            </li>
-            <li>
-              <b>只有这三种情况才会丢</b>：① 你在 chrome://extensions 主动点「移除」；
-              ② 扩展 ID 变了（不同安装来源并存）；③ 换电脑且没登录同一个 Google 账号。
-            </li>
-            <li>
-              <b>怎么彻底防丢</b>：在上面的「数据持久化」里挑一个数据目录 ——
-              即便插件被删，目录里的 JSON 文件还在；重装后选回去就能完整还原。
-            </li>
-          </ul>
-        </div>
+      <footer className="text-xs text-zinc-400 dark:text-zinc-500 py-4 text-center">
+        数据仅保存在你的浏览器本地，不会上传到任何第三方服务器。
       </footer>
     </div>
   );

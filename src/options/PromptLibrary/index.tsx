@@ -9,8 +9,6 @@ import {
   Download,
   Eraser,
   ArrowUpDown,
-  Sparkles,
-  Images,
   Layers,
   SlidersHorizontal,
   FolderTree as FolderTreeIcon,
@@ -46,7 +44,6 @@ import { FolderTree, type SelectedNodeId } from './FolderTree';
 import { ItemRow } from './ItemRow';
 import { ItemGridCard } from './ItemGridCard';
 import { ExpandedPanel } from './ExpandedPanel';
-import { StatCard } from './parts/StatCard';
 import { ViewToggle } from './parts/ViewToggle';
 import { FilterGroup } from './parts/FilterGroup';
 import { BulkActionBar } from './parts/BulkActionBar';
@@ -296,17 +293,6 @@ export default function PromptLibrary({ focusId, onConsumeFocus }: PromptLibrary
     const subtree = collectSubtreeIds(selectedNode as string);
     return list.filter((i) => i.folderId && subtree.has(i.folderId));
   }, [list, selectedNode, collectSubtreeIds]);
-
-  const stats = useMemo(() => {
-    const totalImages = nodeMatched.length;
-    const totalVersions = nodeMatched.reduce((sum, i) => sum + (i.versions?.length || 0), 0);
-    const pinnedCount = nodeMatched.filter((i) => i.pinned).length;
-    const aiRefined = nodeMatched.reduce(
-      (n, i) => n + (i.versions?.filter((v) => v.source === 'refined').length || 0),
-      0
-    );
-    return { totalImages, totalVersions, pinnedCount, aiRefined };
-  }, [nodeMatched]);
 
   const systemCounts = useMemo(
     () => ({
@@ -745,96 +731,41 @@ export default function PromptLibrary({ focusId, onConsumeFocus }: PromptLibrary
       )}
 
       <div className="flex-1 min-w-0 space-y-5">
-      {/* 当前节点面包屑 + 折叠侧栏按钮 */}
-      {(() => {
-        // 当前节点的图标 + 配色：跟下方 StatCard 用同一套 tone，保持视觉语言一致
-        const nodeTone =
-          selectedNode === SYSTEM_NODE.PINNED
-            ? {
-                bg: 'bg-amber-100 dark:bg-amber-500/15',
-                text: 'text-amber-600 dark:text-amber-300',
-              }
-            : selectedNode === SYSTEM_NODE.UNSORTED
-              ? {
-                  bg: 'bg-zinc-100 dark:bg-zinc-800',
-                  text: 'text-zinc-600 dark:text-zinc-300',
-                }
-              : {
-                  bg: 'bg-violet-100 dark:bg-violet-500/15',
-                  text: 'text-violet-600 dark:text-violet-300',
-                };
-        const NodeIcon =
-          selectedNode === SYSTEM_NODE.UNSORTED
-            ? Inbox
-            : selectedNode === SYSTEM_NODE.PINNED
-              ? Pin
-              : Layers;
-        return (
-          <section className="flex items-center gap-2">
-            <button
-              onClick={() => setShowSidebar((v) => !v)}
-              className="hidden md:inline-flex items-center justify-center w-8 h-8 rounded-lg border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 text-zinc-500 dark:text-zinc-400 hover:text-violet-600 dark:hover:text-violet-300 hover:border-violet-300 dark:hover:border-violet-500/40 transition"
-              title={showSidebar ? '隐藏目录侧栏' : '显示目录侧栏'}
-              aria-label={showSidebar ? '隐藏目录侧栏' : '显示目录侧栏'}
-            >
-              <FolderTreeIcon className="w-3.5 h-3.5" />
-            </button>
-            <div className="inline-flex items-center gap-2 pl-1.5 pr-2.5 py-1.5 rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 shadow-sm min-w-0">
-              <span
-                className={`inline-flex items-center justify-center w-7 h-7 rounded-lg flex-none ${nodeTone.bg} ${nodeTone.text}`}
-              >
-                <NodeIcon className="w-3.5 h-3.5" />
-              </span>
-              <span
-                className="text-sm font-semibold text-zinc-800 dark:text-zinc-100 truncate max-w-[320px]"
-                title={selectedNodeLabel}
-              >
-                {selectedNodeLabel}
-              </span>
-              <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-zinc-100 dark:bg-zinc-800 text-[11px] font-medium text-zinc-600 dark:text-zinc-300 tabular-nums flex-none">
-                <span className="text-zinc-900 dark:text-zinc-100">{nodeMatched.length}</span>
-                <span className="text-zinc-400 dark:text-zinc-500">条</span>
-              </span>
-            </div>
-          </section>
-        );
-      })()}
+      {/* 工具栏：面包屑 + 搜索 + 操作按钮 + 筛选 chips 合并为单层 */}
+      <section className="card !p-3 space-y-2.5">
+        <div className="flex items-center gap-2 flex-wrap">
+          {/* 侧栏折叠 */}
+          <button
+            onClick={() => setShowSidebar((v) => !v)}
+            className="hidden md:inline-flex items-center justify-center w-7 h-7 rounded-lg border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 text-zinc-500 dark:text-zinc-400 hover:text-violet-600 dark:hover:text-violet-300 hover:border-violet-300 dark:hover:border-violet-500/40 transition flex-none"
+            title={showSidebar ? '隐藏目录侧栏' : '显示目录侧栏'}
+            aria-label={showSidebar ? '隐藏目录侧栏' : '显示目录侧栏'}
+          >
+            <FolderTreeIcon className="w-3.5 h-3.5" />
+          </button>
 
-      {/* 顶部统计指标 */}
-      <section className="grid grid-cols-2 md:grid-cols-4 gap-3">
-        <StatCard
-          icon={<Images className="w-4 h-4" />}
-          label="图片记录"
-          value={stats.totalImages}
-          tone="violet"
-        />
-        <StatCard
-          icon={<Layers className="w-4 h-4" />}
-          label="提示词版本"
-          value={stats.totalVersions}
-          tone="indigo"
-        />
-        <StatCard
-          icon={<Pin className="w-4 h-4" />}
-          label="置顶收藏"
-          value={stats.pinnedCount}
-          tone="amber"
-        />
-        <StatCard
-          icon={<Sparkles className="w-4 h-4" />}
-          label="AI 调整生成"
-          value={stats.aiRefined}
-          tone="fuchsia"
-        />
-      </section>
+          {/* 当前节点标签 */}
+          {(() => {
+            const NodeIcon =
+              selectedNode === SYSTEM_NODE.UNSORTED
+                ? Inbox
+                : selectedNode === SYSTEM_NODE.PINNED
+                  ? Pin
+                  : Layers;
+            return (
+              <span className="inline-flex items-center gap-1.5 px-2 py-1 rounded-lg bg-zinc-100 dark:bg-zinc-800 text-xs font-medium text-zinc-700 dark:text-zinc-200 flex-none">
+                <NodeIcon className="w-3 h-3 text-zinc-500 dark:text-zinc-400" />
+                <span className="truncate max-w-[200px]" title={selectedNodeLabel}>{selectedNodeLabel}</span>
+                <span className="text-zinc-400 dark:text-zinc-500 tabular-nums">{nodeMatched.length}</span>
+              </span>
+            );
+          })()}
 
-      {/* 工具栏：搜索 + 筛选 chips + 视图切换 */}
-      <section className="card !p-4 space-y-3">
-        <div className="flex flex-col lg:flex-row lg:items-center gap-3">
-          <div className="relative flex-1 min-w-0">
-            <Search className="w-4 h-4 text-zinc-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+          {/* 搜索框 */}
+          <div className="relative flex-1 min-w-[180px]">
+            <Search className="w-3.5 h-3.5 text-zinc-400 absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
             <input
-              className="input !pl-9 !py-2.5"
+              className="input !pl-8 !py-1.5 !text-xs"
               value={keyword}
               onChange={(e) => setKeyword(e.target.value)}
               placeholder="搜索 prompt / 备注 / 页面标题 / URL…"
@@ -842,45 +773,46 @@ export default function PromptLibrary({ focusId, onConsumeFocus }: PromptLibrary
             {keyword && (
               <button
                 onClick={() => setKeyword('')}
-                className="absolute right-2 top-1/2 -translate-y-1/2 p-1 rounded text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-200"
+                className="absolute right-2 top-1/2 -translate-y-1/2 p-0.5 rounded text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-200"
               >
-                <X className="w-3.5 h-3.5" />
+                <X className="w-3 h-3" />
               </button>
             )}
           </div>
 
-          <div className="flex items-center gap-2 flex-none">
+          {/* 操作按钮组 */}
+          <div className="flex items-center gap-1.5 flex-none">
             <ViewToggle view={view} onChange={setView} />
-            <div className="h-7 w-px bg-zinc-200 dark:bg-zinc-700" />
+            <div className="h-5 w-px bg-zinc-200 dark:bg-zinc-700" />
             <button
               onClick={onCopyAllPrompts}
               disabled={list.length === 0}
-              className="btn-ghost text-xs !px-2.5 !py-1.5 disabled:opacity-50"
+              className="btn-ghost text-[11px] !px-2 !py-1 disabled:opacity-50"
               title="复制（选中或全部筛选结果）的提示词"
             >
-              <Copy className="w-3.5 h-3.5" /> 复制
+              <Copy className="w-3 h-3" /> 复制
             </button>
             <button
               onClick={onExport}
               disabled={list.length === 0}
-              className="btn-ghost text-xs !px-2.5 !py-1.5 disabled:opacity-50"
+              className="btn-ghost text-[11px] !px-2 !py-1 disabled:opacity-50"
               title="导出选中或全部记录为 JSON"
             >
-              <Download className="w-3.5 h-3.5" /> 导出
+              <Download className="w-3 h-3" /> 导出
             </button>
             <button
               onClick={onClearAll}
               disabled={list.length === 0}
-              className="inline-flex items-center gap-1 text-xs px-2.5 py-1.5 rounded-lg border border-zinc-200 dark:border-zinc-800 hover:border-rose-300 dark:hover:border-rose-500/40 hover:text-rose-500 disabled:opacity-50 transition"
+              className="inline-flex items-center gap-1 text-[11px] px-2 py-1 rounded-lg border border-zinc-200 dark:border-zinc-800 hover:border-rose-300 dark:hover:border-rose-500/40 hover:text-rose-500 disabled:opacity-50 transition"
               title="清空全部记录"
             >
-              <Eraser className="w-3.5 h-3.5" /> 清空
+              <Eraser className="w-3 h-3" /> 清空
             </button>
           </div>
         </div>
 
         {/* 筛选 chips */}
-        <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
           <FilterGroup
             icon={<SlidersHorizontal className="w-3.5 h-3.5" />}
             label="供应商"
@@ -985,10 +917,10 @@ export default function PromptLibrary({ focusId, onConsumeFocus }: PromptLibrary
               <li
                 key={item.id}
                 data-history-id={item.id}
-                className={`card !p-0 overflow-hidden transition-all duration-200 ${
+                className={`card !p-0 transition-all duration-200 ${
                   expanded
                     ? 'ring-2 ring-violet-500/40 shadow-lg shadow-violet-500/5'
-                    : 'hover:shadow-md hover:-translate-y-px'
+                    : 'overflow-hidden hover:shadow-md hover:-translate-y-px'
                 } ${
                   item.pinned
                     ? 'border-l-4 !border-l-amber-400 dark:!border-l-amber-500/60'

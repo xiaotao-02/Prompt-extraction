@@ -76,14 +76,13 @@ export function ExpandedPanel({
 
   return (
     <div className="border-t border-zinc-200 dark:border-zinc-800 bg-zinc-50/60 dark:bg-zinc-950/30 relative">
-      {/* 版本侧边栏：浮层覆盖，不影响编辑区宽度 */}
+      {/* 版本侧边栏：向左挂出卡片外，不遮挡编辑区 */}
       <div
-        className="absolute left-0 top-0 bottom-0 z-10 overflow-hidden border-r border-zinc-200 dark:border-zinc-700 transition-all duration-300 ease-[cubic-bezier(.2,.9,.3,1.2)]"
+        className="absolute right-full top-0 bottom-0 z-10 overflow-hidden rounded-l-2xl transition-all duration-300 ease-[cubic-bezier(.2,.9,.3,1)]"
         style={{
           width: versionsOpen && versionCount > 0 ? 300 : 0,
           opacity: versionsOpen && versionCount > 0 ? 1 : 0,
           pointerEvents: versionsOpen && versionCount > 0 ? 'auto' : 'none',
-          borderRightColor: versionsOpen && versionCount > 0 ? undefined : 'transparent',
         }}
       >
         <div className="h-full" style={{ minWidth: 300 }}>

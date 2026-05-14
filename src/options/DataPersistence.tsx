@@ -490,21 +490,11 @@ export default function DataPersistence({ onDataRestored }: DataPersistenceProps
           ) : (
             // 未配置目录态：用橙色警告横幅，专门防"重装用户先填 Key 把旧备份盖了"
             <div className="space-y-3">
-              <div className="rounded-lg border-2 border-amber-300 dark:border-amber-500/50 bg-amber-50 dark:bg-amber-500/10 px-3.5 py-3 text-[12px] text-amber-800 dark:text-amber-200 flex gap-2.5">
+              <div className="rounded-lg border-2 border-amber-300 dark:border-amber-500/50 bg-amber-50 dark:bg-amber-500/10 px-3.5 py-2.5 text-[12px] text-amber-800 dark:text-amber-200 flex gap-2.5">
                 <AlertTriangle className="w-4 h-4 flex-none mt-0.5 text-amber-600 dark:text-amber-300" />
-                <div className="space-y-1.5 leading-relaxed">
-                  <div className="font-semibold">如果你之前用过本插件 + 配过数据目录，请先做这一步！</div>
-                  <div>
-                    点下方<b>「选择数据目录…」</b>选回原来的那个文件夹（例如{' '}
-                    <code className="px-1 rounded bg-amber-100 dark:bg-amber-500/20 text-[11px]">
-                      D:\我的提示词\
-                    </code>
-                    ）。如果目录里有旧备份，会弹窗让你选「<b>恢复备份</b>」即可全量还原 API
-                    Key + 历史 + 提示词库。
-                  </div>
-                  <div className="text-[11px] text-amber-700/80 dark:text-amber-300/80">
-                    · 已加固：先恢复再绑定不会丢数据；自动同步会拒绝把空数据覆盖到更丰富的旧备份。
-                  </div>
+                <div className="leading-relaxed">
+                  <span className="font-semibold">之前配过数据目录？</span>
+                  点下方<b>「选择数据目录…」</b>选回原来的文件夹，有旧备份时会弹窗让你一键恢复。
                 </div>
               </div>
               <p className="text-[11px] text-zinc-500 leading-relaxed">

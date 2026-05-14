@@ -2,7 +2,7 @@
  * 提示词「策略档位」—— 组件 + 版本两层模型的**重对象层 + 解析层**。
  *
  * ──────────────── 文件分工 ────────────────
- * 这一层的内容**重**：4 套 OutputStyle 指令文本（每套几 KB 中英文 prompt）、
+ * 这一层的内容**重**：3 套 OutputStyle 指令文本（每套几 KB 中英文 prompt）、
  * 采样参数注册表、自定义模板拼接策略注册表，加起来 ~26KB；外加把组件版本
  * 引用展开成扁平 ResolvedStrategy 的解析函数。
  *
@@ -99,20 +99,7 @@ const STYLE_PROMPT_SET_V010: Record<OutputStyle, string> = {
     'Generate a Midjourney v6 style English prompt for this image. Use a vivid descriptive sentence with comma-separated style modifiers, then end with appropriate parameters like --ar 16:9 --style raw if relevant. Output ONLY the prompt, no explanation, no markdown.',
 };
 
-// v0.1.1：在 v0.1.0 基础上加 3 条硬约束（覆盖率清单 + 去模板句 + 去主观词），采样不变。
-// 目的：让 "v0.1.6 策略" 这一档在同温度同 token 上限下输出更紧、更有结构、更少水词。
-const STYLE_PROMPT_SET_V011: Record<OutputStyle, string> = {
-  'natural-zh':
-    '请用自然流畅的中文段落详细描述这张图片，作为 AI 绘图工具的高质量提示词。必须按"主体 → 主体细节 → 姿态 → 服饰 → 环境 → 光照 → 风格"的顺序逐项展开，少一项都算违规。禁止以"这是一张/画面中/总而言之/总体而言"等模板句开头或收尾。禁止"美丽的/梦幻般的/令人惊叹的"等主观抽象修饰，使用具体名词 + 具体形容。只输出提示词正文，不要任何前缀、解释或 Markdown。',
-  'natural-en':
-    'Describe this image as a high-quality prompt for AI image generators. You MUST cover, in order: subject → subject details → pose → clothing → setting → lighting → style. Missing any is a violation. Do NOT open or close with template phrases like "This is an image of...", "Overall,...", "In summary,...". Do NOT use subjective fillers like "beautiful, dreamy, breathtaking" — use concrete nouns and concrete adjectives. Output ONLY the prompt body — no prefix, no explanation, no markdown.',
-  'sd-tags':
-    'Generate a Stable Diffusion / Danbooru-style English tag prompt for this image. Comma-separated lowercase short tags, single line, ordered: quality boosters → subject → subject features → pose → clothing → setting → lighting → style. Tags must describe elements actually visible in the image. No subjective fillers ("beautiful", "dreamy"). No negative-prompt tags ("blurry", "low quality"). Output ONLY the tag list, single line, no explanation.',
-  midjourney:
-    'Generate a Midjourney v6 style English prompt for this image. A single dense descriptive sentence in the order subject → subject details → pose → setting → lighting → style, followed by comma-separated style modifiers, then parameters like --ar 16:9 --style raw if relevant. No subjective fillers, no template phrases ("This image shows..."). Output ONLY the prompt, no explanation, no markdown.',
-};
-
-// v0.2.2：直接从 v0.1.0 演化的"v0.1.0 增强版"。设计动机不依赖 v0.1.1 / v0.2.x，
+// v0.2.2：直接从 v0.1.0 演化的"v0.1.0 增强版"。设计动机不依赖 v0.2.x，
 // 只针对 v0.1.0 本身实测出来的 4 类输出问题做最小手术：
 //
 //   (A) v0.1.0 把"画面 / 风格 / 构图 / 光线 / 色调 / 氛围 / 主体细节"7 个抽象方面
@@ -156,6 +143,34 @@ const STYLE_PROMPT_SET_V022: Record<OutputStyle, string> = {
     'Generate a Midjourney v6 prompt for this image. Output a single English line. Begin with one dense descriptive sentence whose internal order follows: art style / medium → subject → subject features → expression → pose → clothing → accessories → setting → foreground / midground / background → lighting → color palette → camera & lens. Then append comma-separated style modifiers (e.g. "cinematic lighting, shallow depth of field, soft bokeh, 35mm film grain"). Finally append Midjourney parameters where relevant: --ar matching the image aspect ratio, --style raw, --stylize 100. Specificity: use concrete color names ("navy, rust orange, fog gray") over palette words ("warm tones"); use precise lighting ("45-degree key light, soft, warm 4500K, subtle rim light") over generic phrases ("natural lighting"); prefer diffusion-friendly vocabulary ("cinematic lighting, rim light, shallow depth of field, soft bokeh, overcast diffuse light"). Hard rules: (a) describe only elements actually visible — no imagined motive, no narrative, no off-frame guesses, no emotional speculation; (b) no subjective fillers ("beautiful, dreamy, breathtaking"); (c) no template openers / closers ("This image shows...", "Overall,..."); (d) never print dimension labels ("Lighting:", "Subject:") into the output; (e) if a dimension has nothing visible, omit it silently — no padding, no "none". Output ONLY the prompt line, no prefix, no explanation, no Markdown.',
 };
 
+// v0.3.0：针对 GPT Image 2 / Nano Banana 等新一代文生图模型优化的指令集。
+//
+// 与 v0.2.2 的关键差异：
+//   (A) 维度从 10 个合并为 8 个（外貌+表情合入主体，持物合入服饰），减少
+//       形容词堆积——Nano Banana 实测 ≤5 个形容词首次可用率 73%，堆叠则降到 41%。
+//   (B) 新增"摄影技术参数"维度（相机型号/镜头焦距/光圈/景深/胶片色彩科学），
+//       GPT Image 2 官方 cookbook 和 Nano Banana prompt guide 均确认这类参数对
+//       画面质感还原有显著影响。
+//   (C) 强制用"具名风格标签"（如 cinematic photography / cel-shaded anime /
+//       Studio Ghibli watercolor）打头，替代 v0.2.2 的泛泛"画风/媒介"——目标
+//       模型对这类锚定词的 attention 响应远强于笼统描述。
+//   (D) 全篇只用肯定句式：Nano Banana 实测否定句式（"no X" / "without Y"）
+//       经常被模型忽略甚至反向理解，肯定表述的跟随性更稳定。
+//   (E) 形容词密度硬限：全篇 ≤8 个，每维度 ≤2 个。两个目标模型同时满足多个
+//       修饰词时会互相冲突，精简后各维度的视觉信号更清晰。
+//   (F) 要求把"图中视觉权重最大的元素"排在最前——适配 Nano Banana 的词序权重
+//       规则（最先出现的内容获得最多视觉注意力）。
+const STYLE_PROMPT_SET_V030: Record<OutputStyle, string> = {
+  'natural-zh':
+    '请把这张图片改写成一段可直接喂给 GPT Image 2 / Nano Banana / Flux 的中文提示词。写法要求：用完整句子而非关键词堆叠；把图中视觉权重最大的元素放在最前面。请按以下 8 个维度依次输出，每个维度一两句话，用逗号自然衔接成段：(1) 画风与视觉风格——用具名风格标签（如"电影摄影风格""赛璐璐动画""吉卜力水彩""社论时尚摄影"），若是写实照片请明确写"写实摄影"；(2) 主体——类型与核心外貌（年龄段/性别/发型发色/肤色，仅写图中可辨认的）；(3) 动作、姿态、表情、视线方向；(4) 服饰与配饰——自上而下逐层，每层写颜色+质料+剪裁；(5) 场景环境——前景/中景/背景元素；(6) 光照——方向、色温、质感（如"左前45°主光，柔和，暖白4500K，轻微边缘光"）；(7) 色彩搭配——主色+次色，必须用具体色名（"藏青/铁锈橙/雾灰"）；(8) 摄影技术参数——推断并给出最接近的相机型号、镜头焦距与光圈、景深描述、胶片或色彩科学（如"Canon EOS R5, 85mm f/1.4, 浅景深柔和散景, Kodak Portra 400 胶片质感"，即使是插画/动画也给出视觉等价的镜头语言）。硬约束：(a) 维度名禁止打印进正文；(b) 只描述图中真实可见的元素，禁止脑补动机/剧情/镜头外内容；(c) 禁用"美丽的/梦幻般的/唯美/令人惊叹的"等主观水词；(d) 禁止模板句开收尾；(e) 空维度静默跳过；(f) 全篇只用肯定句式，禁止"没有/不含/without"等否定表述；(g) 全篇修饰性形容词总数控制在 8 个以内，每个维度最多 2 个。输出格式：单段中文正文，不分行、不分点、不要 Markdown。',
+  'natural-en':
+    'Rewrite this image as a single dense English paragraph that can be fed directly to GPT Image 2, Nano Banana, or Flux as a prompt. Use complete sentences, not keyword lists; lead with the most visually dominant element. Cover these 8 dimensions in order, one or two sentences each, joined by commas into a flowing paragraph: (1) Art style / visual style — use named style anchors (e.g. "cinematic photography," "cel-shaded anime," "Studio Ghibli watercolor," "editorial fashion photography"); for photorealistic images, explicitly write "photorealistic photography"; (2) Subject — type and key appearance (age range, gender, hairstyle & color, skin tone — only what is visibly identifiable); (3) Action, pose, expression, and gaze direction; (4) Clothing and accessories — top-to-bottom, each layer\'s color + material + cut; (5) Setting — foreground, midground, background elements; (6) Lighting — direction, color temperature, quality (e.g. "45-degree key light from front-left, soft, warm 4500K, subtle rim light"); (7) Color palette — primary + secondary colors using concrete color names ("navy, rust orange, fog gray"); (8) Camera and technical specs — infer and provide the closest camera body, lens focal length and aperture, depth of field description, and film stock or color science (e.g. "shot on Canon EOS R5, 85mm f/1.4, shallow depth of field with soft bokeh, Kodak Portra 400 film grain"; even for illustrations or anime, provide visually equivalent lens language). Hard rules: (a) NEVER print dimension labels; (b) describe only visible elements — no speculation about motive, narrative, or off-frame content; (c) no subjective fillers ("beautiful, dreamy, breathtaking, stunning"); (d) no template openers or closers; (e) skip empty dimensions silently; (f) use only affirmative descriptions — never use "no," "without," "lacks," or other negations; (g) limit decorative adjectives to 8 total across the paragraph, at most 2 per dimension. Output: ONE dense English paragraph, no line breaks, no bullets, no Markdown.',
+  'sd-tags':
+    'Generate a Stable Diffusion tag prompt optimized for recreation accuracy. Output a single line of comma-separated lowercase English tags. Structure: named style anchor (e.g. "cinematic photography," "cel-shaded," "oil painting," "studio ghibli") → quality boosters → subject type and key features → expression and gaze → pose → clothing and accessories (color + material per item) → setting and background → lighting (direction + quality + color temperature) → color palette (concrete color names) → camera and lens specs (e.g. "canon eos r5," "85mm," "f1.4," "shallow depth of field," "soft bokeh," "kodak portra 400"). For photorealistic images, always include "photorealistic" as a tag. Hard rules: (a) only describe elements actually visible; (b) no subjective fillers ("beautiful," "dreamy"); (c) no negative-prompt tags ("blurry," "low quality"); (d) no negation tags ("no background," "without"); (e) skip categories with nothing visible; (f) limit total tags to 30-40 for focus; (g) lead with the most visually important element. Output ONLY the tag line, single line, no explanation.',
+  midjourney:
+    'Generate a Midjourney v6 prompt optimized for faithful image recreation. Output a single English line. Begin with a named style anchor (e.g. "cinematic photography," "editorial fashion," "Studio Ghibli watercolor," "cel-shaded anime"). Then one dense descriptive sentence covering in order: subject and key features → expression and gaze → pose → clothing and accessories → setting → lighting (direction + color temperature + quality) → color palette (concrete color names). Then append a camera/lens clause (e.g. "shot on Canon EOS R5, 85mm f/1.4, shallow depth of field, Kodak Portra 400 film grain"). Then append comma-separated style modifiers. Finally append Midjourney parameters: --ar matching the image aspect ratio, --style raw, --stylize 100. For photorealistic images, include "photorealistic" in the descriptive sentence. Hard rules: (a) describe only visible elements; (b) no subjective fillers ("beautiful, dreamy, breathtaking"); (c) no template phrases; (d) no dimension labels; (e) use only affirmative language, never negations; (f) skip invisible dimensions silently; (g) limit adjectives to 8 total. Output ONLY the prompt line, no explanation, no Markdown.',
+};
+
 /**
  * stylePromptSet 组件的版本注册表。键是版本号，值是该版本下完整的 4 套指令。
  *
@@ -166,8 +181,8 @@ const STYLE_PROMPT_SET_V022: Record<OutputStyle, string> = {
  */
 export const STYLE_PROMPT_SETS: Record<StylePromptSetVersion, Record<OutputStyle, string>> = {
   'v0.1.0': STYLE_PROMPT_SET_V010,
-  'v0.1.1': STYLE_PROMPT_SET_V011,
   'v0.2.2': STYLE_PROMPT_SET_V022,
+  'v0.3.0': STYLE_PROMPT_SET_V030,
 };
 
 // ----- sampling 各版本 -----
@@ -200,6 +215,13 @@ export const SAMPLING_PROFILES: Record<SamplingVersion, SamplingProfile> = {
   //   线时经常把末段的"画风 / 镜头"截掉。加 25% 余量足够覆盖绝大多数图，又不
   //   会显著拖慢响应。
   'v0.2.2': { temperature: 0.3, maxTokens: 1280 },
+  // v0.3.0：从 v0.2.2 的 (0.3, 1280) 做一步调整。
+  // - 温度保持 0.3 不变：v0.2.2 验证过 0.3 在维度清单下稳定性好，继续沿用。
+  // - maxTokens 1280 → 1536：v0.3.0 的完整句子格式天然比标签格式更长，且
+  //   新增了"摄影技术参数"维度（相机/镜头/光圈/景深/胶片），实测 8 维度的
+  //   中文完整句子展开经常推到 1200~1400 token，1280 截断风险高，1536 给
+  //   足 20% 余量。
+  'v0.3.0': { temperature: 0.3, maxTokens: 1536 },
 };
 
 // ----- customJoin 各版本 -----
@@ -213,6 +235,11 @@ export const CUSTOM_JOINS: Record<CustomJoinVersion, CustomJoinPosition> = {
   // 完了画风 / 镜头维度，再回头看到"按吉卜力"已经晚了，权重低、跟随性差。
   // prepend 让用户偏好先入上下文，10 维度的填充顺着这个偏好走，跟随性显著提升。
   'v0.2.2': 'prepend',
+  // v0.3.0：沿用 v0.2.2 的 prepend。原因同 v0.2.2 注释：用户偏好先入上下文，
+  // 后续维度填充顺着偏好走，跟随性更好。对于 GPT Image 2 / Nano Banana 的
+  // 使用场景尤其重要——用户可能写"吉卜力风格"或"赛博朋克"，prepend 保证
+  // 风格锚定词出现在 attention 最强的头部位置。
+  'v0.3.0': 'prepend',
 };
 
 // ============================================================
@@ -282,7 +309,7 @@ export function resolveStrategy(id: StrategyId): ResolvedStrategy {
  * 安全地取出策略对象。
  *
  * - 传 undefined（老 settings 没有 promptStrategy 字段）→ 走默认
- * - 传一个未来才存在 / 拼错 / 已下线（如老用户存的 'fidelity'）的 id → 也回退到
+ * - 传一个未来才存在 / 拼错 / 已下线（如老用户存的 'v010' / 'v016'）的 id → 也回退到
  *   默认，避免「升级后切策略找不到字段」崩溃。
  *
  * 返回的是已 resolve 完毕的扁平 ResolvedStrategy，调用方读 stylePrompts /

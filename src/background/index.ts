@@ -194,27 +194,39 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           return;
         }
 
-        const imageUrl = item.imageUrl;
-        const isHttpImage = /^https?:/i.test(imageUrl);
+        const pageUrl = item.pageUrl;
+        const isHttpPage = /^https?:/i.test(pageUrl);
 
         let targetId: number | undefined;
         let targetWindowId: number | undefined;
 
-        if (isHttpImage) {
-          // 先打开原图链接，让用户可以对照原图编辑提示词
-          const tab = await chrome.tabs.create({ url: imageUrl, active: true });
-          if (!tab.id) {
-            sendResponse({ ok: false, error: '打开原图失败' });
-            return;
+        if (isHttpPage) {
+          // 优先复用已经打开的来源页 tab，避免重复开新 tab
+          const existing = await findTabByUrl(pageUrl);
+          if (existing?.id) {
+            targetId = existing.id;
+            targetWindowId = existing.windowId ?? undefined;
+            try {
+              await chrome.tabs.update(targetId, { active: true });
+              if (existing.windowId != null) {
+                await chrome.windows.update(existing.windowId, { focused: true });
+              }
+            } catch { /* ignore */ }
+          } else {
+            const tab = await chrome.tabs.create({ url: pageUrl, active: true });
+            if (!tab.id) {
+              sendResponse({ ok: false, error: '打开来源页失败' });
+              return;
+            }
+            targetId = tab.id;
+            targetWindowId = tab.windowId;
+            if (tab.windowId != null) {
+              try { await chrome.windows.update(tab.windowId, { focused: true }); } catch { /* ignore */ }
+            }
+            await waitForTabComplete(targetId);
           }
-          targetId = tab.id;
-          targetWindowId = tab.windowId;
-          if (tab.windowId != null) {
-            try { await chrome.windows.update(tab.windowId, { focused: true }); } catch { /* ignore */ }
-          }
-          await waitForTabComplete(targetId);
         } else {
-          // imageUrl 是 data: URL，退回到原逻辑：找一个可注入的网页标签页
+          // pageUrl 为空或非 http(s)，退回到原逻辑：找一个可注入的网页标签页
           const target = await pickPanelTargetTab();
           if (!target?.id) {
             sendResponse({
@@ -248,7 +260,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true;
   }
   if (message?.type === 'EXTRACT_PROMPT') {
-    const { imageUrl, pageUrl, pageTitle, requestId } = message.payload || {};
+    const { imageUrl, pageUrl, pageTitle, requestId, strategyOverride } = message.payload || {};
     const tabId = sender.tab?.id;
     if (!tabId || !imageUrl) {
       sendResponse({ ok: false, error: 'invalid params' });
@@ -260,6 +272,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       pageUrl: pageUrl || sender.tab?.url || '',
       pageTitle: pageTitle || sender.tab?.title || '',
       requestId,
+      strategyOverride,
     });
     sendResponse({ ok: true });
     return true;
@@ -273,8 +286,9 @@ async function runExtraction(params: {
   pageUrl: string;
   pageTitle: string;
   requestId?: string;
+  strategyOverride?: import('@/lib/strategies-meta').StrategyId;
 }): Promise<void> {
-  const { tabId, imageUrl, pageUrl, pageTitle } = params;
+  const { tabId, imageUrl, pageUrl, pageTitle, strategyOverride } = params;
   const requestId = params.requestId || crypto.randomUUID();
 
   // 立刻并行启动三件耗时的事：
@@ -316,7 +330,7 @@ async function runExtraction(params: {
         type: 'EXTRACT_PROGRESS',
         payload: {
           requestId,
-          strategy: settings.promptStrategy,
+          strategy: strategyOverride ?? settings.promptStrategy,
           provider: activeProvider,
           model: activeModel,
         },
@@ -347,7 +361,10 @@ async function runExtraction(params: {
   }, 80);
 
   try {
-    const [settings, prefetched] = await Promise.all([settingsPromise, imagePromise]);
+    const [rawSettings, prefetched] = await Promise.all([settingsPromise, imagePromise]);
+    const settings = strategyOverride
+      ? { ...rawSettings, promptStrategy: strategyOverride }
+      : rawSettings;
     const result = await extractPrompt({
       imageUrl,
       settings,
@@ -538,6 +555,39 @@ function postToTab(tabId: number, message: RuntimeMessage): void {
     });
   } catch (err) {
     console.warn('[PromptExtracto] postToTab threw synchronously', err);
+  }
+}
+
+/**
+ * 在所有已打开 tab 中找到 URL 匹配的那个（忽略 hash/fragment）。
+ * 优先匹配 active tab，其次按 lastAccessed 取最近的。
+ */
+async function findTabByUrl(targetUrl: string): Promise<chrome.tabs.Tab | null> {
+  try {
+    const urlObj = new URL(targetUrl);
+    // 构造不含 hash 的 origin + pathname + search 用于比对
+    const canonical = urlObj.origin + urlObj.pathname + urlObj.search;
+    const all = await chrome.tabs.query({});
+    const matches = all.filter((t) => {
+      if (!t.url) return false;
+      try {
+        const u = new URL(t.url);
+        return (u.origin + u.pathname + u.search) === canonical;
+      } catch { return false; }
+    });
+    if (matches.length === 0) return null;
+    // 优先返回 active 的
+    const active = matches.find((t) => t.active);
+    if (active) return active;
+    // 否则按 lastAccessed 排序取最近的
+    matches.sort((a, b) => {
+      const la = (a as chrome.tabs.Tab & { lastAccessed?: number }).lastAccessed || 0;
+      const lb = (b as chrome.tabs.Tab & { lastAccessed?: number }).lastAccessed || 0;
+      return lb - la;
+    });
+    return matches[0];
+  } catch {
+    return null;
   }
 }
 

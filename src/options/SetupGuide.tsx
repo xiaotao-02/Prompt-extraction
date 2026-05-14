@@ -8,10 +8,9 @@ import {
   ClipboardCopy,
   ClipboardCheck,
   ClipboardPaste,
-  ExternalLink,
   Sparkles,
 } from 'lucide-react';
-import { PROVIDER_LIST, PROVIDERS } from '@/lib/providers';
+import { PROVIDERS } from '@/lib/providers';
 import { importFromText } from '@/lib/configImport';
 import type { AppSettings } from '@/lib/types';
 
@@ -159,9 +158,7 @@ export default function SetupGuide({ settings, applyConfig }: Props) {
             </h3>
             <ol className="space-y-2 text-xs text-zinc-600 dark:text-zinc-300 leading-relaxed">
               <Step n={1}>
-                在下方「模型供应商」中挑选一家 provider —— 已内置 OpenAI / Claude / Gemini /
-                智谱 / 通义 / 硅基流动 / DeepSeek / Kimi / 豆包 / Step / MiniMax / 零一 / 千帆 /
-                OpenRouter / Grok / Mistral / Groq / Together / Fireworks 等，或选「自定义」接入任意 OpenAI 兼容端点。
+                在下方「模型供应商」中挑选一家 provider，或选「自定义」接入任意 OpenAI 兼容端点。
               </Step>
               <Step n={2}>
                 点击该 provider 卡片旁的「去申请」链接，在官网创建 API Key 并复制。
@@ -174,27 +171,9 @@ export default function SetupGuide({ settings, applyConfig }: Props) {
               </Step>
             </ol>
 
-            <div className="mt-3 grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-2">
-              {PROVIDER_LIST.filter((p) => p.docsUrl).map((p) => (
-                <a
-                  key={p.id}
-                  href={p.docsUrl}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="group flex items-center justify-between gap-2 px-2.5 py-1.5 rounded-lg border border-zinc-200 dark:border-zinc-700 bg-white/70 dark:bg-zinc-900/60 hover:border-violet-400 hover:text-violet-600 dark:hover:text-violet-300 text-[11px] transition"
-                  title={`去 ${p.label} 官网申请 API Key`}
-                >
-                  <span className="truncate">{p.label}</span>
-                  <ExternalLink className="w-3 h-3 flex-none text-zinc-400 group-hover:text-violet-500" />
-                </a>
-              ))}
-            </div>
-
             <p className="mt-3 text-[11px] text-zinc-500 leading-snug">
               · 推荐新手优先选「智谱 GLM」的 <code className="font-mono">glm-4v-flash</code>
-              ，国内可直连且有免费额度。<br />
-              · API Key 只保存在你的浏览器（通过 <code className="font-mono">chrome.storage.sync</code>
-              ），插件不会上报给作者或任何第三方服务器。
+              ，国内可直连且有免费额度。
             </p>
           </div>
 
@@ -226,24 +205,9 @@ export default function SetupGuide({ settings, applyConfig }: Props) {
 
             <textarea
               className="input min-h-[120px] font-mono text-[12px] resize-y leading-relaxed"
-              placeholder={`支持直接粘 curl 命令（厂商文档复制），或粘 JSON 配置：
-
-▸ curl 命令（OpenAI / Anthropic / Gemini / DeepSeek / 智谱 等官方文档示例都识别）：
-curl https://api.openai.com/v1/chat/completions \\
-  -H "Authorization: Bearer sk-..." -H "Content-Type: application/json" \\
-  -d '{"model":"gpt-4o-mini","messages":[...]}'
-
-▸ JSON · 单 provider 片段（字段名宽松：apiKey / api_key / key / token、baseUrl / endpoint / url 都识别）：
-{ "provider": "deepseek", "apiKey": "sk-...", "baseUrl": "https://api.deepseek.com/v1", "model": "deepseek-chat" }
-
-▸ JSON · 只给 Key + url 也可以（自动按域名识别厂商，不知道就归到「自定义」）：
-{ "key": "sk-...", "url": "https://api.moonshot.cn/v1" }
-
-▸ JSON · 多 provider 整体（兼容 Cherry Studio / NextChat 等导出）：
-{ "activeProvider": "openai", "providers": { "openai": { ... }, "kimi": { ... } } }
-
-▸ JSON · NewAPI / OneAPI「渠道连接」信息（自动按站点识别）：
-{ "_type": "newapi_channel_conn", "key": "sk-...", "url": "https://your-newapi.example.com" }`}
+              placeholder={`支持粘贴 curl 命令或 JSON 配置，自动识别厂商和 API Key。
+示例：curl https://api.openai.com/v1/... -H "Authorization: Bearer sk-..."
+或：{ "provider": "deepseek", "apiKey": "sk-...", "model": "deepseek-chat" }`}
               value={importText}
               onChange={(e) => {
                 setImportText(e.target.value);

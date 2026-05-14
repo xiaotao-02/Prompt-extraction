@@ -509,6 +509,54 @@ export const STYLE = `
   flex-wrap: wrap;
 }
 
+/* 策略选择器：紧凑的下拉框，和 meta-row 里的 link-btn 视觉一致。 */
+.strategy-select {
+  appearance: none;
+  -webkit-appearance: none;
+  border: 1px solid rgba(99,102,241,0.25);
+  background: rgba(99,102,241,0.06);
+  color: #4f46e5;
+  font-size: 11px;
+  font-weight: 500;
+  font-family: inherit;
+  padding: 3px 22px 3px 8px;
+  border-radius: 6px;
+  cursor: pointer;
+  outline: none;
+  transition: background .12s, border-color .15s, box-shadow .15s;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' fill='none'%3E%3Cpath d='M1 1l4 4 4-4' stroke='%234f46e5' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 6px center;
+  max-width: 150px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.strategy-select:hover {
+  background-color: rgba(99,102,241,0.12);
+  border-color: rgba(99,102,241,0.4);
+}
+.strategy-select:focus {
+  border-color: rgba(99,102,241,0.55);
+  box-shadow: 0 0 0 3px rgba(99,102,241,0.18);
+}
+@media (prefers-color-scheme: dark) {
+  .strategy-select {
+    background-color: rgba(139,92,246,0.12);
+    border-color: rgba(139,92,246,0.35);
+    color: #c4b5fd;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' fill='none'%3E%3Cpath d='M1 1l4 4 4-4' stroke='%23c4b5fd' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  }
+  .strategy-select:hover {
+    background-color: rgba(139,92,246,0.20);
+    border-color: rgba(139,92,246,0.5);
+  }
+  .strategy-select:focus {
+    border-color: rgba(139,92,246,0.6);
+    box-shadow: 0 0 0 3px rgba(139,92,246,0.2);
+  }
+}
+
 .actions { display: flex; gap: 6px; justify-content: flex-end; flex-wrap: wrap; }
 .btn {
   display: inline-flex; align-items: center; gap: 6px;

@@ -4,7 +4,7 @@ import {
   removePromptVersion,
   restorePromptVersion,
 } from '@/lib/storage';
-import type { RefineResponse } from '@/lib/types';
+import type { RefineResponse, StrategyId } from '@/lib/types';
 import {
   currentState,
   setCurrentState,
@@ -720,6 +720,41 @@ export function bindEvents(root: HTMLElement): void {
   }
 
   bindVersionListDelegation(root);
+
+  const strategySelect = root.querySelector<HTMLSelectElement>('[data-role="strategy-select"]');
+  if (strategySelect) {
+    strategySelect.addEventListener('change', () => {
+      if (!currentState || !isContextValid()) return;
+      const newStrategy = strategySelect.value as StrategyId;
+      if (newStrategy === currentState.strategy) return;
+
+      safeSendMessage({ type: 'PING' });
+      renderPanel({
+        ...currentState,
+        status: 'loading',
+        prompt: undefined,
+        error: undefined,
+        draft: undefined,
+        versions: undefined,
+        versionsOpen: false,
+        selectedVersionId: undefined,
+        stage: 'calling',
+        partial: undefined,
+        startedAt: Date.now(),
+        strategy: newStrategy,
+      });
+      safeSendMessage({
+        type: 'EXTRACT_PROMPT',
+        payload: {
+          imageUrl: currentState.imageUrl,
+          pageUrl: location.href,
+          pageTitle: document.title,
+          requestId: currentState.requestId,
+          strategyOverride: newStrategy,
+        },
+      });
+    });
+  }
 
   root.querySelectorAll<HTMLElement>('[data-action]').forEach((el) => {
     if (el.closest('.versions-list')) return;

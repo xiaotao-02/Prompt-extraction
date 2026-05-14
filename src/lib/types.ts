@@ -226,6 +226,12 @@ export type RuntimeMessage =
         pageUrl: string;
         pageTitle: string;
         requestId: string;
+        /**
+         * 可选的策略覆盖。content panel 的策略选择器切换时带上，
+         * background 会用它替代 settings.promptStrategy 来决定本次反推的策略。
+         * 不传则走 settings 里用户配置的默认策略。
+         */
+        strategyOverride?: StrategyId;
       };
     }
   | {

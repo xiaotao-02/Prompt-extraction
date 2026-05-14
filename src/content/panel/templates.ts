@@ -1,5 +1,6 @@
 import type { PromptVersion } from '@/lib/types';
 import { getVersionOrdinalLabel } from '@/lib/versionLabel';
+import { STRATEGY_LABELS, type StrategyId } from '@/lib/strategies-meta';
 import type { PanelState } from './state';
 import {
   ICON_CLOSE,
@@ -40,6 +41,21 @@ function formatTime(t: number): string {
     2,
     '0'
   )}`;
+}
+
+/**
+ * 生成策略选择器 `<select>` 的 HTML。在成功状态的 meta-row 里渲染，
+ * 让用户一键切换策略并重新反推，方便对比不同策略的输出效果。
+ */
+function strategySelectHtml(currentStrategy: StrategyId | undefined): string {
+  const entries = Object.entries(STRATEGY_LABELS) as [StrategyId, string][];
+  const options = entries
+    .map(([id, label]) => {
+      const selected = id === currentStrategy ? ' selected' : '';
+      return `<option value="${escapeAttr(id)}"${selected}>${escapeText(label)}</option>`;
+    })
+    .join('');
+  return `<select class="strategy-select" data-role="strategy-select" title="切换策略后将重新反推">${options}</select>`;
 }
 
 export const SUGGESTIONS = [
@@ -269,6 +285,7 @@ export function panelHtml(state: PanelState): string {
         >${escapeText(refining && refineHasPartial ? state.refinePartial || '' : draft)}</textarea>
         <div class="meta-row">
           <div class="meta-left">
+            ${strategySelectHtml(state.strategy)}
             <button
               class="link-btn ${state.versionsOpen ? 'active' : ''}"
               data-action="toggle-versions"

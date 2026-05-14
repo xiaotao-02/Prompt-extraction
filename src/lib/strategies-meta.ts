@@ -43,11 +43,11 @@
  * 真正的版本注册表 (`STYLE_PROMPT_SETS`) 在 strategies.ts，那里有几 KB 的 prompt
  * 字符串；这里只保留版本号字面量 type 给 components 字段引用，不会带任何运行时代价。
  */
-export type StylePromptSetVersion = 'v0.1.0' | 'v0.1.1' | 'v0.2.2';
+export type StylePromptSetVersion = 'v0.1.0' | 'v0.2.2' | 'v0.3.0';
 /** sampling 组件的版本号。同上，只是 type，注册表在 strategies.ts。 */
-export type SamplingVersion = 'v0.1.0' | 'v0.2.2';
+export type SamplingVersion = 'v0.1.0' | 'v0.2.2' | 'v0.3.0';
 /** customJoin 组件的版本号。同上，只是 type，注册表在 strategies.ts。 */
-export type CustomJoinVersion = 'v0.1.0' | 'v0.2.2';
+export type CustomJoinVersion = 'v0.1.0' | 'v0.2.2' | 'v0.3.0';
 
 /**
  * 用户在「额外提示词」里填的内容如何与 base 拼接：
@@ -107,49 +107,22 @@ export interface StrategyDefinition {
  * loading 面板的策略 badge 都会自动同步。
  */
 const STRATEGIES_INTERNAL = {
-  // classic 在 UI 上显示为 "v0.1.5 策略" —— 因为查 git tag v0.1.1 ~ v0.1.6 的源码，
-  // stylePrompts/temperature/maxTokens/customPosition 这 4 项一字未改，v0.1.5
-  // 那一版的行为本质就是 v0.1.0 那组组件版本。这里 key 仍叫 'classic' 是为了
-  // 兼容老用户 settings 里持久化的字段（旧值不会因为重命名而失效）。
+  // classic：v0.1.0 ~ v0.1.6 共用的基线行为，是最早一批用户感知的"原始输出"。
+  // key 叫 'classic' 是为了兼容老用户 settings 里持久化的字段。
+  // 曾经的 v010 / v016 两档行为上与此等价或近似，已合并删除；
+  // 旧用户存的 'v010' / 'v016' 由 getStrategy() 兜底回退到此档。
   classic: {
-    label: 'v0.1.5 策略',
+    label: '经典策略',
     description:
-      '温度 0.4 · 上限 1024 token · 自定义模板尾部追加。完整复刻 v0.1.5 那一版的提示词与采样参数，输出短而稳，套话偏多，对早期用户语感最熟悉。',
+      '温度 0.4 · 上限 1024 token · 自定义模板尾部追加。复刻 v0.1.x 系列的提示词与采样参数，输出短而稳，对早期用户语感最熟悉。',
     components: {
       stylePromptSet: 'v0.1.0',
-      sampling: 'v0.1.0',
-      customJoin: 'v0.1.0',
-    },
-  },
-  // v010：v0.1.1 初始版的显式回滚入口。数值上和 classic 完全等价（因为 v0.1.1 ~
-  // v0.1.6 这 6 个版本里这套配置一字未改），独立列出只是给"按版本号回滚"的
-  // 用户一个无歧义入口。物料零成本——3 个组件版本都指 v0.1.0。
-  v010: {
-    label: 'v0.1.0 策略',
-    description:
-      '温度 0.4 · 上限 1024 token · 自定义模板尾部追加。完整复刻 v0.1.1 初始版的行为（与"v0.1.5 策略"在数值上等价，因为 v0.1.1 ~ v0.1.6 期间这套配置未变）。用于按版本号回到最早一版的输出感。',
-    components: {
-      stylePromptSet: 'v0.1.0',
-      sampling: 'v0.1.0',
-      customJoin: 'v0.1.0',
-    },
-  },
-  // v016：本次升级 —— 指令层换上 v0.1.1（覆盖率清单 + 去模板句 + 去主观词），
-  // 采样与拼接保持 v0.1.0 不变。同温度同 token 上限下输出更紧、更有结构、更少
-  // 水词，总响应时长基本与 classic 持平。老用户 settings 里持久化的 'v016'
-  // 字段无需迁移，行为静默升级。
-  v016: {
-    label: 'v0.1.6 策略',
-    description:
-      '温度 0.4 · 上限 1024 token · 自定义模板尾部追加。v0.1.6 优化版：指令层加入覆盖率清单、禁模板句、禁主观词，采样参数与 v0.1.5 一致，速度不变但输出更紧凑、更有结构。',
-    components: {
-      stylePromptSet: 'v0.1.1',
       sampling: 'v0.1.0',
       customJoin: 'v0.1.0',
     },
   },
   // v022：直接从 v0.1.0 演化的"v0.1.0 增强版"。设计思路只针对 v0.1.0 本身的 6
-  // 个具体短板做最小手术，未参考其它中间版本（v0.1.1 / v0.2.0 / v0.2.1）：
+  // 个具体短板做最小手术：
   //   - 指令层：把 v0.1.0 的 7 个抽象方面换成 10 维度显式清单（主体类型 / 外貌 /
   //     表情 / 姿态 / 服饰逐层 / 配饰 / 场景前中背景 / 光照四项 / 具体色名 / 画风
   //     镜头），并加入"三禁 + 空槽位跳过 + 维度名不打印"4 条硬约束，把 v0.1.0
@@ -168,6 +141,27 @@ const STRATEGIES_INTERNAL = {
       stylePromptSet: 'v0.2.2',
       sampling: 'v0.2.2',
       customJoin: 'v0.2.2',
+    },
+  },
+  // v030：针对 GPT Image 2 / Nano Banana 等新一代文生图模型优化。
+  // 设计核心：让 VLM 的输出直接成为目标模型能高还原度执行的 prompt。
+  //   - 指令层：8 维度分句结构（风格锚定→主体→动作→服饰→场景→光照→色彩→
+  //     摄影技术参数），相比 v0.2.2 的 10 维度合并了可共存项以控制形容词密度，
+  //     新增"摄影技术参数"（相机/镜头/光圈/景深/胶片）维度，要求具名风格标签，
+  //     全篇只用肯定句式、形容词 ≤8 个。
+  //   - 采样层：温度保持 0.3 不变；maxTokens 1280 → 1536 给完整句子格式 +
+  //     新增技术参数维度预留余量。
+  //   - 拼接层：沿用 prepend，用户偏好先入上下文。
+  // 适用场景：用户把提取的提示词喂给 GPT Image 2 / Nano Banana / Flux 等
+  // 新一代原生文生图模型来还原原图。
+  v030: {
+    label: 'v0.3.0 策略',
+    description:
+      '温度 0.3 · 上限 1536 token · 自定义模板前置。针对 GPT Image 2 / Nano Banana 等新一代文生图模型优化：8 维度分句结构、具名风格锚定、摄影技术参数（相机/镜头/胶片/景深）、形容词密度控制、肯定句式。优先级：图片还原度 ≫ 通用性。',
+    components: {
+      stylePromptSet: 'v0.3.0',
+      sampling: 'v0.3.0',
+      customJoin: 'v0.3.0',
     },
   },
 } as const satisfies Record<string, StrategyDefinition>;
@@ -189,12 +183,9 @@ export const STRATEGIES: Readonly<Record<StrategyId, StrategyDefinition>> = STRA
 /**
  * 新装用户的缺省策略。
  *
- * 选 classic（"v0.1.5 策略"）作为默认而不是 v016，是因为它在历史上是更早被
- * 大量用户感知的"原始行为基线"，措辞最稳；v016 只是给"我就要 v0.1.6 那一版
- * 输出感"的用户的显式回滚入口。两者数值等价，所以默认走哪一档对体验没差，
- * 这里更看重命名上的"基线感"。
- *
- * 类型用 StrategyId 自动收紧，写错字面量编译期就报。
+ * classic 是历史最久的行为基线，覆盖 v0.1.0 ~ v0.1.6 的原始输出感。
+ * 旧用户 settings 里如果存了已删除的 'v010' / 'v016'，getStrategy() 会
+ * 自动回退到此档。
  */
 export const DEFAULT_STRATEGY_ID: StrategyId = 'classic';
 
