@@ -82,6 +82,7 @@ export default function DataPersistence({ onDataRestored }: DataPersistenceProps
   const [busy, setBusy] = useState<'pick' | 'sync' | 'restore' | 'export' | 'import' | null>(null);
   const [tip, setTip] = useState<{ ok: boolean; msg: string } | null>(null);
   const [decision, setDecision] = useState<Decision>(null);
+  const shrinkDismissedRef = useRef(false);
   const importInputRef = useRef<HTMLInputElement>(null);
 
   const refresh = useCallback(async () => {
@@ -151,7 +152,8 @@ export default function DataPersistence({ onDataRestored }: DataPersistenceProps
     let timer: number | null = null;
 
     const doSync = () => {
-      if (decision?.kind === 'pending-existing') return;
+      if (decision != null) return;
+      if (shrinkDismissedRef.current) return;
       if (timer != null) window.clearTimeout(timer);
       timer = window.setTimeout(async () => {
         const r = await syncToDirectory(getCurrentVersion());
@@ -181,7 +183,7 @@ export default function DataPersistence({ onDataRestored }: DataPersistenceProps
       chrome.storage.onChanged.removeListener(onStorage);
       if (timer != null) window.clearTimeout(timer);
     };
-  }, [state?.configured, decision?.kind, handleSyncResult]);
+  }, [state?.configured, decision, handleSyncResult]);
 
   /**
    * 选目录入口。**绝不**在这里隐式调 syncToDirectory，否则用户点【取消】后
@@ -224,23 +226,22 @@ export default function DataPersistence({ onDataRestored }: DataPersistenceProps
           const r = await restoreBackup(decision.payload, 'replace');
           showTip(true, `已从备份还原 · 历史 ${r.historyTotal} 条`);
           onDataRestored?.();
-          // 恢复完之后再写一次（此时 storage 里已经是完整数据，不会触发 shrink-blocked）
+          shrinkDismissedRef.current = false;
           const sr = await syncToDirectory(getCurrentVersion());
           await handleSyncResult(sr, { silent: true });
         } finally {
           setBusy(null);
         }
       } else if (choice === 'overwrite') {
-        // 用户明确要把当前数据覆盖到旧备份；强制写
         setBusy('sync');
         try {
           const sr = await syncToDirectory(getCurrentVersion(), { force: true });
           await handleSyncResult(sr);
+          shrinkDismissedRef.current = false;
         } finally {
           setBusy(null);
         }
       }
-      // choice === 'keep' → 什么都不做，备份和 storage 都保持现状
       setDecision(null);
       return;
     }
@@ -253,6 +254,7 @@ export default function DataPersistence({ onDataRestored }: DataPersistenceProps
           if (r.ok && r.result) {
             showTip(true, `已从备份恢复 · 历史 ${r.result.historyTotal} 条`);
             onDataRestored?.();
+            shrinkDismissedRef.current = false;
           } else {
             showTip(false, formatReason(r.reason));
           }
@@ -264,11 +266,13 @@ export default function DataPersistence({ onDataRestored }: DataPersistenceProps
         try {
           const sr = await syncToDirectory(getCurrentVersion(), { force: true });
           await handleSyncResult(sr);
+          shrinkDismissedRef.current = false;
         } finally {
           setBusy(null);
         }
+      } else {
+        shrinkDismissedRef.current = true;
       }
-      // 'keep' → 跳过本次同步；下次 storage 再变化又会重新触发 shrink-blocked
       setDecision(null);
     }
   };
@@ -567,7 +571,12 @@ export default function DataPersistence({ onDataRestored }: DataPersistenceProps
           decision={decision}
           busy={busy}
           onChoose={(c) => void applyDecision(c)}
-          onClose={() => setDecision(null)}
+          onClose={() => {
+            if (decision.kind === 'shrink-confirm') {
+              shrinkDismissedRef.current = true;
+            }
+            setDecision(null);
+          }}
         />
       )}
     </section>
