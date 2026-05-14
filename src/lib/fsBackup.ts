@@ -245,7 +245,7 @@ export async function syncToDirectory(
     if (!opts.force) {
       const blocked = await isShrinkOverwrite(handle, payload, text.length);
       if (blocked) {
-        console.warn(
+        console.info(
           '[PromptExtracto] syncToDirectory blocked: refusing to overwrite richer existing backup with empty data'
         );
         return { ok: false, reason: 'shrink-blocked' };

@@ -120,18 +120,27 @@ export default function DataPersistence({ onDataRestored }: DataPersistenceProps
       }
       if (r.reason === 'shrink-blocked') {
         // 这是数据丢失高危路径（重装后空数据要覆盖旧备份），必须强制让用户表态
+        const m: SyncMeta = {
+          lastSyncedAt: meta?.lastSyncedAt || 0,
+          bytes: meta?.bytes,
+          lastError: formatReason(r.reason),
+        };
+        await writeSyncMeta(m);
+        setMeta(m);
+        if (!opts.silent) showTip(false, formatReason(r.reason));
         setDecision({ kind: 'shrink-confirm' });
         return;
       }
       if (!opts.silent) showTip(false, formatReason(r.reason));
       const m: SyncMeta = {
         lastSyncedAt: meta?.lastSyncedAt || 0,
-        lastError: r.reason || '同步失败',
+        bytes: meta?.bytes,
+        lastError: formatReason(r.reason),
       };
       await writeSyncMeta(m);
       setMeta(m);
     },
-    [meta?.lastSyncedAt]
+    [meta?.bytes, meta?.lastSyncedAt]
   );
 
   // 监听本地数据变化 → 自动同步到数据目录（如果配置了）。
