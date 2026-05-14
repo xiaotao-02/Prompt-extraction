@@ -176,6 +176,9 @@ export function applyHistoryReady(
   if (nextSel && !versions.some((v) => v.id === nextSel)) {
     nextSel = undefined;
   }
+  if (!nextSel) {
+    nextSel = versions.find((v) => v.prompt === nextDraft)?.id;
+  }
   setCurrentState({
     ...currentState,
     requestId: actualId,

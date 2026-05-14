@@ -78,7 +78,7 @@ export function updateDirtyChrome(): void {
   let matchedId: string | undefined;
   if (sel) {
     const byId = versions.find((v) => v.id === sel);
-    if (byId && byId.prompt === draft) matchedId = sel;
+    if (byId) matchedId = sel;
   }
   if (!matchedId) {
     matchedId = versions.find((v) => v.prompt === draft)?.id;
@@ -100,12 +100,15 @@ export async function syncVersions(requestId: string): Promise<void> {
     if (nextSel && !item.versions.some((v) => v.id === nextSel)) {
       nextSel = undefined;
     }
+    const nextDraft = currentState.draft ?? item.prompt;
+    if (!nextSel) {
+      nextSel = item.versions.find((v) => v.prompt === nextDraft)?.id;
+    }
     setCurrentState({
       ...currentState,
       versions: item.versions,
       selectedVersionId: nextSel,
-      // 如果用户没在编辑，draft 跟着 prompt 走
-      draft: currentState.draft ?? item.prompt,
+      draft: nextDraft,
       prompt: item.prompt,
     });
     patchVersionList();
@@ -145,20 +148,21 @@ function patchVersionList(): void {
     editorContent,
     st.selectedVersionId
   );
-  bindVersionListDataActions();
   updateDirtyChrome();
 }
 
-/** 只对 `.versions-list` 内的按钮 / 条目绑定 action（sync 替换了 innerHTML 后需重新挂）。 */
-function bindVersionListDataActions(): void {
-  const p = panel;
-  if (!p) return;
-  const list = p.querySelector<HTMLElement>('.versions-list');
+/**
+ * 在 `.versions-list` 上挂一个事件委托，通过冒泡 + closest 找到实际的
+ * `[data-action]` 元素。好处：`patchVersionList` 替换 innerHTML 之后
+ * 不需要重新绑定——委托挂在 `<ul>` 上，它自身不会被销毁。
+ */
+function bindVersionListDelegation(root: HTMLElement): void {
+  const list = root.querySelector<HTMLElement>('.versions-list');
   if (!list) return;
-  list.querySelectorAll<HTMLElement>('[data-action]').forEach((bindEl) => {
-    bindEl.addEventListener('click', (event) =>
-      handleDataAction(p, bindEl, event as MouseEvent)
-    );
+  list.addEventListener('click', (event) => {
+    const target = (event.target as HTMLElement).closest<HTMLElement>('[data-action]');
+    if (!target || !list.contains(target)) return;
+    handleDataAction(root, target, event as MouseEvent);
   });
 }
 
@@ -691,7 +695,10 @@ export function bindEvents(root: HTMLElement): void {
     });
   }
 
+  bindVersionListDelegation(root);
+
   root.querySelectorAll<HTMLElement>('[data-action]').forEach((el) => {
+    if (el.closest('.versions-list')) return;
     el.addEventListener('click', (event) =>
       handleDataAction(root, el, event as MouseEvent)
     );
