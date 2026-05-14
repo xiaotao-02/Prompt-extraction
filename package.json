@@ -1,6 +1,6 @@
 {
   "name": "prompt-extracto",
-  "version": "0.1.14",
+  "version": "0.1.15",
   "description": "Prompt Extracto · 右键任意图片，调用视觉大模型提取 AI 绘画提示词的 Chrome 扩展",
   "private": true,
   "type": "module",
