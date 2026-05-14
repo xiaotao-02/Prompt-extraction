@@ -24,7 +24,8 @@ import {
   MIN_HEIGHT,
   VIEWPORT_MARGIN,
 } from './geometry';
-import { versionsListHtml } from './templates';
+import { buildVersionsListInnerHtml, loadingEditorDisplayedText, successEditorDisplayedText } from './templates';
+import { EXTRACT_STREAM_VERSION_ID, REFINE_STREAM_VERSION_ID } from '@/lib/refineStreamVersion';
 
 function renderPanel(...args: Parameters<typeof panelActions.renderPanel>) {
   return panelActions.renderPanel(...args);
@@ -58,7 +59,7 @@ function syncDirtyHintsImmediate(): void {
   if (!panel || !currentState) return;
   const root = panel;
   const draft = currentState.draft ?? '';
-  const dirty = draft !== (currentState.prompt ?? '');
+  const dirty = currentState.refineLoading ? false : draft !== (currentState.prompt ?? '');
   const hint = root.querySelector<HTMLElement>('.dirty-hint');
   if (hint) hint.classList.toggle('show', dirty);
   const setDisabled = (sel: string, disabled: boolean) => {
@@ -81,7 +82,9 @@ function syncVersionHighlightFromState(): void {
   const versions = currentState.versions || [];
   const sel = currentState.selectedVersionId;
   let matchedId: string | undefined;
-  if (sel) {
+  if (sel === REFINE_STREAM_VERSION_ID || sel === EXTRACT_STREAM_VERSION_ID) {
+    matchedId = sel;
+  } else if (sel) {
     const byId = versions.find((v) => v.id === sel);
     if (byId) matchedId = sel;
   }
@@ -122,11 +125,20 @@ export async function syncVersions(requestId: string): Promise<void> {
     if (!item) return;
     if (!currentState || currentState.requestId !== requestId) return;
     let nextSel = currentState.selectedVersionId;
-    if (nextSel && !item.versions.some((v) => v.id === nextSel)) {
+    if (
+      nextSel &&
+      nextSel !== REFINE_STREAM_VERSION_ID &&
+      nextSel !== EXTRACT_STREAM_VERSION_ID &&
+      !item.versions.some((v) => v.id === nextSel)
+    ) {
       nextSel = undefined;
     }
+    const preserveRefine =
+      !!currentState.refineLoading && nextSel === REFINE_STREAM_VERSION_ID;
+    const preserveExtract =
+      currentState.status === 'loading' && nextSel === EXTRACT_STREAM_VERSION_ID;
     const nextDraft = currentState.draft ?? item.prompt;
-    if (!nextSel) {
+    if (!preserveRefine && !preserveExtract && !nextSel) {
       nextSel =
         nextDraft === item.prompt
           ? item.versions[0]?.id
@@ -154,7 +166,7 @@ function patchVersionList(): void {
   if (!st || !panel) return;
 
   const versions = st.versions || [];
-  if (versions.length === 0) {
+  if (versions.length === 0 && !st.refineLoading) {
     renderPanel(st);
     return;
   }
@@ -167,20 +179,14 @@ function patchVersionList(): void {
 
   const headSpan = panel.querySelector<HTMLElement>('.versions-head > span');
   if (headSpan) {
-    headSpan.textContent = `历史版本 · ${versions.length}`;
+    const n =
+      versions.length +
+      (st.refineLoading ? 1 : 0) +
+      (st.status === 'loading' && versions.length > 0 ? 1 : 0);
+    headSpan.textContent = `历史版本 · ${n}`;
   }
 
-  const editorContent = st.draft ?? st.prompt ?? '';
-  list.innerHTML = versionsListHtml(
-    versions,
-    editorContent,
-    st.selectedVersionId,
-    {
-      provider: st.provider,
-      model: st.model,
-      strategy: st.strategy,
-    }
-  );
+  list.innerHTML = buildVersionsListInnerHtml(st);
   updateDirtyChromeImmediate();
 }
 
@@ -393,7 +399,10 @@ function handleDataAction(root: HTMLElement, el: HTMLElement, event: MouseEvent)
   if (!state) return;
   if (action === 'close') return closePanel();
   if (action === 'copy') {
-    const text = state.draft ?? state.prompt ?? state.partial ?? '';
+    const text =
+      state.status === 'loading'
+        ? loadingEditorDisplayedText(state)
+        : state.draft ?? state.prompt ?? state.partial ?? '';
     navigator.clipboard
       .writeText(text)
       .then(() => flashCopied(el))
@@ -403,13 +412,18 @@ function handleDataAction(root: HTMLElement, el: HTMLElement, event: MouseEvent)
   if (action === 'retry') {
     if (!isExtensionContextValid()) return;
     safeSendMessage({ type: 'PING' });
+    const versions = state.versions || [];
+    const hasHistory = versions.length > 0;
+    const extractBaseline =
+      state.prompt ?? state.draft ?? versions[0]?.prompt ?? '';
     renderPanel({
       ...state,
       status: 'loading',
       prompt: undefined,
       error: undefined,
       draft: undefined,
-      selectedVersionId: undefined,
+      selectedVersionId: hasHistory ? EXTRACT_STREAM_VERSION_ID : undefined,
+      extractBaselinePrompt: hasHistory ? extractBaseline : undefined,
       stage: 'calling',
       partial: undefined,
       startedAt: Date.now(),
@@ -513,11 +527,7 @@ function handleDataAction(root: HTMLElement, el: HTMLElement, event: MouseEvent)
   }
   if (
     state.status === 'loading' &&
-    (action === 'copy-version' ||
-      action === 'select-version' ||
-      action === 'load-version' ||
-      action === 'restore-version' ||
-      action === 'delete-version')
+    (action === 'copy-version' || action === 'restore-version' || action === 'delete-version')
   ) {
     return;
   }
@@ -552,10 +562,52 @@ function handleDataAction(root: HTMLElement, el: HTMLElement, event: MouseEvent)
     return;
   }
   if (action === 'load-version' || action === 'select-version') {
-    if (currentState?.refineLoading) return;
     const vid = el.dataset.versionId;
+    if (!currentState || !vid) return;
+
+    if (vid === REFINE_STREAM_VERSION_ID) {
+      const next = { ...currentState, selectedVersionId: REFINE_STREAM_VERSION_ID };
+      setCurrentState(next);
+      const actionRoot = root.isConnected ? root : panel ?? root;
+      const ta = actionRoot.querySelector<HTMLTextAreaElement>('[data-role="editor"]');
+      if (ta) ta.value = successEditorDisplayedText(next);
+      updateDirtyChromeImmediate();
+      return;
+    }
+
+    if (vid === EXTRACT_STREAM_VERSION_ID) {
+      const next = { ...currentState, selectedVersionId: EXTRACT_STREAM_VERSION_ID };
+      setCurrentState(next);
+      const actionRoot = root.isConnected ? root : panel ?? root;
+      const ta = actionRoot.querySelector<HTMLTextAreaElement>('[data-role="editor"]');
+      if (ta) ta.value = loadingEditorDisplayedText(next);
+      updateDirtyChromeImmediate();
+      return;
+    }
+
     const v = state.versions?.find((x) => x.id === vid);
-    if (!v || !currentState || !vid) return;
+    if (!v) return;
+
+    if (state.refineLoading) {
+      const next = { ...currentState, selectedVersionId: vid };
+      setCurrentState(next);
+      const actionRoot = root.isConnected ? root : panel ?? root;
+      const ta = actionRoot.querySelector<HTMLTextAreaElement>('[data-role="editor"]');
+      if (ta) ta.value = v.prompt;
+      updateDirtyChromeImmediate();
+      return;
+    }
+
+    if (state.status === 'loading') {
+      const next = { ...currentState, selectedVersionId: vid };
+      setCurrentState(next);
+      const actionRoot = root.isConnected ? root : panel ?? root;
+      const ta = actionRoot.querySelector<HTMLTextAreaElement>('[data-role="editor"]');
+      if (ta) ta.value = v.prompt;
+      updateDirtyChromeImmediate();
+      return;
+    }
+
     setCurrentState({
       ...currentState,
       draft: v.prompt,
@@ -626,6 +678,8 @@ function handleDataAction(root: HTMLElement, el: HTMLElement, event: MouseEvent)
       refineStage: opening ? state.refineStage : undefined,
       refinePartial: opening ? state.refinePartial : undefined,
       refineStartedAt: opening ? state.refineStartedAt : undefined,
+      refineBaselinePrompt:
+        !opening && !state.refineLoading ? undefined : state.refineBaselinePrompt,
     });
 
     const slot = root.querySelector<HTMLElement>('[data-role="refine-slot"]');
@@ -671,6 +725,7 @@ function handleDataAction(root: HTMLElement, el: HTMLElement, event: MouseEvent)
       renderPanel(currentState!);
       return;
     }
+    const baseline = state.draft ?? state.prompt ?? '';
     setCurrentState({
       ...state,
       refineLoading: true,
@@ -679,6 +734,8 @@ function handleDataAction(root: HTMLElement, el: HTMLElement, event: MouseEvent)
       refineStage: 'calling',
       refinePartial: undefined,
       refineStartedAt: Date.now(),
+      refineBaselinePrompt: baseline,
+      selectedVersionId: REFINE_STREAM_VERSION_ID,
     });
     renderPanel(currentState!);
     if (!isExtensionContextValid()) {
@@ -689,11 +746,11 @@ function handleDataAction(root: HTMLElement, el: HTMLElement, event: MouseEvent)
         refineStage: undefined,
         refinePartial: undefined,
         refineStartedAt: undefined,
+        refineBaselinePrompt: undefined,
       });
       renderPanel(currentState!);
       return;
     }
-    const baseline = state.draft ?? state.prompt ?? '';
     try {
       chrome.runtime.sendMessage(
         {
@@ -715,6 +772,7 @@ function handleDataAction(root: HTMLElement, el: HTMLElement, event: MouseEvent)
               refineStage: undefined,
               refinePartial: undefined,
               refineStartedAt: undefined,
+              refineBaselinePrompt: undefined,
             });
             renderPanel(currentState);
             return;
@@ -727,6 +785,7 @@ function handleDataAction(root: HTMLElement, el: HTMLElement, event: MouseEvent)
               refineStage: undefined,
               refinePartial: undefined,
               refineStartedAt: undefined,
+              refineBaselinePrompt: undefined,
             });
             renderPanel(currentState);
             return;
@@ -741,6 +800,7 @@ function handleDataAction(root: HTMLElement, el: HTMLElement, event: MouseEvent)
             refineStage: undefined,
             refinePartial: undefined,
             refineStartedAt: undefined,
+            refineBaselinePrompt: undefined,
             prompt: resp.prompt,
             draft: resp.prompt,
             versionsOpen: true,
@@ -759,6 +819,7 @@ function handleDataAction(root: HTMLElement, el: HTMLElement, event: MouseEvent)
         refineStage: undefined,
         refinePartial: undefined,
         refineStartedAt: undefined,
+        refineBaselinePrompt: undefined,
       });
       renderPanel(currentState!);
     }

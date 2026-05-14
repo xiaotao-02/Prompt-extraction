@@ -45,6 +45,11 @@ export interface PanelState {
   refineStage?: RefineStage;
   /** AI 调整流式累积到的文本（每次都是全文，不是 delta）。 */
   refinePartial?: string;
+  /**
+   * 本次 AI 调整开始瞬间的编辑器基线（与发往后台的 current 一致）。
+   * 首 token 未到时主编辑区回落到此，避免空白；结束/失败后清空。
+   */
+  refineBaselinePrompt?: string;
   /** AI 调整开始时间戳，用于 UI 上显示 "已用时 xx s"。 */
   refineStartedAt?: number;
   /**
@@ -54,6 +59,11 @@ export interface PanelState {
   stage?: ExtractStage;
   /** 流式阶段累积到的提示词文本（loading 时实时显示）。 */
   partial?: string;
+  /**
+   * 点击「重新生成」进入 loading 时，保留上一份提示词作基线（首 token 前主编辑区回落）。
+   * success/error 后清空。
+   */
+  extractBaselinePrompt?: string;
   /** loading 开始时间戳，用于 UI 上显示 "已用时 xx s"。 */
   startedAt?: number;
   /**

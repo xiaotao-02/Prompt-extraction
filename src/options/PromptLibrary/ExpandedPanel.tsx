@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { useEffect, useState } from 'react';
+import { useEffect, useLayoutEffect, useState } from 'react';
 import {
   History as HistoryIcon,
   Wand2,
@@ -11,6 +11,7 @@ import {
   StickyNote,
 } from 'lucide-react';
 import type { HistoryItem, PromptVersion } from '@/lib/types';
+import { REFINE_STREAM_VERSION_ID, refineStreamDisplayedBody } from '@/lib/refineStreamVersion';
 import { VersionsSidebar } from './tabs/VersionsTab';
 import { MetaTab } from './tabs/MetaTab';
 import { RefineInline } from './tabs/RefineInline';
@@ -63,20 +64,48 @@ export function ExpandedPanel({
 
   const toggleInline = (s: InlineSection) => setOpenInline((cur) => (cur === s ? null : s));
 
+  useLayoutEffect(() => {
+    if (refineLoading) {
+      setSelectedVersionId(REFINE_STREAM_VERSION_ID);
+    } else {
+      setSelectedVersionId((sel) =>
+        sel === REFINE_STREAM_VERSION_ID ? null : sel
+      );
+    }
+  }, [refineLoading]);
+
   useEffect(() => {
     if (refineLoading) setOpenInline('refine');
   }, [refineLoading]);
 
-  const refineHasPartial = !!refinePartial;
-  const editorValue =
-    refineLoading && refineHasPartial ? refinePartial! : draft;
+  const versionCount = item.versions?.length || 0;
+  const versionsSidebarVisible = versionCount > 0 || refineLoading;
+  const versionsDisplayCount = versionCount + (refineLoading ? 1 : 0);
 
-  const dirtyPrompt = draft.trim() !== item.prompt.trim();
+  const editorValue = (() => {
+    if (!refineLoading) return draft;
+    const sel = selectedVersionId;
+    if (sel && sel !== REFINE_STREAM_VERSION_ID) {
+      const v = item.versions.find((x) => x.id === sel);
+      if (v) return v.prompt;
+    }
+    return refineStreamDisplayedBody({
+      refinePartial,
+      draft,
+      prompt: item.prompt,
+    });
+  })();
+
+  const dirtyPrompt =
+    refineLoading ? false : draft.trim() !== item.prompt.trim();
   const dirtyNote = (draftNote || '') !== (item.note || '');
   const dirty = dirtyPrompt || dirtyNote;
-  const versionCount = item.versions?.length || 0;
 
   const handleSelectVersion = (v: PromptVersion) => {
+    if (refineLoading) {
+      setSelectedVersionId(v.id);
+      return;
+    }
     setSelectedVersionId(v.id);
     onChangeDraft(v.prompt);
   };
@@ -97,10 +126,10 @@ export function ExpandedPanel({
       <div
         className="absolute right-full top-1/2 z-10 overflow-hidden rounded-l-2xl transition-all duration-300 ease-[cubic-bezier(.2,.9,.3,1)] -translate-y-1/2"
         style={{
-          width: versionsOpen && versionCount > 0 ? 300 : 0,
-          height: versionsOpen && versionCount > 0 ? 'max(75vh, 100%)' : '100%',
-          opacity: versionsOpen && versionCount > 0 ? 1 : 0,
-          pointerEvents: versionsOpen && versionCount > 0 ? 'auto' : 'none',
+          width: versionsOpen && versionsSidebarVisible ? 300 : 0,
+          height: versionsOpen && versionsSidebarVisible ? 'max(75vh, 100%)' : '100%',
+          opacity: versionsOpen && versionsSidebarVisible ? 1 : 0,
+          pointerEvents: versionsOpen && versionsSidebarVisible ? 'auto' : 'none',
         }}
       >
         <div className="h-full" style={{ minWidth: 300 }}>
@@ -108,6 +137,8 @@ export function ExpandedPanel({
             item={item}
             editorContent={editorValue}
             selectedVersionId={selectedVersionId}
+            refineLoading={refineLoading}
+            onSelectGeneratingRow={() => setSelectedVersionId(REFINE_STREAM_VERSION_ID)}
             onCopy={onCopy}
             copiedKey={copiedKey}
             onSelectVersion={handleSelectVersion}
@@ -143,7 +174,7 @@ export function ExpandedPanel({
                 ? '正在接收 AI 调整后的提示词…'
                 : '可在此修改提示词…'
             }
-            className={`input min-h-[280px] max-h-[520px] resize-y leading-[1.6] font-mono text-[13px] w-full${
+            className={`input-prompt min-h-[280px] max-h-[520px] resize-y w-full${
               refineLoading ? ' opacity-[0.97]' : ''
             }`}
           />
@@ -154,11 +185,11 @@ export function ExpandedPanel({
           <div className="flex items-center gap-1 flex-wrap">
             <LinkBtn
               active={versionsOpen}
-              disabled={versionCount === 0}
+              disabled={versionCount === 0 && !refineLoading}
               onClick={() => setVersionsOpen((v) => !v)}
             >
               <HistoryIcon className="w-3.5 h-3.5" />
-              <span>历史版本 · {versionCount}</span>
+              <span>历史版本 · {versionsDisplayCount}</span>
             </LinkBtn>
             <LinkBtn
               active={openInline === 'refine'}

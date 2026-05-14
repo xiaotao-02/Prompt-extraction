@@ -139,7 +139,7 @@ export function ItemRow({
           )}
         </div>
         <p
-          className={`text-[13px] leading-relaxed text-zinc-700 dark:text-zinc-300 whitespace-pre-wrap break-words ${
+          className={`text-[13px] leading-[1.6] text-zinc-700 dark:text-zinc-300 whitespace-pre-wrap break-words ${
             expanded ? 'line-clamp-2' : 'line-clamp-3'
           }`}
         >

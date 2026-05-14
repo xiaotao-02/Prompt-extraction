@@ -1,5 +1,6 @@
 import type { ExtractStage, RefineStage, StrategyId } from '@/lib/types';
 import { STRATEGY_LABELS, DEFAULT_STRATEGY_ID } from '@/lib/strategies-meta';
+import { EXTRACT_STREAM_VERSION_ID, REFINE_STREAM_VERSION_ID } from '@/lib/refineStreamVersion';
 import {
   panel,
   currentState,
@@ -173,15 +174,24 @@ export function applyLoadingPatch(state: PanelState): void {
 
   const copyBtn = panel.querySelector<HTMLButtonElement>('[data-role="copy-button"]');
   if (copyBtn) {
-    copyBtn.disabled = !hasPartial;
-    copyBtn.classList.toggle('disabled', !hasPartial);
+    const canCopy =
+      hasPartial || !!(state.extractBaselinePrompt && state.extractBaselinePrompt.trim());
+    copyBtn.disabled = !canCopy;
+    copyBtn.classList.toggle('disabled', !canCopy);
   }
 
+  const previewingExtractHistory =
+    state.selectedVersionId != null &&
+    state.selectedVersionId !== EXTRACT_STREAM_VERSION_ID;
+
   const editor = panel.querySelector<HTMLTextAreaElement>('[data-role="editor"]');
-  if (editor) {
+  if (editor && !previewingExtractHistory) {
     const atBottom =
       Math.abs(editor.scrollHeight - editor.clientHeight - editor.scrollTop) < 8;
-    editor.value = state.partial || '';
+    editor.value =
+      state.partial ??
+      state.extractBaselinePrompt ??
+      (state.prompt ?? state.draft ?? '');
     if (atBottom) editor.scrollTop = editor.scrollHeight;
   }
 
@@ -278,13 +288,20 @@ export function applyRefinePatch(state: PanelState): void {
     elapsedEl.textContent = formatElapsed(Date.now() - state.refineStartedAt);
   }
 
-  if (hasPartial) {
+  const previewingHistory =
+    state.selectedVersionId != null &&
+    state.selectedVersionId !== REFINE_STREAM_VERSION_ID;
+
+  if (!previewingHistory) {
     const editor = panel.querySelector<HTMLTextAreaElement>('[data-role="editor"]');
     if (editor) {
-      // 用户没主动滚动时跟随到底部；如果用户向上看历史内容，保留滚动位置。
+      const streamText =
+        state.refinePartial ??
+        state.refineBaselinePrompt ??
+        (state.draft ?? state.prompt ?? '');
       const atBottom =
         Math.abs(editor.scrollHeight - editor.clientHeight - editor.scrollTop) < 8;
-      editor.value = state.refinePartial || '';
+      editor.value = streamText;
       if (atBottom) editor.scrollTop = editor.scrollHeight;
     }
   }

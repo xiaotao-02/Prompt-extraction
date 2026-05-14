@@ -459,6 +459,8 @@ export const STYLE = `
   cursor: pointer;
   transition: background .12s;
 }
+.version-item.refine-pending { opacity: 0.95; }
+.version-item.refine-pending .version-preview { font-style: italic; color: rgba(80,80,90,0.95); }
 .version-item:last-child { border-bottom: none; }
 .version-item:hover { background: rgba(99,102,241,0.06); }
 .version-item:focus-visible {

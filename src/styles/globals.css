@@ -32,6 +32,17 @@
 
 /* 简易组件样式 */
 @layer components {
+  /* 与 src/content/panel/styles.ts .prompt-text 尺寸/字重/字距一致（浮动面板主编辑区） */
+  .input-prompt {
+    @apply w-full font-sans font-normal text-[13px] leading-[1.6]
+           border border-zinc-200 dark:border-zinc-700
+           bg-white dark:bg-zinc-900
+           focus:outline-none focus:ring-2 focus:ring-violet-500/40 focus:border-violet-500
+           transition;
+    padding: 12px 14px;
+    border-radius: 10px;
+    font-feature-settings: "kern" 1;
+  }
   .input {
     @apply w-full px-3 py-2 rounded-lg border border-zinc-200 dark:border-zinc-700
            bg-white dark:bg-zinc-900 text-sm

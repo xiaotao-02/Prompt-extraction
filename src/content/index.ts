@@ -44,6 +44,7 @@ try {
         model: message.payload.model,
         partial: undefined,
         stage: undefined,
+        extractBaselinePrompt: undefined,
       });
       return false;
     }
@@ -53,6 +54,7 @@ try {
         error: message.payload.error,
         partial: undefined,
         stage: undefined,
+        extractBaselinePrompt: undefined,
       });
       return false;
     }

@@ -189,7 +189,7 @@ export function ItemGridCard({
             </span>
           )}
         </div>
-        <p className="text-[12px] leading-relaxed text-zinc-700 dark:text-zinc-300 line-clamp-3 whitespace-pre-wrap break-words flex-1">
+        <p className="text-[13px] leading-[1.6] text-zinc-700 dark:text-zinc-300 line-clamp-3 whitespace-pre-wrap break-words flex-1">
           {item.prompt || <span className="text-zinc-400 italic">（空）</span>}
         </p>
         <button

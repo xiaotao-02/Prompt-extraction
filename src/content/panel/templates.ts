@@ -1,4 +1,5 @@
 import type { PromptVersion } from '@/lib/types';
+import { REFINE_STREAM_VERSION_ID, EXTRACT_STREAM_VERSION_ID, extractStreamDisplayedBody, refineStreamDisplayedBody } from '@/lib/refineStreamVersion';
 import { getVersionOrdinalLabel } from '@/lib/versionLabel';
 import { STRATEGY_LABELS, type StrategyId } from '@/lib/strategies-meta';
 import type { PanelState } from './state';
@@ -229,28 +230,114 @@ function actionsHtml(
 /**
  * 历史版本侧栏与 `panel-row` 的 `.versions-open` class（success 与 loading 共用）。
  */
+/** success 态主编辑器展示用：区分 AI 调整流式 vs 预览某条历史版本。 */
+export function successEditorDisplayedText(state: PanelState): string {
+  const draft = state.draft ?? state.prompt ?? '';
+  if (!state.refineLoading) return draft;
+  const sel = state.selectedVersionId;
+  if (sel && sel !== REFINE_STREAM_VERSION_ID) {
+    const v = state.versions?.find((x) => x.id === sel);
+    if (v) return v.prompt;
+  }
+  return refineStreamDisplayedBody(state);
+}
+
+/** loading（重新生成/反推流式）态主编辑器：区分流式 vs 预览历史版本。 */
+export function loadingEditorDisplayedText(state: PanelState): string {
+  if (state.status !== 'loading') {
+    return state.partial ?? '';
+  }
+  const sel = state.selectedVersionId;
+  if (sel && sel !== EXTRACT_STREAM_VERSION_ID) {
+    const v = state.versions?.find((x) => x.id === sel);
+    if (v) return v.prompt;
+  }
+  return extractStreamDisplayedBody(state);
+}
+
+function extractPendingVersionRowHtml(state: PanelState): string {
+  const selected = state.selectedVersionId === EXTRACT_STREAM_VERSION_ID;
+  return `
+    <li
+      class="version-item refine-pending${selected ? ' selected' : ''}"
+      data-action="select-version"
+      data-version-id="${escapeAttr(EXTRACT_STREAM_VERSION_ID)}"
+      role="button"
+      tabindex="0"
+      title="点击查看本次重新生成中的提示词"
+    >
+      <div class="version-head">
+        <span class="version-ord middle">生成中</span>
+        <span class="version-tag extracted">反推</span>
+        <span class="version-time">进行中</span>
+      </div>
+      <div class="version-preview">正在重新生成提示词，可切换到其它行预览历史版本…</div>
+    </li>
+  `;
+}
+
+function refinePendingVersionRowHtml(state: PanelState): string {
+  const selected = state.selectedVersionId === REFINE_STREAM_VERSION_ID;
+  return `
+    <li
+      class="version-item refine-pending${selected ? ' selected' : ''}"
+      data-action="select-version"
+      data-version-id="${escapeAttr(REFINE_STREAM_VERSION_ID)}"
+      role="button"
+      tabindex="0"
+      title="点击查看 AI 调整生成中的提示词"
+    >
+      <div class="version-head">
+        <span class="version-ord middle">生成中</span>
+        <span class="version-tag refined">AI 调整</span>
+        <span class="version-time">进行中</span>
+      </div>
+      <div class="version-preview">正在根据你的要求生成新版本，可切换到其它行预览历史正文…</div>
+    </li>
+  `;
+}
+
+/** 供 panelHtml 与 patchVersionList 共用，避免侧栏 DOM 与整页模板分叉。 */
+export function buildVersionsListInnerHtml(state: PanelState): string {
+  const versions = state.versions || [];
+  const editorContent = state.draft ?? state.prompt ?? '';
+  const extractRow = state.status === 'loading' && versions.length > 0;
+  const leading = state.refineLoading
+    ? refinePendingVersionRowHtml(state)
+    : extractRow
+      ? extractPendingVersionRowHtml(state)
+      : '';
+  return (
+    leading +
+    versionsListHtml(versions, editorContent, state.selectedVersionId, {
+      provider: state.provider,
+      model: state.model,
+      strategy: state.strategy,
+    })
+  );
+}
+
 function versionsChromeForRow(
   state: PanelState,
   versions: PromptVersion[],
-  editorContent: string
+  _editorContent: string
 ): { sidebar: string; openClassSuffix: string } {
-  const versionCount = versions.length;
-  if (versionCount === 0) {
+  const baseLen = versions.length;
+  const extractRow = state.status === 'loading' && baseLen > 0;
+  const showSidebar = baseLen > 0 || !!state.refineLoading;
+  if (!showSidebar) {
     return { sidebar: '', openClassSuffix: '' };
   }
+  const displayCount = baseLen + (state.refineLoading ? 1 : 0) + (extractRow ? 1 : 0);
   const openClassSuffix = state.versionsOpen ? ' versions-open' : '';
   const sidebar = `
         <aside class="versions-side" data-role="versions-side">
           <div class="versions-head">
-            <span>历史版本 · ${versionCount}</span>
+            <span>历史版本 · ${displayCount}</span>
             <button class="icon-btn" data-action="toggle-versions" title="收起">${ICON_CLOSE}</button>
           </div>
           <ul class="versions-list">
-            ${versionsListHtml(versions, editorContent, state.selectedVersionId, {
-              provider: state.provider,
-              model: state.model,
-              strategy: state.strategy,
-            })}
+            ${buildVersionsListInnerHtml(state)}
           </ul>
         </aside>
       `;
@@ -274,11 +361,13 @@ export function panelHtml(state: PanelState): string {
       : '';
     const versions = state.versions || [];
     const versionCount = versions.length;
-    const streamContent = state.partial ?? '';
+    const extractRow = versionCount > 0;
+    const versionsDisplayCount = versionCount + (extractRow ? 1 : 0);
+    const canCopyLoading = hasPartial || !!(state.extractBaselinePrompt?.trim());
     const { sidebar: versionsSidebar, openClassSuffix: versionsOpenClass } = versionsChromeForRow(
       state,
       versions,
-      streamContent
+      ''
     );
     return `
       <div class="header">
@@ -313,9 +402,9 @@ export function panelHtml(state: PanelState): string {
             readonly
             spellcheck="false"
             placeholder="正在接收模型回复…"
-          >${escapeText(streamContent)}</textarea>
+          >${escapeText(loadingEditorDisplayedText(state))}</textarea>
           ${metaRowHtml(state, {
-            versionCount,
+            versionCount: versionsDisplayCount,
             dirty: false,
             disableHistory: versionCount === 0,
             disableLibrary: true,
@@ -325,7 +414,7 @@ export function panelHtml(state: PanelState): string {
             runDisabled: true,
             runIdleLabel: '生成后可调整',
           })}
-          ${actionsHtml(false, { loading: true, canCopy: hasPartial })}
+          ${actionsHtml(false, { loading: true, canCopy: canCopyLoading })}
         </div>
       </div>
     `;
@@ -352,10 +441,10 @@ export function panelHtml(state: PanelState): string {
 
   const versions = state.versions || [];
   const versionCount = versions.length;
-  const draft = state.draft ?? state.prompt ?? '';
-  const dirty = draft !== (state.prompt ?? '');
   const refining = !!state.refineLoading;
-  const refineHasPartial = !!state.refinePartial;
+  const versionsDisplayCount = versionCount + (refining ? 1 : 0);
+  const draft = state.draft ?? state.prompt ?? '';
+  const dirty = refining ? false : draft !== (state.prompt ?? '');
 
   // 历史版本侧栏：始终渲染在 DOM 里（只要有版本数据），用 .panel-row.versions-open
   // 这个 class 控制滑入/滑出。这样 toggle 的时候不需要 renderPanel，避免主面板尺寸
@@ -402,8 +491,12 @@ export function panelHtml(state: PanelState): string {
           spellcheck="false"
           placeholder="${refining ? '正在接收 AI 调整后的提示词…' : '可在此修改提示词…'}"
           ${refining ? 'readonly' : ''}
-        >${escapeText(refining && refineHasPartial ? state.refinePartial || '' : draft)}</textarea>
-        ${metaRowHtml(state, { versionCount, dirty })}
+        >${escapeText(successEditorDisplayedText(state))}</textarea>
+        ${metaRowHtml(state, {
+          versionCount: versionsDisplayCount,
+          dirty,
+          disableHistory: versionCount === 0 && !refining,
+        })}
         ${refineBlock}
         ${actionsHtml(dirty)}
       </div>

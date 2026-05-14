@@ -4,6 +4,7 @@
  */
 import { STYLE } from './styles';
 import type { PromptVersion, StrategyId } from '@/lib/types';
+import { EXTRACT_STREAM_VERSION_ID } from '@/lib/refineStreamVersion';
 import {
   HOST_ID,
   host,
@@ -175,6 +176,10 @@ export function renderPanelForExtractPending(payload: {
 }): void {
   const prev = currentState;
   if (prev != null && prev.requestId === payload.requestId) {
+    const versions = prev.versions || [];
+    const hasHistory = versions.length > 0;
+    const extractBaseline =
+      prev.prompt ?? prev.draft ?? versions[0]?.prompt ?? '';
     renderPanel({
       ...prev,
       requestId: payload.requestId,
@@ -186,11 +191,13 @@ export function renderPanelForExtractPending(payload: {
       prompt: undefined,
       error: undefined,
       draft: undefined,
-      selectedVersionId: undefined,
+      selectedVersionId: hasHistory ? EXTRACT_STREAM_VERSION_ID : undefined,
+      extractBaselinePrompt: hasHistory ? extractBaseline : undefined,
       partial: undefined,
       refineLoading: false,
       refineError: undefined,
       refinePartial: undefined,
+      refineBaselinePrompt: undefined,
       refineStage: undefined,
       refineStartedAt: undefined,
     });

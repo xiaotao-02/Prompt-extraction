@@ -1,5 +1,6 @@
 import { Check, Copy, Layers, RotateCcw, Trash2, X } from 'lucide-react';
 import type { HistoryItem, PromptVersion } from '@/lib/types';
+import { REFINE_STREAM_VERSION_ID } from '@/lib/refineStreamVersion';
 import { getVersionOrdinalLabel, type VersionOrdinalKind } from '@/lib/versionLabel';
 import { STRATEGY_LABELS } from '@/lib/strategies-meta';
 import { SourceTag } from '../SourceTag';
@@ -19,6 +20,8 @@ export function VersionsSidebar({
   item,
   editorContent,
   selectedVersionId,
+  refineLoading,
+  onSelectGeneratingRow,
   onCopy,
   copiedKey,
   onSelectVersion,
@@ -29,6 +32,8 @@ export function VersionsSidebar({
   item: HistoryItem;
   editorContent: string;
   selectedVersionId: string | null;
+  refineLoading?: boolean;
+  onSelectGeneratingRow?: () => void;
   onCopy: (text: string, key: string) => void;
   copiedKey: string | null;
   onSelectVersion: (v: PromptVersion) => void;
@@ -36,6 +41,7 @@ export function VersionsSidebar({
   onDeleteVersion: (v: PromptVersion) => void;
   onClose: () => void;
 }) {
+  const listCount = item.versions.length + (refineLoading ? 1 : 0);
   const extractedCount = item.versions.filter((v) => v.source === 'extracted').length;
   const distinctModels = new Set(
     item.versions
@@ -48,7 +54,7 @@ export function VersionsSidebar({
       {/* 头部 */}
       <div className="flex items-center justify-between px-3 py-2.5 border-b border-zinc-100 dark:border-zinc-800 flex-none">
         <span className="text-[11px] font-semibold text-zinc-600 dark:text-zinc-300">
-          历史版本 · {item.versions.length}
+          历史版本 · {listCount}
         </span>
         <button
           onClick={onClose}
@@ -74,6 +80,39 @@ export function VersionsSidebar({
 
       {/* 版本列表 */}
       <ul className="flex-1 min-h-0 overflow-y-auto">
+        {refineLoading && (
+          <li
+            key={REFINE_STREAM_VERSION_ID}
+            onClick={() => onSelectGeneratingRow?.()}
+            role="button"
+            tabIndex={0}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault();
+                onSelectGeneratingRow?.();
+              }
+            }}
+            title="点击查看 AI 调整生成中的提示词"
+            className={`px-3 py-2 border-b border-zinc-50 dark:border-zinc-800/60 cursor-pointer transition-colors ${
+              selectedVersionId === REFINE_STREAM_VERSION_ID
+                ? 'bg-violet-50 dark:bg-violet-500/15 hover:bg-violet-100/80 dark:hover:bg-violet-500/20'
+                : 'hover:bg-violet-50/60 dark:hover:bg-violet-500/10'
+            }`}
+          >
+            <div className="flex items-center gap-1.5 text-[10px] mb-1 flex-wrap">
+              <span
+                className={`px-1.5 py-px rounded font-semibold ${ORD_TAG_CLASS.middle}`}
+              >
+                生成中
+              </span>
+              <SourceTag source="refined" />
+              <span className="text-zinc-400 dark:text-zinc-500">进行中</span>
+            </div>
+            <p className="text-[11px] leading-relaxed text-zinc-600 dark:text-zinc-400 line-clamp-2 break-words italic">
+              正在根据你的要求生成新版本，可切换到其它行预览历史正文…
+            </p>
+          </li>
+        )}
         {item.versions.map((v, i) => {
           const isCurrent = i === 0;
           const cid = `ver:${item.id}::${v.id}`;
@@ -85,8 +124,9 @@ export function VersionsSidebar({
             style: item.style,
             strategy: item.strategy,
           };
-          const isSelected =
-            selectedVersionId != null
+          const isSelected = refineLoading
+            ? v.id === selectedVersionId
+            : selectedVersionId != null
               ? v.id === selectedVersionId
               : v.prompt === editorContent;
 
@@ -133,7 +173,7 @@ export function VersionsSidebar({
               </div>
 
               {/* 预览文本 */}
-              <p className="text-[11px] leading-relaxed text-zinc-600 dark:text-zinc-400 line-clamp-2 break-words">
+              <p className="text-[13px] leading-[1.6] text-zinc-600 dark:text-zinc-400 line-clamp-2 break-words">
                 {preview}{v.prompt.length > 120 ? '…' : ''}
               </p>
 
