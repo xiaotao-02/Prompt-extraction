@@ -21,10 +21,12 @@ export default defineConfig({
   },
   build: {
     target: 'esnext',
-    // 临时关闭压缩 + 打开 sourcemap，确保 React 抛错时给的是完整堆栈而不是 #310 这样的数字代码。
-    // 排查完后可以恢复 minify: 'esbuild'。
-    minify: false,
-    sourcemap: true,
+    // 默认仍然为开发体验保留：不压缩 + 带 sourcemap，便于 React 抛错时拿到完整堆栈。
+    // 上架商店时通过 STORE=1 环境变量切到生产模式：开启 esbuild 压缩 + 关闭 sourcemap，
+    // 减小 zip 体积、避免源码以 sourcemap 形式直接外泄给最终用户。
+    // 入口脚本：`npm run release:store`。
+    minify: process.env.STORE === '1' ? 'esbuild' : false,
+    sourcemap: process.env.STORE === '1' ? false : true,
     rollupOptions: {
       output: {
         chunkFileNames: 'assets/chunk-[hash].js',

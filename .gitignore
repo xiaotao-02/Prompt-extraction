@@ -12,3 +12,6 @@ dist-zip
 prompt-extracto-data.json
 *-data.json
 
+# 商店素材生成物（由 npm run store:assets / store:screenshots 生成，不入仓库）
+store-assets/
+

@@ -1,0 +1,1 @@
+Right-click any image, GIF or video on any page to reverse-extract AI painting prompts via vision LLMs (SD/MJ/natural language).

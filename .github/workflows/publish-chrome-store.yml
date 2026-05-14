@@ -1,0 +1,118 @@
+name: Publish to Chrome Web Store
+
+# 触发方式：
+#   1) 手动：在 Actions 页面点 "Run workflow"，可选 dry-run（只构建，不上传）
+#   2) 自动：当 auto-release.yml 推出新 tag（v*）时联动
+#
+# 流程：
+#   - npm ci
+#   - npm run release:store （生产构建 + 合规校验 + zip）
+#   - 用 chrome-webstore-upload-cli 上传 zip 到指定 EXTENSION_ID
+#   - 自动发布到正式渠道（trustedTesters: 改成 group/trusted 即可发到测试组）
+#
+# 必需的 GitHub Secrets（仓库 Settings → Secrets and variables → Actions）：
+#   CWS_EXTENSION_ID    上架成功后 Chrome Web Store URL 中的扩展 ID
+#   CWS_CLIENT_ID       Google Cloud OAuth 2.0 Client ID
+#   CWS_CLIENT_SECRET   Google Cloud OAuth 2.0 Client Secret
+#   CWS_REFRESH_TOKEN   通过 oauth2 dance 拿到的 refresh_token
+#
+# 获取方式见：docs/CHROME_WEB_STORE_CI.md
+
+on:
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'Dry run（只构建 zip 并上传产物到 Actions，不调商店 API）'
+        required: false
+        default: 'false'
+        type: choice
+        options: ['false', 'true']
+      target:
+        description: '发布通道'
+        required: true
+        default: 'default'
+        type: choice
+        options:
+          - default        # 直接发布到正式渠道（公开商店）
+          - trustedTesters # 仅推送给"受信测试者"组
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: publish-chrome-store-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build & zip (release:store)
+        run: npm run release:store
+
+      - name: Locate zip
+        id: zip
+        run: |
+          ZIP=$(ls dist-zip/store/prompt-extracto-store-v*.zip | head -n 1)
+          echo "Found: $ZIP"
+          echo "path=$ZIP" >> "$GITHUB_OUTPUT"
+          ls -la dist-zip/store/
+
+      - name: Upload zip as workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: chrome-store-zip
+          path: ${{ steps.zip.outputs.path }}
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Install chrome-webstore-upload-cli
+        if: ${{ github.event.inputs.dry_run != 'true' }}
+        run: npm i -g chrome-webstore-upload-cli@3
+
+      - name: Upload to Chrome Web Store
+        if: ${{ github.event.inputs.dry_run != 'true' }}
+        env:
+          EXTENSION_ID: ${{ secrets.CWS_EXTENSION_ID }}
+          CLIENT_ID: ${{ secrets.CWS_CLIENT_ID }}
+          CLIENT_SECRET: ${{ secrets.CWS_CLIENT_SECRET }}
+          REFRESH_TOKEN: ${{ secrets.CWS_REFRESH_TOKEN }}
+        run: |
+          chrome-webstore-upload upload \
+            --source "${{ steps.zip.outputs.path }}" \
+            --extension-id "$EXTENSION_ID" \
+            --client-id "$CLIENT_ID" \
+            --client-secret "$CLIENT_SECRET" \
+            --refresh-token "$REFRESH_TOKEN"
+
+      - name: Publish on Chrome Web Store
+        if: ${{ github.event.inputs.dry_run != 'true' }}
+        env:
+          EXTENSION_ID: ${{ secrets.CWS_EXTENSION_ID }}
+          CLIENT_ID: ${{ secrets.CWS_CLIENT_ID }}
+          CLIENT_SECRET: ${{ secrets.CWS_CLIENT_SECRET }}
+          REFRESH_TOKEN: ${{ secrets.CWS_REFRESH_TOKEN }}
+          TARGET: ${{ github.event.inputs.target || 'default' }}
+        run: |
+          # tag 触发时默认发到 default（正式公开渠道）
+          chrome-webstore-upload publish \
+            --extension-id "$EXTENSION_ID" \
+            --client-id "$CLIENT_ID" \
+            --client-secret "$CLIENT_SECRET" \
+            --refresh-token "$REFRESH_TOKEN" \
+            --target "$TARGET"

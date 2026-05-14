@@ -125,6 +125,29 @@ public/icons/      # 自动生成
 scripts/           # 图标生成 / zip 打包
 ```
 
+## 上架 Chrome Web Store
+
+整套上架流程（zip 校验、商店素材、隐私政策、CI 自动发版）已经定制好，**一次性 30 分钟可走完**：
+
+```bash
+# 1) 生成上架专用 zip（开启 minify、关 sourcemap、合规校验、SHA256）
+npm run release:store
+# 输出：dist-zip/store/prompt-extracto-store-vX.Y.Z.zip
+
+# 2) 生成 2 张宣传图（440×280 + 1400×560）
+npm run store:assets
+
+# 3) 生成 5 张商品截图（1280×800 ×5）
+npm run store:screenshots
+```
+
+| 想要做的事 | 看这个文件 |
+|---|---|
+| 上架前逐项打勾 | [`store-listing/CHECKLIST.md`](store-listing/CHECKLIST.md) |
+| 商店表单填什么（中英双语） | [`store-listing/`](store-listing/) |
+| 隐私政策（提交时填的 URL） | [`PRIVACY.md`](PRIVACY.md) → `https://raw.githubusercontent.com/xiaotao-02/Prompt-extraction/main/PRIVACY.md` |
+| CI 自动发版（推 tag 自动上架） | [`docs/CHROME_WEB_STORE_CI.md`](docs/CHROME_WEB_STORE_CI.md) + [`.github/workflows/publish-chrome-store.yml`](.github/workflows/publish-chrome-store.yml) |
+
 ## 自动发布（CI）
 
 仓库已配置 GitHub Actions（`.github/workflows/auto-release.yml`），**每次 push 到 `main` 分支都会自动发布一次新版**，流程如下：
