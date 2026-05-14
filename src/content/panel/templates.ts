@@ -63,11 +63,21 @@ export function panelHtml(state: PanelState): string {
         )}</textarea>`
       : '';
     const stratLabel = strategyLabel(state.strategy);
+    // 模型 badge：用 provider · model 拼一个短标签，比如 "openai · gpt-4o"。
+    // settings 在 PENDING 之后才异步到达，所以首次渲染时 model 可能为空 ——
+    // 此时给 .hidden 占位、不撑大 header；applyLoadingPatch 会在 model 拿到
+    // 后把文本填上、移除 hidden。
+    const modelLabel = state.model
+      ? `${state.provider ? state.provider + ' · ' : ''}${state.model}`
+      : '';
     return `
       <div class="header">
         <div class="title">
           <span class="dot loading"></span>
           <span data-role="stage-label">${escapeText(stageLabel(state.stage))}</span>
+          <span class="badge model-badge ${modelLabel ? '' : 'hidden'}" data-role="model-badge" title="${
+            modelLabel ? escapeAttr(`本次使用：${modelLabel}`) : ''
+          }">${modelLabel ? escapeText(modelLabel) : ''}</span>
           <span class="badge strategy-badge ${stratLabel ? '' : 'hidden'}" data-role="strategy-badge">${
             stratLabel ? `策略：${escapeText(stratLabel)}` : ''
           }</span>

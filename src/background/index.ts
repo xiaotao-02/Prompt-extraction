@@ -270,15 +270,28 @@ async function runExtraction(params: {
     payload: { requestId, imageUrl },
   });
 
-  // settings 读取完成后立刻补发一次 strategy 信息，让 loading 面板把
-  // 「正在使用 X 策略」标签亮出来。不阻塞主链路：发送是 fire-and-forget。
+  // settings 读取完成后立刻补发一次 strategy + provider + model 信息，
+  // 让 loading 面板把「正在使用 X 策略 / 谁的什么模型」标签亮出来。
+  // 不阻塞主链路：发送是 fire-and-forget。
+  //
+  // 之所以也带 provider/model：用户在 loading 阶段就想知道"这次到底用的
+  // 哪个模型在跑"——尤其是配了多家 provider / 跑前刚切换过的场景。等到
+  // EXTRACT_RESULT 才知道就太晚了（生成可能要十几秒）。
+  //
   // 注意 stage 不带，由 content/index.ts 在 stage===undefined 时跳过覆盖，
   // 避免把已经推进到 'fetching' 的进度条踢回默认状态。
   void settingsPromise.then(
     (settings) => {
+      const activeProvider = settings.activeProvider;
+      const activeModel = settings.providers[activeProvider]?.model;
       postToTab(tabId, {
         type: 'EXTRACT_PROGRESS',
-        payload: { requestId, strategy: settings.promptStrategy },
+        payload: {
+          requestId,
+          strategy: settings.promptStrategy,
+          provider: activeProvider,
+          model: activeModel,
+        },
       });
     },
     () => undefined

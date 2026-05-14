@@ -158,11 +158,71 @@ export async function disconnectDataDirectory(): Promise<void> {
 }
 
 /**
+ * 判断一份 backup payload 是否「显著比现有备份贫瘠」。
+ *
+ * 返回 true 表示：即将写入的 payload 几乎不含真实数据（所有 provider 的 apiKey
+ * 都为空、且 history / folders 为空），但目录里已经存在一份**实质更丰富**的备份
+ * （文件大小明显更大，或包含 history / 任何已填的 apiKey）。
+ *
+ * 这是数据丢失最大风险点的最后防线：
+ * - 用户重装插件 → chrome.storage 被清 → 默认 settings 重新填回（一堆 provider 占位 +
+ *   空 apiKey）→ 任何对 settings 的改动都会触发自动同步 → 把"空 settings + 空 history"
+ *   一股脑写到目录 JSON → 旧备份永久丢失。
+ * - 加上这道关，自动同步路径在检测到这种危险写入时直接拒绝，等待用户**明确**点
+ *   「覆盖备份」才会放行。
+ */
+async function isShrinkOverwrite(
+  handle: FileSystemDirectoryHandle,
+  next: BackupPayload,
+  nextBytes: number
+): Promise<boolean> {
+  const allKeysEmpty = Object.values(next.settings?.providers || {}).every(
+    (cfg) => !cfg?.apiKey || cfg.apiKey.trim().length === 0
+  );
+  const noHistory = !next.history || next.history.length === 0;
+  const noFolders = !next.folders || next.folders.length === 0;
+  if (!allKeysEmpty || !noHistory || !noFolders) return false;
+
+  let existingText: string | null = null;
+  try {
+    const fh = await handle.getFileHandle(BACKUP_FILE_NAME, { create: false });
+    const file = await fh.getFile();
+    existingText = await file.text();
+  } catch {
+    return false;
+  }
+  if (!existingText) return false;
+
+  // 任何已填的 apiKey / 任何历史条目 / 任何文件夹 → 现有备份比即将写入的更"重"
+  try {
+    const prev = JSON.parse(existingText) as BackupPayload;
+    const hadAnyKey = Object.values(prev.settings?.providers || {}).some(
+      (cfg) => cfg?.apiKey && cfg.apiKey.trim().length > 0
+    );
+    const hadHistory = Array.isArray(prev.history) && prev.history.length > 0;
+    const hadFolders = Array.isArray(prev.folders) && prev.folders.length > 0;
+    if (hadAnyKey || hadHistory || hadFolders) return true;
+  } catch {
+    // JSON 解析失败 → 用纯字节数兜底
+  }
+  // 兜底规则：现有文件比即将写入的至少大 50%，且现有文件 > 1 KB → 视为"萎缩覆盖"
+  return existingText.length > 1024 && existingText.length > nextBytes * 1.5;
+}
+
+/**
  * 把当前 chrome.storage 里的全量数据写到目录里的 JSON 文件。
  *
- * 失败原因：handle 不存在 / 权限丢失 / 浏览器不支持 / 磁盘满。失败会抛错。
+ * @param appVersion 可选，写入到 backup payload 的 appVersion 字段，仅用于排查。
+ * @param opts.force 默认 false。false 时会经过 {@link isShrinkOverwrite} 安全网，
+ *                   防止把"空数据"自动覆盖到一份更丰富的旧备份上；返回
+ *                   `reason: 'shrink-blocked'`。UI 收到这个 reason 应弹明确的二次
+ *                   确认，让用户主动选择「恢复备份」或「确实要覆盖」，确认后再
+ *                   传 `force: true` 重新调用。
  */
-export async function syncToDirectory(appVersion?: string): Promise<{
+export async function syncToDirectory(
+  appVersion?: string,
+  opts: { force?: boolean } = {}
+): Promise<{
   ok: boolean;
   reason?: string;
   syncedAt?: number;
@@ -182,6 +242,15 @@ export async function syncToDirectory(appVersion?: string): Promise<{
   try {
     const payload = await buildBackup(appVersion);
     const text = JSON.stringify(payload, null, 2);
+    if (!opts.force) {
+      const blocked = await isShrinkOverwrite(handle, payload, text.length);
+      if (blocked) {
+        console.warn(
+          '[PromptExtracto] syncToDirectory blocked: refusing to overwrite richer existing backup with empty data'
+        );
+        return { ok: false, reason: 'shrink-blocked' };
+      }
+    }
     const fileHandle = await handle.getFileHandle(BACKUP_FILE_NAME, { create: true });
     const writable = await fileHandle.createWritable();
     await writable.write(text);

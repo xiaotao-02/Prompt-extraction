@@ -131,6 +131,21 @@ export const STYLE = `
   .strategy-badge { background: rgba(139,92,246,0.20); color: #c4b5fd; }
 }
 .strategy-badge.hidden { display: none; }
+/* loading 头部的模型标签：用品牌青蓝色和 strategy 区分一下，
+   让用户一眼能看出"用谁的什么模型在跑"。 */
+.model-badge {
+  background: rgba(14,165,233,0.12);
+  color: #0369a1;
+  font-weight: 500;
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+@media (prefers-color-scheme: dark) {
+  .model-badge { background: rgba(56,189,248,0.20); color: #7dd3fc; }
+}
+.model-badge.hidden { display: none; }
 .dot { width: 8px; height: 8px; border-radius: 50%; flex: none; }
 .dot.loading { background: #f59e0b; animation: pulse 1.2s infinite; }
 .dot.success { background: #10b981; }

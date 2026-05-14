@@ -48,6 +48,8 @@ try {
       if (message.payload.stage !== undefined) patch.stage = message.payload.stage;
       if (message.payload.partial !== undefined) patch.partial = message.payload.partial;
       if (message.payload.strategy !== undefined) patch.strategy = message.payload.strategy;
+      if (message.payload.provider !== undefined) patch.provider = message.payload.provider;
+      if (message.payload.model !== undefined) patch.model = message.payload.model;
       updatePanel(message.payload.requestId, patch);
       return false;
     }

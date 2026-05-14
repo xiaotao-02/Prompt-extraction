@@ -107,6 +107,18 @@ export function applyLoadingPatch(state: PanelState): void {
     strategyEl.classList.toggle('hidden', !label);
   }
 
+  // 模型 badge：和 strategy 同时（settings 加载完）补发，用 "provider · model"
+  // 形式让用户看清"这次到底用谁的什么模型在跑"。空值时整块隐藏。
+  const modelEl = panel.querySelector<HTMLElement>('[data-role="model-badge"]');
+  if (modelEl) {
+    const modelLabel = state.model
+      ? `${state.provider ? state.provider + ' · ' : ''}${state.model}`
+      : '';
+    modelEl.textContent = modelLabel;
+    modelEl.classList.toggle('hidden', !modelLabel);
+    if (modelLabel) modelEl.setAttribute('title', `本次使用：${modelLabel}`);
+  }
+
   const hasPartial = !!state.partial;
   const barEl = panel.querySelector<HTMLElement>('[data-role="bar-fill"]');
   if (barEl) {

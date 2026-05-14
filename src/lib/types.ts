@@ -283,6 +283,18 @@ export type RuntimeMessage =
          * "v0.1.5 策略 / v0.1.6 策略" 等档位标签亮出来。
          */
         strategy?: StrategyId;
+        /**
+         * 本次反推使用的服务商 id（如 'openai' / 'gemini' / 'openrouter'）。
+         * 后台在 settings 读取完成后随 strategy 一并补发，让 loading 面板
+         * 在还没拿到结果时就能告诉用户"正在用谁的什么模型生成"。
+         */
+        provider?: ProviderId;
+        /**
+         * 本次反推使用的模型 id（如 'gpt-4o' / 'gemini-2.0-flash'）。
+         * 同上，仅在 settings 读取完成后发一次，loading 面板用它点亮
+         * 模型 badge。
+         */
+        model?: string;
       };
     }
   | {

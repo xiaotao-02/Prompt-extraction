@@ -444,17 +444,18 @@ export default function PromptLibrary({ focusId, onConsumeFocus }: PromptLibrary
   };
 
   const onDeleteVersion = async (item: HistoryItem, v: PromptVersion) => {
-    if (item.versions[0]?.id === v.id) {
-      showTip(false, '不能删除「当前版本」，请先切换/恢复其它版本');
-      return;
-    }
     if (item.versions.length <= 1) {
       showTip(false, '至少保留一个版本');
       return;
     }
-    if (!confirm('确定删除该版本吗？此操作不可撤销')) return;
+    const isCurrent = item.versions[0]?.id === v.id;
+    const msg = isCurrent
+      ? '确定删除「当前版本」吗？删除后将由下一条版本自动顶替为新的当前版本，此操作不可撤销'
+      : '确定删除该版本吗？此操作不可撤销';
+    if (!confirm(msg)) return;
     await removePromptVersion(item.id, v.id);
     await load();
+    if (isCurrent) showTip(true, '已删除当前版本，已切换到下一版本');
   };
 
   const onDeleteItem = async (item: HistoryItem) => {

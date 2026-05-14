@@ -9,8 +9,13 @@ import {
   Link2Off,
   ShieldCheck,
   AlertCircle,
+  AlertTriangle,
   Check,
   Info,
+  X,
+  History as HistoryIcon,
+  KeyRound,
+  Folder as FolderIcon,
 } from 'lucide-react';
 import {
   BACKUP_FILE_NAME,
@@ -25,7 +30,12 @@ import {
   type DataDirectoryState,
   type SyncMeta,
 } from '@/lib/fsBackup';
-import { buildBackup, onLocalDataChange, restoreBackup, type BackupPayload } from '@/lib/storage';
+import {
+  buildBackup,
+  onLocalDataChange,
+  restoreBackup,
+  type BackupPayload,
+} from '@/lib/storage';
 import { getCurrentVersion } from '@/lib/updater';
 
 /**
@@ -41,17 +51,37 @@ import { getCurrentVersion } from '@/lib/updater';
  *    – 旧浏览器（不支持 FSA）自动降级到下面的导入/导出按钮
  *
  * 2) **手动导入 / 导出 JSON**：兜底方案，所有浏览器都可用。
+ *
+ * 数据安全设计要点（吃过亏后加固，不要随意删）：
+ * - 选回旧目录时**绝不**自动 syncToDirectory；恢复 / 保持不动 / 覆盖三选一由用户自己点
+ * - syncToDirectory 默认带 `shrink-blocked` 守门；UI 收到 shrink-blocked 弹二次确认
+ * - 「未配置数据目录」状态用橙色警告横幅，专门提醒重装用户**先选回旧目录再去填 API**
  */
 export interface DataPersistenceProps {
   /** 数据变化时由外层重新拉取（例如恢复后让 SettingsView 重新读 settings）。 */
   onDataRestored?: () => void;
 }
 
+/**
+ * 选完目录后等待用户决策的临时状态：
+ * - 'pending-existing'：目录里已有备份，弹自定义模态让用户挑「恢复 / 保持 / 覆盖」
+ * - 'shrink-confirm'：自动同步被 shrink-blocked，弹模态让用户选「恢复 / 保持 / 强制覆盖」
+ */
+interface PendingExistingDecision {
+  kind: 'pending-existing';
+  payload: BackupPayload;
+}
+interface PendingShrinkDecision {
+  kind: 'shrink-confirm';
+}
+type Decision = PendingExistingDecision | PendingShrinkDecision | null;
+
 export default function DataPersistence({ onDataRestored }: DataPersistenceProps) {
   const [state, setState] = useState<DataDirectoryState | null>(null);
   const [meta, setMeta] = useState<SyncMeta | null>(null);
   const [busy, setBusy] = useState<'pick' | 'sync' | 'restore' | 'export' | 'import' | null>(null);
   const [tip, setTip] = useState<{ ok: boolean; msg: string } | null>(null);
+  const [decision, setDecision] = useState<Decision>(null);
   const importInputRef = useRef<HTMLInputElement>(null);
 
   const refresh = useCallback(async () => {
@@ -69,6 +99,40 @@ export default function DataPersistence({ onDataRestored }: DataPersistenceProps
     setTimeout(() => setTip(null), 2400);
   };
 
+  /**
+   * 走完一次 syncToDirectory 后统一处理结果：
+   * - ok：写 SyncMeta + UI tip
+   * - shrink-blocked：进入二次确认状态，让用户自己决定「恢复 / 保持 / 强制覆盖」
+   * - 其它失败：写 SyncMeta(lastError) + UI tip
+   */
+  const handleSyncResult = useCallback(
+    async (
+      r: Awaited<ReturnType<typeof syncToDirectory>>,
+      opts: { silent?: boolean } = {}
+    ) => {
+      if (r.ok) {
+        const m: SyncMeta = { lastSyncedAt: r.syncedAt || Date.now(), bytes: r.bytes };
+        await writeSyncMeta(m);
+        setMeta(m);
+        if (!opts.silent) showTip(true, '已同步到数据目录');
+        return;
+      }
+      if (r.reason === 'shrink-blocked') {
+        // 这是数据丢失高危路径（重装后空数据要覆盖旧备份），必须强制让用户表态
+        setDecision({ kind: 'shrink-confirm' });
+        return;
+      }
+      if (!opts.silent) showTip(false, formatReason(r.reason));
+      const m: SyncMeta = {
+        lastSyncedAt: meta?.lastSyncedAt || 0,
+        lastError: r.reason || '同步失败',
+      };
+      await writeSyncMeta(m);
+      setMeta(m);
+    },
+    [meta?.lastSyncedAt]
+  );
+
   // 监听本地数据变化 → 自动同步到数据目录（如果配置了）。
   //
   // 用两条订阅同时覆盖两种情况：
@@ -78,26 +142,20 @@ export default function DataPersistence({ onDataRestored }: DataPersistenceProps
   //
   // 用 debounce 1.2s 把短时间内的多次写入（例如批量删除、连续提取）合并成一次落盘，
   // 避免反复打开/关闭可写文件流给磁盘带来负担，也降低对用户文件系统活跃度的干扰。
+  //
+  // 关键安全网：在 decision 处于 'pending-existing' 期间**完全跳过**自动同步，
+  // 否则用户还没决定要不要恢复，restoreBackup 触发的写入就会被自动同步把空数据
+  // 写到 JSON 把旧备份覆盖。
   useEffect(() => {
     if (!state?.configured) return;
     let timer: number | null = null;
 
     const doSync = () => {
+      if (decision?.kind === 'pending-existing') return;
       if (timer != null) window.clearTimeout(timer);
       timer = window.setTimeout(async () => {
         const r = await syncToDirectory(getCurrentVersion());
-        if (r.ok) {
-          const m: SyncMeta = { lastSyncedAt: r.syncedAt || Date.now(), bytes: r.bytes };
-          await writeSyncMeta(m);
-          setMeta(m);
-        } else {
-          const m: SyncMeta = {
-            lastSyncedAt: meta?.lastSyncedAt || 0,
-            lastError: r.reason || '同步失败',
-          };
-          await writeSyncMeta(m);
-          setMeta(m);
-        }
+        await handleSyncResult(r, { silent: true });
       }, 1200);
     };
 
@@ -106,11 +164,12 @@ export default function DataPersistence({ onDataRestored }: DataPersistenceProps
       changes: { [key: string]: chrome.storage.StorageChange },
       _area: chrome.storage.AreaName
     ) => {
-      // 只对 settings / history 的变更触发同步；忽略我们自己写的 SyncMeta 等
+      // 只对 settings / history / folders 的变更触发同步；忽略我们自己写的 SyncMeta 等
       // 否则会形成"写 meta → onChanged → 再同步 → 写 meta"的死循环。
       if (
         'app_settings_v1' in changes ||
         'history_v1' in changes ||
+        'library_folders_v1' in changes ||
         'discovered_models_v1' in changes
       ) {
         doSync();
@@ -122,8 +181,15 @@ export default function DataPersistence({ onDataRestored }: DataPersistenceProps
       chrome.storage.onChanged.removeListener(onStorage);
       if (timer != null) window.clearTimeout(timer);
     };
-  }, [state?.configured, meta?.lastSyncedAt]);
+  }, [state?.configured, decision?.kind, handleSyncResult]);
 
+  /**
+   * 选目录入口。**绝不**在这里隐式调 syncToDirectory，否则用户点【取消】后
+   * 会立刻把当前空数据写到 JSON 把旧备份永久覆盖（吃过这个亏）。
+   *
+   * - 目录里**没有**备份 → 显式提示，让用户自己点「立即同步」写第一份
+   * - 目录里**已有**备份 → 弹自定义模态框，三选一（恢复 / 保持 / 覆盖）
+   */
   const onPick = async () => {
     setBusy('pick');
     try {
@@ -135,28 +201,9 @@ export default function DataPersistence({ onDataRestored }: DataPersistenceProps
       const { existingBackup } = result;
       await refresh();
       if (existingBackup) {
-        const counts = `${existingBackup.history?.length || 0} 条历史 + ${
-          Object.keys(existingBackup.settings?.providers || {}).length || 0
-        } 个供应商配置`;
-        const ok = confirm(
-          `检测到该目录里已有备份（${counts}）。\n\n是否用它覆盖当前插件里的数据？\n\n` +
-            `· 点【确定】= 完整恢复备份（适合刚重装后选回旧目录）\n` +
-            `· 点【取消】= 保留当前数据，下次同步会把当前数据写回 JSON（覆盖旧备份）`
-        );
-        if (ok) {
-          const r = await restoreBackup(existingBackup, 'replace');
-          showTip(true, `已从备份还原 · 历史 ${r.historyTotal} 条`);
-          onDataRestored?.();
-        }
+        setDecision({ kind: 'pending-existing', payload: existingBackup });
       } else {
-        showTip(true, '已设置数据目录，立即写入首份备份…');
-      }
-      // 首次设置后立刻写一次，保证目录里有完整 JSON
-      const r = await syncToDirectory(getCurrentVersion());
-      if (r.ok) {
-        const m: SyncMeta = { lastSyncedAt: r.syncedAt || Date.now(), bytes: r.bytes };
-        await writeSyncMeta(m);
-        setMeta(m);
+        showTip(true, '已设置数据目录，可点「立即同步」写入首份备份');
       }
     } catch (err) {
       showTip(false, err instanceof Error ? err.message : String(err));
@@ -165,18 +212,72 @@ export default function DataPersistence({ onDataRestored }: DataPersistenceProps
     }
   };
 
+  const applyDecision = async (
+    choice: 'restore' | 'keep' | 'overwrite'
+  ): Promise<void> => {
+    if (!decision) return;
+
+    if (decision.kind === 'pending-existing') {
+      if (choice === 'restore') {
+        setBusy('restore');
+        try {
+          const r = await restoreBackup(decision.payload, 'replace');
+          showTip(true, `已从备份还原 · 历史 ${r.historyTotal} 条`);
+          onDataRestored?.();
+          // 恢复完之后再写一次（此时 storage 里已经是完整数据，不会触发 shrink-blocked）
+          const sr = await syncToDirectory(getCurrentVersion());
+          await handleSyncResult(sr, { silent: true });
+        } finally {
+          setBusy(null);
+        }
+      } else if (choice === 'overwrite') {
+        // 用户明确要把当前数据覆盖到旧备份；强制写
+        setBusy('sync');
+        try {
+          const sr = await syncToDirectory(getCurrentVersion(), { force: true });
+          await handleSyncResult(sr);
+        } finally {
+          setBusy(null);
+        }
+      }
+      // choice === 'keep' → 什么都不做，备份和 storage 都保持现状
+      setDecision(null);
+      return;
+    }
+
+    if (decision.kind === 'shrink-confirm') {
+      if (choice === 'restore') {
+        setBusy('restore');
+        try {
+          const r = await loadFromDirectory('replace');
+          if (r.ok && r.result) {
+            showTip(true, `已从备份恢复 · 历史 ${r.result.historyTotal} 条`);
+            onDataRestored?.();
+          } else {
+            showTip(false, formatReason(r.reason));
+          }
+        } finally {
+          setBusy(null);
+        }
+      } else if (choice === 'overwrite') {
+        setBusy('sync');
+        try {
+          const sr = await syncToDirectory(getCurrentVersion(), { force: true });
+          await handleSyncResult(sr);
+        } finally {
+          setBusy(null);
+        }
+      }
+      // 'keep' → 跳过本次同步；下次 storage 再变化又会重新触发 shrink-blocked
+      setDecision(null);
+    }
+  };
+
   const onSyncNow = async () => {
     setBusy('sync');
     try {
       const r = await syncToDirectory(getCurrentVersion());
-      if (r.ok) {
-        const m: SyncMeta = { lastSyncedAt: r.syncedAt || Date.now(), bytes: r.bytes };
-        await writeSyncMeta(m);
-        setMeta(m);
-        showTip(true, '已同步到数据目录');
-      } else {
-        showTip(false, formatReason(r.reason));
-      }
+      await handleSyncResult(r);
     } finally {
       setBusy(null);
     }
@@ -231,7 +332,7 @@ export default function DataPersistence({ onDataRestored }: DataPersistenceProps
     try {
       const text = await file.text();
       const payload = JSON.parse(text) as BackupPayload;
-      if (!payload || payload.version !== 1) {
+      if (!payload || (payload.version !== 1 && payload.version !== 2)) {
         showTip(false, '不是合法的备份文件');
         return;
       }
@@ -383,16 +484,30 @@ export default function DataPersistence({ onDataRestored }: DataPersistenceProps
               </div>
             </div>
           ) : (
-            <div className="space-y-2.5">
+            // 未配置目录态：用橙色警告横幅，专门防"重装用户先填 Key 把旧备份盖了"
+            <div className="space-y-3">
+              <div className="rounded-lg border-2 border-amber-300 dark:border-amber-500/50 bg-amber-50 dark:bg-amber-500/10 px-3.5 py-3 text-[12px] text-amber-800 dark:text-amber-200 flex gap-2.5">
+                <AlertTriangle className="w-4 h-4 flex-none mt-0.5 text-amber-600 dark:text-amber-300" />
+                <div className="space-y-1.5 leading-relaxed">
+                  <div className="font-semibold">如果你之前用过本插件 + 配过数据目录，请先做这一步！</div>
+                  <div>
+                    点下方<b>「选择数据目录…」</b>选回原来的那个文件夹（例如{' '}
+                    <code className="px-1 rounded bg-amber-100 dark:bg-amber-500/20 text-[11px]">
+                      D:\我的提示词\
+                    </code>
+                    ）。如果目录里有旧备份，会弹窗让你选「<b>恢复备份</b>」即可全量还原 API
+                    Key + 历史 + 提示词库。
+                  </div>
+                  <div className="text-[11px] text-amber-700/80 dark:text-amber-300/80">
+                    · 已加固：先恢复再绑定不会丢数据；自动同步会拒绝把空数据覆盖到更丰富的旧备份。
+                  </div>
+                </div>
+              </div>
               <p className="text-[11px] text-zinc-500 leading-relaxed">
-                还没有设置数据目录。建议选一个你<b>自己常用的固定文件夹</b>（例如{' '}
-                <code className="px-1 rounded bg-zinc-100 dark:bg-zinc-800 text-[10px]">
-                  D:\我的提示词\
-                </code>{' '}
-                ），插件会在里面维护一个 <code className="font-mono">{BACKUP_FILE_NAME}</code>{' '}
-                文件，所有写入都会同步进去。
-                <br />
-                重装插件后，再选回这个文件夹即可自动识别并还原。
+                <b>第一次使用？</b>选一个你<b>自己常用的固定文件夹</b>（建议放到 OneDrive /
+                坚果云这类带历史版本的同步盘里，多一层保险）。插件会在里面维护一个{' '}
+                <code className="font-mono">{BACKUP_FILE_NAME}</code>{' '}
+                文件，所有写入都会同步进去；重装后再选回这个文件夹即可自动识别并还原。
               </p>
               <button
                 onClick={onPick}
@@ -446,7 +561,241 @@ export default function DataPersistence({ onDataRestored }: DataPersistenceProps
           />
         </div>
       </div>
+
+      {decision && (
+        <DecisionModal
+          decision={decision}
+          busy={busy}
+          onChoose={(c) => void applyDecision(c)}
+          onClose={() => setDecision(null)}
+        />
+      )}
     </section>
+  );
+}
+
+/**
+ * 三选一决策模态框。
+ * - 'pending-existing'：选回旧目录，目录里已有备份
+ * - 'shrink-confirm'：自动同步被守门拦下，必须用户表态
+ *
+ * 故意**不**用浏览器原生 confirm —— 中文用户对「确定/取消」语义容易误判，
+ * 而用自定义按钮可以把破坏性操作（覆盖备份）放成 rose 红色 + 二次确认。
+ */
+function DecisionModal({
+  decision,
+  busy,
+  onChoose,
+  onClose,
+}: {
+  decision: PendingExistingDecision | PendingShrinkDecision;
+  busy: 'pick' | 'sync' | 'restore' | 'export' | 'import' | null;
+  onChoose: (c: 'restore' | 'keep' | 'overwrite') => void;
+  onClose: () => void;
+}) {
+  const [confirmingOverwrite, setConfirmingOverwrite] = useState(false);
+  const isPending = decision.kind === 'pending-existing';
+  const payload = isPending ? decision.payload : null;
+  const historyCount = payload?.history?.length ?? 0;
+  const providersWithKey = payload
+    ? Object.values(payload.settings?.providers || {}).filter(
+        (cfg) => cfg?.apiKey && cfg.apiKey.trim().length > 0
+      ).length
+    : 0;
+  const folderCount = payload?.folders?.length ?? 0;
+  const exportedAt = payload?.exportedAt ? new Date(payload.exportedAt) : null;
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
+      <div className="w-full max-w-lg rounded-2xl bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 shadow-2xl overflow-hidden">
+        <div className="px-5 py-4 border-b border-zinc-200 dark:border-zinc-800 flex items-start gap-3">
+          <div className="w-9 h-9 rounded-xl bg-amber-500/15 text-amber-600 dark:text-amber-300 flex items-center justify-center flex-none">
+            <AlertTriangle className="w-4 h-4" />
+          </div>
+          <div className="flex-1 min-w-0">
+            <h3 className="text-sm font-semibold">
+              {isPending ? '检测到目录里已有备份' : '即将用空数据覆盖更丰富的备份'}
+            </h3>
+            <p className="text-[11px] text-zinc-500 mt-0.5 leading-relaxed">
+              {isPending
+                ? '请明确选择如何处理 —— 误操作可能让旧备份被空数据永久覆盖。'
+                : '当前 chrome.storage 里几乎没有真实数据（API Key / 历史 / 文件夹都是空的），但目录里的 JSON 备份明显更"重"。请先选择如何处理。'}
+            </p>
+          </div>
+          <button
+            onClick={onClose}
+            className="p-1 rounded-lg text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-200 hover:bg-zinc-100 dark:hover:bg-zinc-800"
+            title="关闭（等同「保持备份不动」）"
+          >
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+
+        <div className="px-5 py-4 space-y-4">
+          {payload && (
+            <div className="rounded-xl border border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-900/60 px-3.5 py-3 text-[12px] space-y-1.5">
+              <div className="flex items-center gap-2 text-zinc-500 text-[11px]">
+                {BACKUP_FILE_NAME}
+                {exportedAt && (
+                  <span className="ml-auto">
+                    导出于{' '}
+                    {`${exportedAt.getFullYear()}/${
+                      exportedAt.getMonth() + 1
+                    }/${exportedAt.getDate()} ${exportedAt.getHours()}:${String(
+                      exportedAt.getMinutes()
+                    ).padStart(2, '0')}`}
+                  </span>
+                )}
+              </div>
+              <div className="grid grid-cols-3 gap-2">
+                <Stat
+                  icon={<HistoryIcon className="w-3 h-3" />}
+                  label="历史记录"
+                  value={historyCount}
+                />
+                <Stat
+                  icon={<KeyRound className="w-3 h-3" />}
+                  label="已填 API"
+                  value={providersWithKey}
+                />
+                <Stat
+                  icon={<FolderIcon className="w-3 h-3" />}
+                  label="文件夹"
+                  value={folderCount}
+                />
+              </div>
+            </div>
+          )}
+
+          {!confirmingOverwrite ? (
+            <div className="space-y-2">
+              <ChoiceButton
+                tone="primary"
+                disabled={busy !== null}
+                onClick={() => onChoose('restore')}
+                title={isPending ? '恢复备份（推荐）' : '从备份恢复'}
+                desc={
+                  isPending
+                    ? '把这份备份完整还原到插件里 —— 适合刚重装后选回旧目录的场景'
+                    : '把目录里的 JSON 完整还原到插件里 —— 推荐做法'
+                }
+                busy={busy === 'restore'}
+              />
+              <ChoiceButton
+                tone="ghost"
+                disabled={busy !== null}
+                onClick={() => onChoose('keep')}
+                title="保持备份不动"
+                desc="不读也不写；备份和插件数据都保持现状（关闭弹窗等同此选项）"
+              />
+              <ChoiceButton
+                tone="danger"
+                disabled={busy !== null}
+                onClick={() => setConfirmingOverwrite(true)}
+                title="用当前数据覆盖备份"
+                desc="把插件里现在的数据写到 JSON，把旧备份永久覆盖（不可撤销）"
+              />
+            </div>
+          ) : (
+            <div className="rounded-xl border border-rose-200 dark:border-rose-500/40 bg-rose-50 dark:bg-rose-500/10 px-3.5 py-3 space-y-3">
+              <div className="text-[12px] text-rose-700 dark:text-rose-200 leading-relaxed flex gap-2">
+                <AlertTriangle className="w-4 h-4 flex-none mt-0.5" />
+                <div>
+                  <div className="font-semibold mb-1">这一步不可撤销！</div>
+                  你确定要用当前
+                  {historyCount > 0 || providersWithKey > 0 || folderCount > 0
+                    ? '（更少的）'
+                    : '（空的）'}
+                  数据覆盖目录里这份备份吗？
+                  {(historyCount > 0 || providersWithKey > 0) && (
+                    <>
+                      <br />
+                      旧备份里有 <b>{historyCount}</b> 条历史 / <b>{providersWithKey}</b> 个 API
+                      Key 会立刻消失。
+                    </>
+                  )}
+                </div>
+              </div>
+              <div className="flex gap-2">
+                <button
+                  className="flex-1 px-3 py-2 rounded-lg text-[12px] font-medium bg-rose-500 text-white hover:bg-rose-600 disabled:opacity-50"
+                  disabled={busy !== null}
+                  onClick={() => {
+                    setConfirmingOverwrite(false);
+                    onChoose('overwrite');
+                  }}
+                >
+                  确认覆盖
+                </button>
+                <button
+                  className="flex-1 px-3 py-2 rounded-lg text-[12px] font-medium border border-zinc-300 dark:border-zinc-700 hover:bg-zinc-100 dark:hover:bg-zinc-800"
+                  disabled={busy !== null}
+                  onClick={() => setConfirmingOverwrite(false)}
+                >
+                  返回
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function Stat({
+  icon,
+  label,
+  value,
+}: {
+  icon: React.ReactNode;
+  label: string;
+  value: number;
+}) {
+  return (
+    <div className="rounded-lg bg-white dark:bg-zinc-950 border border-zinc-200 dark:border-zinc-800 px-2.5 py-2">
+      <div className="flex items-center gap-1 text-[10px] text-zinc-500">
+        {icon}
+        {label}
+      </div>
+      <div className="text-base font-semibold mt-0.5">{value}</div>
+    </div>
+  );
+}
+
+function ChoiceButton({
+  tone,
+  title,
+  desc,
+  disabled,
+  busy,
+  onClick,
+}: {
+  tone: 'primary' | 'ghost' | 'danger';
+  title: string;
+  desc: string;
+  disabled?: boolean;
+  busy?: boolean;
+  onClick: () => void;
+}) {
+  const cls =
+    tone === 'primary'
+      ? 'border-violet-300 dark:border-violet-500/50 bg-violet-50 dark:bg-violet-500/10 hover:border-violet-400 hover:bg-violet-100/70 dark:hover:bg-violet-500/15 text-violet-900 dark:text-violet-100'
+      : tone === 'danger'
+      ? 'border-rose-200 dark:border-rose-500/40 hover:border-rose-300 hover:bg-rose-50 dark:hover:bg-rose-500/10 text-rose-700 dark:text-rose-300'
+      : 'border-zinc-200 dark:border-zinc-800 hover:border-zinc-300 dark:hover:border-zinc-700 hover:bg-zinc-50 dark:hover:bg-zinc-800/50 text-zinc-700 dark:text-zinc-200';
+  return (
+    <button
+      onClick={onClick}
+      disabled={disabled}
+      className={`w-full text-left px-3.5 py-2.5 rounded-xl border transition disabled:opacity-50 ${cls}`}
+    >
+      <div className="text-[13px] font-medium flex items-center gap-2">
+        {title}
+        {busy && <RotateCw className="w-3 h-3 animate-spin" />}
+      </div>
+      <div className="text-[11px] mt-0.5 opacity-80 leading-snug">{desc}</div>
+    </button>
   );
 }
 
@@ -476,6 +825,8 @@ function formatReason(reason?: string): string {
       return '没有目录读写权限，请重新授权';
     case 'no-backup-file':
       return '该目录里没有备份文件，可能你换了文件夹';
+    case 'shrink-blocked':
+      return '安全网拦下了空数据覆盖（请在弹窗中选择恢复或确认覆盖）';
     default:
       return reason;
   }

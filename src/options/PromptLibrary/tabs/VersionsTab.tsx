@@ -101,9 +101,10 @@ export function VersionsTab({
                     <RotateCcw className="w-3 h-3" /> 恢复此版本
                   </button>
                 )}
-                {!isCurrent && (
+                {item.versions.length > 1 && (
                   <button
                     onClick={() => onDeleteVersion(v)}
+                    title={isCurrent ? '删除当前版本（下一版本将顶替为当前）' : '删除此版本'}
                     className="ml-auto inline-flex items-center gap-1 px-2 py-0.5 rounded text-zinc-400 hover:text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-500/10 transition"
                   >
                     <Trash2 className="w-3 h-3" />

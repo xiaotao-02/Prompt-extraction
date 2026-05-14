@@ -120,7 +120,9 @@ export function updatePanel(requestId: string, patch: Partial<PanelState>): void
     patch.status === undefined &&
     (patch.stage !== undefined ||
       patch.partial !== undefined ||
-      patch.strategy !== undefined);
+      patch.strategy !== undefined ||
+      patch.provider !== undefined ||
+      patch.model !== undefined);
 
   if (lightUpdate && panel) {
     applyLoadingPatch(merged);
