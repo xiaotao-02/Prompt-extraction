@@ -10,6 +10,7 @@ import {
   ICON_RESTORE,
   ICON_SPARK,
   ICON_LIBRARY,
+  ICON_TRASH,
 } from './icons';
 import {
   stageLabel,
@@ -334,6 +335,13 @@ export function versionItemHtml(
         <button class="link-btn primary restore-btn" data-action="restore-version" data-version-id="${escapeAttr(
           v.id
         )}">${ICON_RESTORE}<span>恢复此版本</span></button>
+        ${
+          isCurrent
+            ? ''
+            : `<button class="link-btn danger delete-btn" data-action="delete-version" data-version-id="${escapeAttr(
+                v.id
+              )}" title="删除此版本">${ICON_TRASH}</button>`
+        }
       </div>
     </li>
   `;

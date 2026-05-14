@@ -1,4 +1,9 @@
-import { appendPromptVersion, getHistoryItem, restorePromptVersion } from '@/lib/storage';
+import {
+  appendPromptVersion,
+  getHistoryItem,
+  removePromptVersion,
+  restorePromptVersion,
+} from '@/lib/storage';
 import type { RefineResponse } from '@/lib/types';
 import {
   currentState,
@@ -6,10 +11,14 @@ import {
   panel,
   panelActions,
   panelGeometry,
-  panelResizeObserver,
-  setPanelResizeObserver,
 } from './state';
-import { updateGeometry, clampGeometry } from './geometry';
+import {
+  updateGeometry,
+  clampGeometry,
+  MIN_WIDTH,
+  MIN_HEIGHT,
+  VIEWPORT_MARGIN,
+} from './geometry';
 
 function renderPanel(...args: Parameters<typeof panelActions.renderPanel>) {
   return panelActions.renderPanel(...args);
@@ -149,7 +158,7 @@ function bindHeaderDrag(root: HTMLElement): void {
         left: r.left,
         top: r.top,
       };
-      // 防御性接管：如果 panel 上有 inline width/height（一般是 Chrome 原生 resize
+      // 防御性接管：如果 panel 上有 inline width/height（一般是 bindEdgeResize
       // 写进去的）但 panelGeometry 还没记录到，把当前实际尺寸一并固化进 geometry。
       // 否则下一次 updateGeometry → applyGeometryToPanel 会因为 panelGeometry.width
       // 还是 undefined 而 removeProperty('width')，把用户拖出来的尺寸抹回 CSS 默认值
@@ -168,119 +177,122 @@ function bindHeaderDrag(root: HTMLElement): void {
 }
 
 /**
- * 标记用户当前是否正在通过 CSS `resize: both` 的右下角拉手调整尺寸。
+ * 8 方向边缘 resize：监听 panel 内侧 8 个 .resize-handle 上的 mousedown，
+ * 根据方向（n/s/e/w + 4 角）实时改写 panel 的 left/top/width/height。
  *
- * 这是判断 ResizeObserver 触发原因的关键：
- *   - true：用户在拉拽 → 把新尺寸固化为 `width/height`
- *   - false：内容自然变化（loading → success / 历史版本展开）→ 忽略，
- *     保留"按内容自适应"的能力
+ * 方向编码：
+ *   - 含 'e' → 拖东边：固定 left、增减 width
+ *   - 含 'w' → 拖西边：保持 right 固定（startL + startW），left = right - newW
+ *   - 含 's' → 拖南边：固定 top、增减 height
+ *   - 含 'n' → 拖北边：保持 bottom 固定，top = bottom - newH
  *
- * 模块级单例 + 一次性 window 监听，避免每次 renderPanel 都重复挂载。
+ * 这种"保持对侧边固定"的算法在尺寸触底（MIN_WIDTH / MIN_HEIGHT）时也不会让
+ * 面板被推走——只会卡在最小尺寸不动。
+ *
+ * 拖拽过程直接改 inline style 走最快路径，松手时再 commit 一次到 panelGeometry +
+ * sessionStorage（updateGeometry）。
  */
-let userResizingPanel = false;
-let globalResizeListenersInstalled = false;
+function bindEdgeResize(root: HTMLElement): void {
+  const clamp = (v: number, lo: number, hi: number) =>
+    Math.max(lo, Math.min(hi, v));
 
-function ensureGlobalResizeListeners(): void {
-  if (globalResizeListenersInstalled) return;
-  globalResizeListenersInstalled = true;
+  root.querySelectorAll<HTMLElement>('.resize-handle').forEach((h) => {
+    h.addEventListener('mousedown', (e) => {
+      if (e.button !== 0) return;
+      const dir = h.dataset.dir || '';
+      if (!dir) return;
 
-  // mousedown 落在 panel 右下角约 18x18 的 resize 拉手区域时，判定为开始
-  // 调整尺寸。这里**不能**再加 `e.target === panel` 限制 —— 因为 .body / .panel-row
-  // 在 success 状态下铺满 panel header 以下的整片区域，resize 拉手的视觉位置
-  // 实际是落在 .body（或它的子元素）上面，e.target 几乎永远不会是 panel 自身。
-  // 如果加这个限制，结果就是：Chrome 视觉上完成了 resize，但 ResizeObserver
-  // 因为 userResizingPanel 还是 false 直接 bail，panelGeometry.width/height
-  // 永远拿不到新尺寸 → 用户随后任何会触发 applyGeometryToPanel 的动作
-  // （拖动 header、切换状态等）都会把 inline width/height 抹掉、窗口"还原大小"。
-  //
-  // 只看坐标也是安全的：18x18 角是 Chrome 原生 resize 拉手专属区域，actions
-  // 行最右侧的按钮（"复制"）X 接近 rect.right，但 Y 在 rect.bottom - 16~50 之间，
-  // 进不了 y >= rect.bottom - 18 的范围。
-  window.addEventListener('mousedown', (e) => {
-    if (!panel) return;
-    const rect = panel.getBoundingClientRect();
-    // NEAR 控制 resize 拉手判定半径。Chrome 的 resize 拉手实际只有 7~10px，
-    // 给一点冗余取 14；再大就可能误判 .actions 行最右下角按钮的边缘像素。
-    // .body 的 padding-bottom = 16，所以按钮底端最低在 rect.bottom - 16，
-    // 用 14 刚好避开。
-    const NEAR = 14;
-    if (
-      e.clientX >= rect.right - NEAR &&
-      e.clientX <= rect.right + 4 &&
-      e.clientY >= rect.bottom - NEAR &&
-      e.clientY <= rect.bottom + 4
-    ) {
-      userResizingPanel = true;
-      // 加 .resizing class：让 styles.ts 关掉 backdrop-filter / 动画，
-      // 给浏览器一个"用户在主动操作几何"的明确提示，避免毛玻璃 reflow 卡顿。
-      panel.classList.add('resizing');
+      e.preventDefault();
+      e.stopPropagation();
+
+      const rect = root.getBoundingClientRect();
+      const startL = rect.left;
+      const startT = rect.top;
+      const startW = rect.width;
+      const startH = rect.height;
+      const right = startL + startW;
+      const bottom = startT + startH;
+      const startX = e.clientX;
+      const startY = e.clientY;
+
+      // 加 .resizing class：关掉 backdrop-filter / 动画，避免毛玻璃 reflow 卡顿。
+      root.classList.add('resizing');
       // 用户首次按下 resize 拉手时，把当前自适应尺寸固化进 geometry。
       // 这样即便用户只小拖一下也不会回到 auto 状态，下次切 tab / 切版本
-      // 不会"尺寸还原"。RO 的 firstFire 检查会跳过这次写入触发的回调。
+      // 不会"尺寸还原"。
       updateGeometry({
-        width: Math.round(rect.width),
-        height: Math.round(rect.height),
+        width: Math.round(startW),
+        height: Math.round(startH),
       });
-    }
-  });
 
-  // 不管 mouseup 在哪里发生，都让"用户在 resize"的状态收尾：commit 当前
-  // 实际尺寸到 geometry，并清旗。setTimeout(0) 是为了让最后一帧 RO 回调
-  // 也命中 userResizingPanel=true 的分支。
-  window.addEventListener('mouseup', () => {
-    if (!userResizingPanel) return;
-    if (panel) {
-      const r = panel.getBoundingClientRect();
-      updateGeometry({
-        width: Math.round(r.width),
-        height: Math.round(r.height),
-      });
-      panel.classList.remove('resizing');
-    }
-    setTimeout(() => {
-      userResizingPanel = false;
-    }, 0);
-  });
-}
+      const onMove = (mv: MouseEvent) => {
+        const dx = mv.clientX - startX;
+        const dy = mv.clientY - startY;
+        const vw = window.innerWidth;
+        const vh = window.innerHeight;
 
-/**
- * 监听用户从右下角 resize 拉手拖动 panel 调整大小。
- *
- * CSS 的 `resize: both` 会让浏览器原生处理拉拽，没有 mouseup 事件能挂；
- * 用 ResizeObserver 在尺寸变化后把最终值写回几何状态。
- *
- * 重要：必须配合 `userResizingPanel` 一起判断，否则 loading→success
- * 这种"内容自适应"导致的高度变化也会被错误地固化下来。
- */
-function bindPanelResizeObserver(root: HTMLElement): void {
-  ensureGlobalResizeListeners();
-  if (typeof ResizeObserver === 'undefined') return;
-  if (panelResizeObserver) {
-    panelResizeObserver.disconnect();
-    setPanelResizeObserver(null);
-  }
-  let firstFire = true;
-  const ro = new ResizeObserver((entries) => {
-    if (firstFire) {
-      // 第一次回调是 RO 挂上时拿到的初始尺寸（applyGeometry 后的状态），
-      // 跳过即可，避免误把它当成用户调整。
-      firstFire = false;
-      return;
-    }
-    if (!userResizingPanel) return;
-    for (const entry of entries) {
-      const w = Math.round(entry.contentRect.width);
-      const h = Math.round(entry.contentRect.height);
-      updateGeometry({ width: w, height: h });
-    }
+        let newL = startL;
+        let newT = startT;
+        let newW = startW;
+        let newH = startH;
+
+        if (dir.includes('e')) {
+          newW = clamp(startW + dx, MIN_WIDTH, vw - startL - VIEWPORT_MARGIN);
+          newL = startL;
+        } else if (dir.includes('w')) {
+          // 西边拖动：right 边固定，width = right - newL
+          const maxL = right - MIN_WIDTH;
+          const minL = Math.max(
+            VIEWPORT_MARGIN,
+            right - (vw - VIEWPORT_MARGIN * 2)
+          );
+          newL = clamp(startL + dx, minL, maxL);
+          newW = right - newL;
+        }
+
+        if (dir.includes('s')) {
+          newH = clamp(startH + dy, MIN_HEIGHT, vh - startT - VIEWPORT_MARGIN);
+          newT = startT;
+        } else if (dir.includes('n')) {
+          // 北边拖动：bottom 边固定，height = bottom - newT
+          const maxT = bottom - MIN_HEIGHT;
+          const minT = Math.max(
+            VIEWPORT_MARGIN,
+            bottom - (vh - VIEWPORT_MARGIN * 2)
+          );
+          newT = clamp(startT + dy, minT, maxT);
+          newH = bottom - newT;
+        }
+
+        // mousemove 不写 sessionStorage / setState，直接改 inline style；
+        // 松手时再 commit 一次最终几何。
+        root.style.left = `${newL}px`;
+        root.style.top = `${newT}px`;
+        root.style.width = `${newW}px`;
+        root.style.height = `${newH}px`;
+      };
+
+      const onUp = () => {
+        window.removeEventListener('mousemove', onMove);
+        window.removeEventListener('mouseup', onUp);
+        root.classList.remove('resizing');
+        const r = root.getBoundingClientRect();
+        updateGeometry({
+          left: r.left,
+          top: r.top,
+          width: Math.round(r.width),
+          height: Math.round(r.height),
+        });
+      };
+      window.addEventListener('mousemove', onMove);
+      window.addEventListener('mouseup', onUp);
+    });
   });
-  ro.observe(root);
-  setPanelResizeObserver(ro);
 }
 
 export function bindEvents(root: HTMLElement): void {
   bindHeaderDrag(root);
-  bindPanelResizeObserver(root);
+  bindEdgeResize(root);
   const editor = root.querySelector<HTMLTextAreaElement>('[data-role="editor"]');
   if (editor) {
     editor.addEventListener('input', () => {
@@ -449,6 +461,22 @@ export function bindEvents(root: HTMLElement): void {
           });
           renderPanel(currentState);
           flashCopied(el, '已恢复 ✔');
+        });
+        return;
+      }
+      if (action === 'delete-version') {
+        // 删除单个历史版本：
+        // - 模板里"当前版本"不渲染删除按钮，所以这里不会拿到 versions[0]；
+        //   storage 层的 removePromptVersion 也兜底了"不能删当前 / 至少留一条"。
+        // - 删除完成后不重置 draft：用户可能正在编辑别的草稿；只调用
+        //   syncVersions 刷新版本列表 + 视觉重渲，draft 由 syncVersions 自己保留。
+        const vid = el.dataset.versionId;
+        if (!vid) return;
+        if ((state.versions?.length || 0) <= 1) return;
+        if (!confirm('确定删除该版本吗？此操作不可撤销')) return;
+        void removePromptVersion(state.requestId, vid).then(() => {
+          if (!currentState || currentState.requestId !== state.requestId) return;
+          void syncVersions(state.requestId);
         });
         return;
       }

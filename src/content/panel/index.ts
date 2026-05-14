@@ -10,12 +10,10 @@ import {
   shadow,
   panel,
   currentState,
-  panelResizeObserver,
   setHost,
   setShadow,
   setPanel,
   setCurrentState,
-  setPanelResizeObserver,
   panelActions,
   type PanelState,
 } from './state';
@@ -57,6 +55,23 @@ function ensureHost(): { host: HTMLDivElement; shadow: ShadowRoot } {
   return { host: h, shadow: s };
 }
 
+/**
+ * 8 个边缘 / 角落 resize 拉手。作为 panel 的直接子节点插入，
+ * 由 events.ts:bindEdgeResize 监听 mousedown 实现任意方向缩放。
+ *
+ * 必须在 panelHtml 之后追加（而不是塞进 panelHtml 字符串里），这样换状态
+ * （loading → success → error）整片重渲也不影响 handle 的存在与样式。
+ */
+const RESIZE_DIRS = ['n', 's', 'e', 'w', 'nw', 'ne', 'sw', 'se'] as const;
+function appendResizeHandles(p: HTMLElement): void {
+  for (const d of RESIZE_DIRS) {
+    const h = document.createElement('div');
+    h.className = `resize-handle ${d}`;
+    h.dataset.dir = d;
+    p.appendChild(h);
+  }
+}
+
 export function renderPanel(state: PanelState): void {
   const { shadow } = ensureHost();
   setCurrentState(state);
@@ -64,6 +79,7 @@ export function renderPanel(state: PanelState): void {
   const next = document.createElement('div');
   next.className = 'panel';
   next.innerHTML = panelHtml(state);
+  appendResizeHandles(next);
   shadow.appendChild(next);
   setPanel(next);
   // 应用上一次的位置 / 尺寸（首次渲染会用居中默认值）。
@@ -167,11 +183,6 @@ export function applyHistoryReady(
 export function closePanel(): void {
   stopLoadingTicker();
   stopRefineTicker();
-  // 关掉用户拖右下角触发的 ResizeObserver；下次 renderPanel 时会重新挂载到新 div 上。
-  if (panelResizeObserver) {
-    panelResizeObserver.disconnect();
-    setPanelResizeObserver(null);
-  }
   if (panel) {
     panel.remove();
     setPanel(null);

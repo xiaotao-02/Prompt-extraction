@@ -1,0 +1,15 @@
+# 商店后台「其他字段 / Additional Fields」区域要填的 URL
+#
+# 表单字段对应：Store listing → Additional fields
+
+## 官方网址 (Official URL)
+（下拉选「无」，无需填写。除非你有 Search Console 已验证的自有域名。）
+
+## 首页网址 (Homepage URL)
+https://github.com/xiaotao-02/Prompt-extraction
+
+## 支持信息页面网址 (Support URL)
+https://github.com/xiaotao-02/Prompt-extraction/issues
+
+## 成人内容 (Mature content)
+关闭 (OFF)

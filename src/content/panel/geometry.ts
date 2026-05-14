@@ -6,7 +6,7 @@
  *   这样状态切换（loading → success → versions 展开）时面板能"自适应"内容。
  * - 用户主动操作后才把对应字段写成固定 px：
  *   · 拖动 header → 写 left / top
- *   · 拖右下角 resize → 写 width / height
+ *   · 拖任意边缘 / 角落 resize → 写 width / height（西/北方向同时写 left/top）
  * - 几何信息持久化到 sessionStorage，刷新当前 tab 后丢失，新 tab 独立，
  *   不污染 chrome.storage.local（用户基本不会期望"上次拖到右下角，下次新打开还在右下角"）。
  */
@@ -18,9 +18,9 @@ import {
 } from './state';
 
 const STORAGE_KEY = '__image_prompt_extractor_panel_geom__';
-const MIN_WIDTH = 360;
-const MIN_HEIGHT = 220;
-const VIEWPORT_MARGIN = 8;
+export const MIN_WIDTH = 360;
+export const MIN_HEIGHT = 220;
+export const VIEWPORT_MARGIN = 8;
 
 function readSession(): PanelGeometry | null {
   try {

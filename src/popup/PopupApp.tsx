@@ -20,6 +20,7 @@ import {
   clearHistory,
   getHistory,
   removeHistory,
+  removePromptVersion,
   restorePromptVersion,
 } from '@/lib/storage';
 import type { HistoryItem, PromptVersion, RefineResponse } from '@/lib/types';
@@ -103,6 +104,22 @@ export default function PopupApp() {
 
   const onRestore = async (item: HistoryItem, version: PromptVersion) => {
     await restorePromptVersion(item.id, version.id);
+    load();
+  };
+
+  // 删除单个历史版本：
+  // - 不允许删"当前版本"（versions[0]），由 storage 层兜底，这里再提前给一句用户友好的提示
+  // - 至少保留 1 个版本
+  // - 删完最后一个旧版本后版本数会退回 1，此时上层 `versionCount > 1` 折叠区会自动关闭，
+  //   所以这里不需要手动 setOpenVersionsId(null)
+  const onDeleteVersion = async (item: HistoryItem, version: PromptVersion) => {
+    if (item.versions[0]?.id === version.id) {
+      alert('不能删除「当前版本」，请先切换/恢复其它版本');
+      return;
+    }
+    if ((item.versions?.length || 0) <= 1) return;
+    if (!confirm('确定删除该版本吗？此操作不可撤销')) return;
+    await removePromptVersion(item.id, version.id);
     load();
   };
 
@@ -402,6 +419,7 @@ export default function PopupApp() {
                           onCopy={(text, id) => onCopy(text, id)}
                           copiedId={copiedId}
                           onRestore={(v) => onRestore(item, v)}
+                          onDelete={(v) => onDeleteVersion(item, v)}
                         />
                       )}
                     </div>
@@ -421,11 +439,13 @@ function VersionList({
   onCopy,
   copiedId,
   onRestore,
+  onDelete,
 }: {
   item: HistoryItem;
   onCopy: (text: string, id: string) => void;
   copiedId: string | null;
   onRestore: (v: PromptVersion) => void;
+  onDelete: (v: PromptVersion) => void;
 }) {
   // 同图反推次数统计（用于头部副标题）
   const extractedCount = item.versions.filter((v) => v.source === 'extracted').length;
@@ -485,6 +505,15 @@ function VersionList({
                     className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-violet-600 dark:text-violet-300 hover:bg-violet-100 dark:hover:bg-violet-500/20"
                   >
                     <RotateCcw className="w-3 h-3" /> 恢复此版本
+                  </button>
+                )}
+                {!isCurrent && (
+                  <button
+                    onClick={() => onDelete(v)}
+                    title="删除此版本"
+                    className="ml-auto inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-zinc-400 hover:text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-500/10"
+                  >
+                    <Trash2 className="w-3 h-3" />
                   </button>
                 )}
               </div>

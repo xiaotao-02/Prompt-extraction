@@ -71,7 +71,8 @@ export const HOST_ID = '__image_prompt_extractor_host__';
  * - width：可选；用户没动过 resize 时为 undefined，让 CSS 默认值生效。
  * - height：可选；同上，默认 auto，由内容决定。
  *
- * 用户拖动 header 时会更新 left/top；用户拖右下角 resize 时会更新 width/height。
+ * 用户拖动 header 时会更新 left/top；用户拖任意边缘 / 角落 resize 时会更新
+ * width/height（西/北方向同时会动 left/top 以保持对侧边固定）。
  * 跨 renderPanel 重渲染时这块状态不变，确保面板"哪儿就停哪儿"。
  */
 export interface PanelGeometry {
@@ -100,10 +101,6 @@ export let refineTickHandle: number | null = null;
  * 这是模块级单例，跨 renderPanel 重渲染保留。
  */
 export let panelGeometry: PanelGeometry | null = null;
-/**
- * 用户拖右下角调整尺寸的 ResizeObserver 句柄。每次 setPanel 时重新挂载。
- */
-export let panelResizeObserver: ResizeObserver | null = null;
 
 export function setHost(v: HTMLDivElement | null) {
   host = v;
@@ -125,9 +122,6 @@ export function setRefineTickHandle(v: number | null) {
 }
 export function setPanelGeometry(v: PanelGeometry | null) {
   panelGeometry = v;
-}
-export function setPanelResizeObserver(v: ResizeObserver | null) {
-  panelResizeObserver = v;
 }
 
 export const panelActions = {

@@ -10,7 +10,7 @@ export const STYLE = `
 .panel {
   /* 位置和尺寸由 JS 写入到 inline style（top/left/width/height），
      这里只给一组兜底默认值。height 不写死，让面板按内容自适应；
-     用户从右下角拖拽 resize 之后会被 JS 写成固定 px。 */
+     用户从任意边缘 / 角落拖拽 resize 之后会被 JS 写成固定 px。 */
   position: fixed;
   top: 24px; left: 24px;
   width: min(720px, calc(100vw - 48px));
@@ -28,10 +28,33 @@ export const STYLE = `
   box-shadow: 0 32px 80px -16px rgba(0,0,0,0.35), 0 8px 24px rgba(0,0,0,0.12);
   font: 13px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
   overflow: hidden;
-  /* resize: both 允许用户从右下角拖动调整宽高。配合 overflow:hidden 才能生效。 */
-  resize: both;
+  /* resize 由 JS 通过 8 个 .resize-handle 自实现（见 events.ts:bindEdgeResize），
+     不再依赖 CSS 原生 resize: both，因为后者只支持右下角一个方向。 */
   animation: panelIn .22s cubic-bezier(.2,.9,.3,1.2);
 }
+
+/* 8 个边缘 resize 拉手：分别贴在 panel 内侧的 4 边 + 4 角。
+   - 边 handle 6px 厚、长边在 10px 内缩，避免挤占角落 handle 的命中区。
+   - 角 handle 14x14，位于 panel 4 个圆角处。
+   - 角 handle 的 z-index 高于边 handle，保证斜向拖拽优先于单向。
+   - 内嵌在 panel 内部（而非 outside 负偏移），这样不会被 panel 的
+     overflow:hidden 截断点击区域。代价是 panel 内容（如 header / 按钮）
+     最外圈 6~14px 会被 handle 盖住，但这一圈本来就是空白边距区，
+     实际不影响功能。 */
+.resize-handle {
+  position: absolute;
+  z-index: 5;
+  /* 默认透明，hover 时不显示视觉提示，靠 cursor 让用户知道可以拖拽。 */
+  background: transparent;
+}
+.resize-handle.n  { top: 0;     left: 14px;  right: 14px; height: 6px;  cursor: ns-resize; }
+.resize-handle.s  { bottom: 0;  left: 14px;  right: 14px; height: 6px;  cursor: ns-resize; }
+.resize-handle.w  { left: 0;    top: 14px;   bottom: 14px; width: 6px;  cursor: ew-resize; }
+.resize-handle.e  { right: 0;   top: 14px;   bottom: 14px; width: 6px;  cursor: ew-resize; }
+.resize-handle.nw { top: 0;     left: 0;     width: 14px; height: 14px; cursor: nwse-resize; z-index: 6; }
+.resize-handle.ne { top: 0;     right: 0;    width: 14px; height: 14px; cursor: nesw-resize; z-index: 6; }
+.resize-handle.sw { bottom: 0;  left: 0;     width: 14px; height: 14px; cursor: nesw-resize; z-index: 6; }
+.resize-handle.se { bottom: 0;  right: 0;    width: 14px; height: 14px; cursor: nwse-resize; z-index: 6; }
 /* panelIn 跑完后由 JS 给 panel 加上 .mounted，永久禁用入场动画。
    这样后续切换 .dragging / .resizing 等 class 时，浏览器不会因为
    "animation: none" 被移除而把 panelIn 当成新的动画声明重播一次，
@@ -307,6 +330,13 @@ export const STYLE = `
 .link-btn.active { opacity: 1; background: rgba(99,102,241,0.12); color: #4f46e5; }
 .link-btn.primary { color: #4f46e5; opacity: 0.9; }
 .link-btn.primary:hover { background: rgba(99,102,241,0.12); opacity: 1; }
+/* 危险动作（删除版本）：常态保持中性灰，hover 才变玫红，避免在
+   sidebar 一排按钮里抢眼。margin-left:auto 把它推到右端，与
+   "复制 / 恢复" 留出视觉间距。 */
+.link-btn.danger { color: inherit; opacity: 0.55; margin-left: auto; }
+.link-btn.danger:hover {
+  opacity: 1; background: rgba(244,63,94,0.10); color: #e11d48;
+}
 .link-btn[disabled] { cursor: not-allowed; opacity: 0.35; }
 .link-btn[disabled]:hover { background: transparent; }
 @media (prefers-color-scheme: dark) {
@@ -314,6 +344,7 @@ export const STYLE = `
   .link-btn.active { background: rgba(139,92,246,0.18); color: #c4b5fd; }
   .link-btn.primary { color: #a5b4fc; }
   .link-btn.primary:hover { background: rgba(139,92,246,0.18); }
+  .link-btn.danger:hover { background: rgba(244,63,94,0.18); color: #fda4af; }
 }
 
 /* panel-row：success 状态下，header 下方的横向容器。

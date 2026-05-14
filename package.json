@@ -1,6 +1,6 @@
 {
   "name": "prompt-extracto",
-  "version": "0.1.14",
+  "version": "0.1.15",
   "description": "Prompt Extracto · 右键任意图片，调用视觉大模型提取 AI 绘画提示词的 Chrome 扩展",
   "private": true,
   "type": "module",
@@ -12,6 +12,7 @@
     "icons": "node scripts/generate-icons.mjs",
     "icons:from-image": "powershell -ExecutionPolicy Bypass -File scripts/resize-icons.ps1 && node scripts/optimize-pngs.mjs",
     "zip": "npm run build && node scripts/zip.mjs",
+    "package": "npm run zip",
     "release:store": "node scripts/release-store.mjs",
     "store:assets": "node scripts/make-store-assets.mjs",
     "store:screenshots": "node scripts/make-store-screenshots.mjs",
