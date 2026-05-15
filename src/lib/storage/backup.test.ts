@@ -85,4 +85,30 @@ describe('migrateItem meta backfill', () => {
     expect(m.versions[0]?.meta?.model).toBe('gpt-4o');
     expect(m.versions[0]?.meta?.style).toBe('natural-zh');
   });
+
+  it('preserves optional imageUrls on multi-ref items', () => {
+    const raw: HistoryItem = {
+      id: 'multi-1',
+      imageUrl: 'thumb-a',
+      thumbnail: 'thumb-a',
+      imageUrls: ['thumb-a', 'thumb-b'],
+      prompt: 'p',
+      provider: 'openai',
+      model: 'gpt-4o',
+      style: 'natural-zh',
+      pageUrl: '',
+      pageTitle: '',
+      createdAt: 100,
+      versions: [
+        {
+          id: 'v1',
+          prompt: 'p',
+          createdAt: 100,
+          source: 'extracted',
+        },
+      ],
+    };
+    const m = migrateItem(raw);
+    expect(m.imageUrls).toEqual(['thumb-a', 'thumb-b']);
+  });
 });

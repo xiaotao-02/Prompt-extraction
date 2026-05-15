@@ -38,9 +38,12 @@ export function MetaTab({ item }: { item: HistoryItem }) {
           }
         />
       )}
+      {(item.imageUrls?.length ?? 0) > 1 && (
+        <MetaRow label="参考图" value={`${item.imageUrls!.length} 张（多图合并反推）`} />
+      )}
       {item.imageUrl && (
         <MetaRow
-          label="图片地址"
+          label={(item.imageUrls?.length ?? 0) > 1 ? '主图缩略' : '图片地址'}
           value={<span className="font-mono text-[11px] break-all text-zinc-500">{item.imageUrl}</span>}
         />
       )}

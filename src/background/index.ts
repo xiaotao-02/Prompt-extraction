@@ -13,15 +13,18 @@ import {
 import { ensureLibraryReady } from '@/lib/storage/history';
 import { getByDedupeKey, naturalDedupeKey, toPublicHistory } from '@/lib/storage/historyDb';
 import type { HistoryItem, RefineResponse, RuntimeMessage, StrategyId, UpdateCheckResult } from '@/lib/types';
+import { normalizeReferenceList } from '@/lib/referenceImages';
 import { PROMPT_EXTRACTO_KEEPALIVE_PORT } from '@/lib/keepalivePort';
 import { DEFAULT_FEED_URL, getCurrentVersion, performUpdateCheck } from '@/lib/updater';
 
-const MENU_ID = 'extract-image-prompt';
-/**
- * 兜底菜单：当原生 'image' / 'video' 上下文没被 Chrome 命中时（CSS 背景图、canvas、
- * 内联 SVG、被遮罩覆盖的图片 / 视频等），由内容脚本动态把它切到 visible:true。
- */
-const MENU_ID_FALLBACK = 'extract-image-prompt-fallback';
+/** 原生 image/video 上下文：立刻按当前图反推 */
+const MENU_ID_DIRECT = 'extract-image-prompt-direct';
+/** 原生 image/video 上下文：仅加入浮动面板参考列表，不立即反推 */
+const MENU_ID_ADD_REF = 'extract-image-prompt-add-ref';
+/** 兜底：非原生上下文下的「直接生成」 */
+const MENU_FALLBACK_DIRECT = 'extract-image-prompt-fb-direct';
+/** 兜底：非原生上下文下的「添加到参考」 */
+const MENU_FALLBACK_ADD = 'extract-image-prompt-fb-add';
 
 /**
  * 最近一次内容脚本探测到的"鼠标位置图片"。每个 tab 一份，避免不同
@@ -71,19 +74,33 @@ function ensureContextMenus(): void {
     void chrome.runtime.lastError;
     chrome.contextMenus.create(
       {
-        id: MENU_ID,
-        title: '提取图片提示词',
-        // 与 contexts: ['video'] 一并注册：原生 <video> 右键时 Chrome 走 video 上下文，
-        // 不依赖 CTX_MENU_PREP 异步切换可见性，避免 MV3 SW 竞态导致菜单项不出现。
+        id: MENU_ID_DIRECT,
+        title: '直接生成提示词',
         contexts: ['image', 'video'],
       },
       () => void chrome.runtime.lastError
     );
     chrome.contextMenus.create(
       {
-        id: MENU_ID_FALLBACK,
-        // 兜底：遮罩下的 <img>、CSS 背景图、canvas、内联 SVG 等非原生 image/video 上下文。
-        title: '提取图片提示词',
+        id: MENU_ID_ADD_REF,
+        title: '添加到参考',
+        contexts: ['image', 'video'],
+      },
+      () => void chrome.runtime.lastError
+    );
+    chrome.contextMenus.create(
+      {
+        id: MENU_FALLBACK_DIRECT,
+        title: '直接生成提示词',
+        contexts: ['page', 'frame', 'link', 'selection', 'editable'],
+        visible: false,
+      },
+      () => void chrome.runtime.lastError
+    );
+    chrome.contextMenus.create(
+      {
+        id: MENU_FALLBACK_ADD,
+        title: '添加到参考',
         contexts: ['page', 'frame', 'link', 'selection', 'editable'],
         visible: false,
       },
@@ -115,39 +132,53 @@ chrome.tabs?.onRemoved.addListener((tabId) => {
   pendingFallbackImage.delete(tabId);
 });
 
+function hideFallbackContextMenus(): void {
+  chrome.contextMenus.update(MENU_FALLBACK_DIRECT, { visible: false }, () => {
+    void chrome.runtime.lastError;
+  });
+  chrome.contextMenus.update(MENU_FALLBACK_ADD, { visible: false }, () => {
+    void chrome.runtime.lastError;
+  });
+}
+
 chrome.contextMenus.onClicked.addListener(async (info, tab) => {
   if (!tab?.id) return;
 
-  if (info.menuItemId === MENU_ID) {
-    // 原生 image / video 上下文 —— Chrome 会提供 srcUrl（个别站点可能为空，直接忽略）
+  if (info.menuItemId === MENU_ID_DIRECT) {
     const imageUrl = info.srcUrl;
     if (!imageUrl) return;
     await runExtraction({
       tabId: tab.id,
-      imageUrl,
+      imageUrls: [imageUrl],
       pageUrl: tab.url || '',
       pageTitle: tab.title || '',
     });
     return;
   }
 
-  if (info.menuItemId === MENU_ID_FALLBACK) {
-    // 取出内容脚本最近一次探测到的 URL（CSS 背景图 / canvas / svg / …）
+  if (info.menuItemId === MENU_ID_ADD_REF) {
+    const imageUrl = info.srcUrl;
+    if (!imageUrl) return;
+    postToTab(tab.id, { type: 'PANEL_APPEND_REFERENCE', payload: { imageUrl } });
+    return;
+  }
+
+  if (info.menuItemId === MENU_FALLBACK_DIRECT || info.menuItemId === MENU_FALLBACK_ADD) {
     const cached = pendingFallbackImage.get(tab.id);
     pendingFallbackImage.delete(tab.id);
-    // 用完立刻把菜单藏回去，避免下次右键到非图片处仍然显示
-    chrome.contextMenus.update(MENU_ID_FALLBACK, { visible: false }, () => {
-      void chrome.runtime.lastError;
-    });
-    // 优先用缓存（带 data:/blob: 等），其次退回 info.srcUrl / linkUrl
+    hideFallbackContextMenus();
     const imageUrl = cached?.imageUrl || info.srcUrl || info.linkUrl || '';
     if (!imageUrl) return;
-    await runExtraction({
-      tabId: tab.id,
-      imageUrl,
-      pageUrl: tab.url || '',
-      pageTitle: tab.title || '',
-    });
+    if (info.menuItemId === MENU_FALLBACK_DIRECT) {
+      await runExtraction({
+        tabId: tab.id,
+        imageUrls: [imageUrl],
+        pageUrl: tab.url || '',
+        pageTitle: tab.title || '',
+      });
+    } else {
+      postToTab(tab.id, { type: 'PANEL_APPEND_REFERENCE', payload: { imageUrl } });
+    }
     return;
   }
 });
@@ -301,14 +332,16 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         pendingFallbackImage.delete(tabId);
       }
       // 只在"原生 image 上下文未命中"时才需要兜底菜单。
-      // 如果是原生 <img>，Chrome 会同时显示 MENU_ID（image context），
+      // 如果是原生 <img>，Chrome 会同时显示 image/video 上下文下的「直接生成 / 添加到参考」，
       // 这里再显示 fallback 就会重复 —— 所以内容脚本只在非原生场景才
       // 发送非空 imageUrl，下面只需老实根据 imageUrl 是否存在切换 visible。
-      chrome.contextMenus.update(
-        MENU_ID_FALLBACK,
-        { visible: !!imageUrl },
-        () => void chrome.runtime.lastError
-      );
+      const vis = !!imageUrl;
+      chrome.contextMenus.update(MENU_FALLBACK_DIRECT, { visible: vis }, () => {
+        void chrome.runtime.lastError;
+      });
+      chrome.contextMenus.update(MENU_FALLBACK_ADD, { visible: vis }, () => {
+        void chrome.runtime.lastError;
+      });
     }
     sendResponse({ ok: true });
     return true;
@@ -416,15 +449,19 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true;
   }
   if (message?.type === 'EXTRACT_PROMPT') {
-    const { imageUrl, pageUrl, pageTitle, requestId, strategyOverride } = message.payload || {};
+    const payload = message.payload || {};
     const tabId = sender.tab?.id;
-    if (!tabId || !imageUrl) {
+    const imageUrls = normalizeReferenceList(
+      payload.imageUrls?.length ? payload.imageUrls : payload.imageUrl ? [payload.imageUrl] : []
+    );
+    if (!tabId || imageUrls.length === 0) {
       sendResponse({ ok: false, error: 'invalid params' });
       return true;
     }
+    const { pageUrl, pageTitle, requestId, strategyOverride } = payload;
     runExtraction({
       tabId,
-      imageUrl,
+      imageUrls,
       pageUrl: pageUrl || sender.tab?.url || '',
       pageTitle: pageTitle || sender.tab?.title || '',
       requestId,
@@ -445,12 +482,16 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 async function prefetchLibraryVersionsForExtract(
   tabId: number,
   requestId: string,
-  imageUrl: string,
-): Promise<string | undefined> {
+  imageUrls: string[],
+): Promise<string[] | undefined> {
   try {
     await ensureLibraryReady();
-    const storedUrl = await makeStorageThumbnail(imageUrl);
-    const key = naturalDedupeKey({ imageUrl: storedUrl, thumbnail: storedUrl });
+    const thumbs = await Promise.all(imageUrls.map((u) => makeStorageThumbnail(u)));
+    const dedupePayload =
+      thumbs.length > 1
+        ? { imageUrl: thumbs[0] || '', thumbnail: thumbs[0] || '', imageUrls: thumbs }
+        : { imageUrl: thumbs[0] || '', thumbnail: thumbs[0] || '' };
+    const key = naturalDedupeKey(dedupePayload);
     if (key) {
       const row = await getByDedupeKey(key);
       if (row) {
@@ -466,7 +507,7 @@ async function prefetchLibraryVersionsForExtract(
         });
       }
     }
-    return storedUrl;
+    return thumbs;
   } catch {
     return undefined;
   }
@@ -474,37 +515,31 @@ async function prefetchLibraryVersionsForExtract(
 
 async function runExtraction(params: {
   tabId: number;
-  imageUrl: string;
+  imageUrls: string[];
   pageUrl: string;
   pageTitle: string;
   requestId?: string;
   strategyOverride?: import('@/lib/strategies-meta').StrategyId;
 }): Promise<void> {
-  const { tabId, imageUrl, pageUrl, pageTitle, strategyOverride } = params;
+  const imageUrls = normalizeReferenceList(params.imageUrls);
+  if (imageUrls.length === 0) return;
+  const imageUrl = imageUrls[0]!;
+  const { tabId, pageUrl, pageTitle, strategyOverride } = params;
   const requestId = params.requestId || crypto.randomUUID();
 
-  // 立刻并行启动三件耗时的事：
-  //   1) 读 settings (chrome.storage)
-  //   2) 下载 / 规整图片
-  //   3) 「乐观」发送 EXTRACT_PENDING 让 panel 立刻显示 loading
-  //
-  // 关键变化（这一版的核心优化）：不再先 PING content script、不再 await
-  // sendToTab(EXTRACT_PENDING)。manifest 已声明 content_scripts: ['<all_urls>']
-  // @ document_idle，所以 content script 在绝大多数页面上已经自动注入，PING
-  // 唯一的"价值"就是消耗 10–50ms 阻塞主路径。我们改为「乐观发」：直接发消息，
-  // 失败时（chrome:// / about: / 新装的扩展遇上已打开的旧 tab 等极少数场景）
-  // 通过 chrome.runtime.lastError 回调发现，再异步注入 + 重发。这条兜底路径
-  // 不阻塞主流程；用户点完菜单几乎瞬时就能看到 panel。
   const settingsPromise = getSettings();
-  const imagePromise = fetchImageAsBase64(imageUrl);
+  const imagePromise = Promise.all(imageUrls.map((u) => fetchImageAsBase64(u)));
   imagePromise.catch(() => undefined);
 
-  /** 与「是否写入提示词库」挂钩；saveHistory 为 false 时保持 resolved(undefined)。 */
-  let thumbnailForPersistPromise: Promise<string | undefined> = Promise.resolve(undefined);
+  let thumbnailForPersistPromise: Promise<string[] | undefined> = Promise.resolve(undefined);
 
   postToTab(tabId, {
     type: 'EXTRACT_PENDING',
-    payload: { requestId, imageUrl },
+    payload: {
+      requestId,
+      imageUrl,
+      ...(imageUrls.length > 1 ? { imageUrls } : {}),
+    },
   });
 
   // settings 读取完成后立刻补发一次 strategy + provider + model 信息，
@@ -534,7 +569,7 @@ async function runExtraction(params: {
         },
       });
       if (settings.saveHistory) {
-        thumbnailForPersistPromise = prefetchLibraryVersionsForExtract(tabId, requestId, imageUrl);
+        thumbnailForPersistPromise = prefetchLibraryVersionsForExtract(tabId, requestId, imageUrls);
       }
     },
     () => undefined
@@ -567,7 +602,7 @@ async function runExtraction(params: {
       ? { ...rawSettings, promptStrategy: strategyOverride }
       : rawSettings;
     const result = await extractPrompt({
-      imageUrl,
+      imageUrls,
       settings,
       prefetched,
       onProgress: (ev) => {
@@ -592,17 +627,10 @@ async function runExtraction(params: {
     });
 
     if (settings.saveHistory) {
-      const precomputedThumbnail = await thumbnailForPersistPromise;
-      // 历史落库不阻塞下一次提取：用户连续抽几张图时不再排队，缩略图
-      // 重新编码 + storage 写入都在后台完成。失败只打 debug，不影响 UI。
-      //
-      // 落库完成后必须把「storage 里真实落地的 id + versions」回传给 content，
-      // 因为 addHistory 对同图会合并到旧记录上、真实 id 可能与 requestId 不同。
-      // 这条 HISTORY_READY 是浮窗后续 save / restore / syncVersions 不出 race
-      // 的关键 —— content 收到后会把 panel.requestId 切到 actualId。
+      const precomputedThumbnails = await thumbnailForPersistPromise;
       void persistHistory({
         requestId,
-        imageUrl,
+        imageUrls,
         prompt: result.prompt,
         provider: result.provider,
         model: result.model,
@@ -610,7 +638,7 @@ async function runExtraction(params: {
         pageUrl,
         pageTitle,
         strategy: settings.promptStrategy,
-        precomputedThumbnail,
+        precomputedThumbnails,
       }).then((stored) => {
         if (!stored) return;
         postToTab(tabId, {
@@ -635,7 +663,7 @@ async function runExtraction(params: {
 
 async function persistHistory(params: {
   requestId: string;
-  imageUrl: string;
+  imageUrls: string[];
   prompt: string;
   provider: HistoryItem['provider'];
   model: string;
@@ -643,22 +671,22 @@ async function persistHistory(params: {
   pageUrl: string;
   pageTitle: string;
   strategy?: import('@/lib/strategies-meta').StrategyId;
-  /** 与预取/去重同源时传入，避免对同一 imageUrl 二次 makeStorageThumbnail */
-  precomputedThumbnail?: string;
+  /** 与预取同源时传入，避免对同一批 imageUrl 二次 makeStorageThumbnail */
+  precomputedThumbnails?: string[];
 }): Promise<HistoryItem | undefined> {
   try {
     const now = Date.now();
-    // 视频帧 / canvas / 扁平化动图传过来的 imageUrl 经常是大 dataUrl，
-    // 直接整条塞进 chrome.storage.local 几十条就会撑爆 5MB 配额。
-    // 这里统一压成 ≤32KB 的小缩略图后再入库（http(s) URL 原样保留）。
-    const storedUrl =
-      params.precomputedThumbnail !== undefined
-        ? params.precomputedThumbnail
-        : await makeStorageThumbnail(params.imageUrl);
+    const thumbs =
+      params.precomputedThumbnails &&
+      params.precomputedThumbnails.length === params.imageUrls.length
+        ? params.precomputedThumbnails
+        : await Promise.all(params.imageUrls.map((u) => makeStorageThumbnail(u)));
+    const primary = thumbs[0] || '';
     const item: HistoryItem = {
       id: params.requestId,
-      imageUrl: storedUrl,
-      thumbnail: storedUrl,
+      imageUrl: primary,
+      thumbnail: primary,
+      ...(thumbs.length > 1 ? { imageUrls: thumbs } : {}),
       prompt: params.prompt,
       provider: params.provider,
       model: params.model,
@@ -684,8 +712,6 @@ async function persistHistory(params: {
         },
       ],
     };
-    // addHistory 返回「真正落库的那条」—— 同图反推时会是合并后的旧记录（id 不变），
-    // 调用方据此把 content 那边的 requestId 切到真实 id。
     return await addHistory(item);
   } catch (err) {
     console.debug('[PromptExtracto] persist history failed', err);

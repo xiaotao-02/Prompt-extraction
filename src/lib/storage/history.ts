@@ -88,6 +88,12 @@ export function migrateItem(raw: HistoryItem): HistoryItem {
 }
 
 function isSameImage(a: HistoryItem, b: HistoryItem): boolean {
+  const la = a.imageUrls?.length ? a.imageUrls : a.imageUrl ? [a.imageUrl] : [];
+  const lb = b.imageUrls?.length ? b.imageUrls : b.imageUrl ? [b.imageUrl] : [];
+  if (la.length > 1 || lb.length > 1) {
+    if (la.length !== lb.length) return false;
+    return la.every((x, i) => x === lb[i]);
+  }
   const ua = a.imageUrl || '';
   const ub = b.imageUrl || '';
   if (ua && ub && ua.length > 8 && ua === ub) return true;
@@ -249,6 +255,7 @@ export async function addHistory(item: HistoryItem): Promise<HistoryItem> {
         style: incoming.style,
         imageUrl: existing.imageUrl || incoming.imageUrl,
         thumbnail: existing.thumbnail || incoming.thumbnail,
+        imageUrls: incoming.imageUrls ?? existing.imageUrls,
         pageUrl: existing.pageUrl || incoming.pageUrl,
         pageTitle: existing.pageTitle || incoming.pageTitle,
         updatedAt: newVersion.createdAt,

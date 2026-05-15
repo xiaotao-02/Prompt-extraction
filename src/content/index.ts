@@ -11,6 +11,7 @@ import {
   applyHistoryPrefetch,
   applyStoredPromptStrategy,
   applyStoredRewriteRandomness,
+  appendReferenceFromBackground,
 } from './panel';
 import { expandPanelForSidebar } from './panel/geometry';
 import { isExtensionContextValid, safeSendMessage } from '@/content/extensionBridge';
@@ -27,6 +28,7 @@ try {
       renderPanelForExtractPending({
         requestId: message.payload.requestId,
         imageUrl: message.payload.imageUrl,
+        imageUrls: message.payload.imageUrls,
         strategy: message.payload.strategy,
         rewriteRandomness: message.payload.oneClickRewriteRandomness,
       });
@@ -87,6 +89,10 @@ try {
       });
       return false;
     }
+    if (message.type === 'PANEL_APPEND_REFERENCE') {
+      appendReferenceFromBackground(message.payload.imageUrl);
+      return false;
+    }
     if (message.type === 'PANEL_FROM_HISTORY') {
       // 从 popup / 提示词库「召回到悬浮窗」：数据必须由 background 随消息下发。
       // content script 内访问的 indexedDB 绑定的是当前网页源，不是 chrome-extension://，
@@ -99,9 +105,13 @@ try {
         }
         const versionsOpen = dock === 'versions';
         const refineOpen = dock === 'refine';
+        const imageUrls =
+          item.imageUrls?.length ? item.imageUrls : [item.thumbnail || item.imageUrl || ''];
+        const primary = imageUrls[0] || item.imageUrl;
         renderPanel({
           requestId: item.id,
-          imageUrl: item.thumbnail || item.imageUrl,
+          imageUrl: primary,
+          imageUrls,
           status: 'success',
           prompt: item.prompt,
           draft: item.prompt,

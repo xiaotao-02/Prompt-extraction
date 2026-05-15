@@ -30,15 +30,16 @@ export interface RefineProgressEvent {
 export type RefineProgressFn = (ev: RefineProgressEvent) => void;
 
 export interface ExtractParams {
-  imageUrl: string;
+  /** 有序参考图 URL 列表，至少 1 张 */
+  imageUrls: string[];
   settings: AppSettings;
   /**
-   * 调用方提前下载/规整好的图片。如果传了，extractPrompt 会跳过内部的
+   * 调用方提前下载/规整好的图片。如果传了且长度与 imageUrls 一致，extractPrompt 会跳过内部的
    * {@link import('../image').fetchImageAsBase64}，直接用这份预处理结果——用来在
    * background 里把图片下载和 settings 读取、content script 注入并行起来，节
    * 省一次串行等待。
    */
-  prefetched?: FetchedImage;
+  prefetched?: FetchedImage[];
   /**
    * 反推进度回调。流式阶段会被节流到约 80ms 一次，避免给 content script
    * 发太多 chrome.tabs.sendMessage。回调里抛错不影响主流程。

@@ -21,12 +21,20 @@ import {
 
 export async function callAnthropic(
   cfg: ProviderConfig,
-  img: FetchedImage,
+  imgs: FetchedImage[],
   instruction: string,
   strategy: PromptStrategy,
   onProgress?: ExtractProgressFn
 ): Promise<string> {
   const url = `${trimSlash(cfg.baseUrl)}/messages`;
+  const imgBlocks = imgs.map((img) => ({
+    type: 'image' as const,
+    source: {
+      type: 'base64' as const,
+      media_type: img.mediaType,
+      data: img.base64,
+    },
+  }));
   const body = {
     model: cfg.model,
     max_tokens: strategy.maxTokens,
@@ -36,17 +44,7 @@ export async function callAnthropic(
     messages: [
       {
         role: 'user',
-        content: [
-          {
-            type: 'image',
-            source: {
-              type: 'base64',
-              media_type: img.mediaType,
-              data: img.base64,
-            },
-          },
-          { type: 'text', text: instruction },
-        ],
+        content: [...imgBlocks, { type: 'text' as const, text: instruction }],
       },
     ],
   };

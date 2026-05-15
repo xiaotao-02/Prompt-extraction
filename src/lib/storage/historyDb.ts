@@ -31,8 +31,16 @@ export function djb2Hex(s: string): string {
 }
 
 /** 与 history.ts 原 isSameImage 语义对齐的可索引键；空串表示无法据此去重合并。 */
-export function naturalDedupeKey(item: Pick<HistoryItem, 'imageUrl' | 'thumbnail'>): string {
-  const ua = item.imageUrl || '';
+export function naturalDedupeKey(
+  item: Pick<HistoryItem, 'imageUrl' | 'thumbnail'> & { imageUrls?: string[] }
+): string {
+  const urls = item.imageUrls;
+  if (urls && urls.length > 1) {
+    const joined = urls.join('\x01');
+    if (joined.length > 8) return `m:${djb2Hex(joined)}`;
+    return '';
+  }
+  const ua = urls?.length === 1 ? urls[0] || '' : item.imageUrl || '';
   if (ua.length > 8) return `u:${djb2Hex(ua)}`;
   const ta = item.thumbnail || '';
   if (ta.length > 64) return `t:${djb2Hex(ta)}`;

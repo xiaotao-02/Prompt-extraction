@@ -20,8 +20,11 @@ import type {
 export interface PanelState {
   /** 本次会话用于路由 EXTRACT_* 消息的 id；同图合并后可能与库 id 不同，见 {@link linkedHistoryId}。 */
   requestId: string;
+  /** 主参考图 URL，等于 {@link imageUrls}[0]（若有）。 */
   imageUrl: string;
-  status: 'loading' | 'success' | 'error';
+  /** 有序参考图列表（至少 1 张方能「生成」）。 */
+  imageUrls: string[];
+  status: 'compose' | 'loading' | 'success' | 'error';
   prompt?: string;
   error?: string;
   provider?: string;
@@ -157,3 +160,11 @@ export const panelActions = {
   renderPanel: (_state: PanelState): void => {},
   closePanel: (): void => {},
 };
+
+/** 从状态取出参考图 URL 列表（兼容仅带 imageUrl 的旧路径）。 */
+export function panelReferenceUrls(
+  state: Pick<PanelState, 'imageUrls' | 'imageUrl'>
+): string[] {
+  if (state.imageUrls?.length) return state.imageUrls;
+  return state.imageUrl ? [state.imageUrl] : [];
+}

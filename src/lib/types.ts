@@ -207,6 +207,11 @@ export interface HistoryItem {
   id: string;
   imageUrl: string;
   thumbnail: string;
+  /**
+   * 多图参考反推时各张缩略图/引用（与落库时 {@link imageUrl} 同源规范）。
+   * 仅当一次反推使用 ≥2 张参考图时写入；单图记录省略本字段以保持旧数据形态。
+   */
+  imageUrls?: string[];
   prompt: string;
   provider: ProviderId;
   model: string;
@@ -264,10 +269,13 @@ export type RuntimeMessage =
   | {
       type: 'EXTRACT_PROMPT';
       payload: {
+        /** 单图或与 imageUrls[0] 一致；兼容旧客户端 */
         imageUrl: string;
         pageUrl: string;
         pageTitle: string;
         requestId: string;
+        /** 多图时有序完整列表；省略则仅用 imageUrl */
+        imageUrls?: string[];
         /**
          * 可选的策略覆盖。content panel 的策略选择器切换时带上，
          * background 会用它替代 settings.promptStrategy 来决定本次反推的策略。
@@ -300,6 +308,8 @@ export type RuntimeMessage =
       payload: {
         requestId: string;
         imageUrl: string;
+        /** 多图反推时与 imageUrl 一并下发，供面板展示缩略图条 */
+        imageUrls?: string[];
         /**
          * 本次反推使用的「提示词策略档位」id。
          *
@@ -417,6 +427,14 @@ export type RuntimeMessage =
     }
   | {
       type: 'CHECK_UPDATE';
+    }
+  | {
+      /**
+       * background → content：右键「添加到参考」菜单，把图片 URL 并入浮动面板参考列表，
+       * 不触发反推（compose 态直至用户点击「生成」）。
+       */
+      type: 'PANEL_APPEND_REFERENCE';
+      payload: { imageUrl: string };
     }
   | {
       /**

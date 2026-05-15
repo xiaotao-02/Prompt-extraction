@@ -21,7 +21,9 @@ import {
   panelActions,
   panelGeometry,
   type PanelState,
+  panelReferenceUrls,
 } from './state';
+import { normalizeReferenceList, appendReferenceUrl, MAX_REFERENCE_IMAGES } from '@/lib/referenceImages';
 import {
   updateGeometry,
   clampGeometry,
@@ -552,6 +554,75 @@ function handleDataAction(root: HTMLElement, el: HTMLElement, event: MouseEvent)
   const state = currentState;
   if (!state) return;
   if (action === 'close') return closePanel();
+  if (action === 'run-extract') {
+    if (state.status !== 'compose') return;
+    const urls = normalizeReferenceList(panelReferenceUrls(state));
+    if (!urls.length || !isExtensionContextValid()) return;
+    safeSendMessage({ type: 'PING' });
+    const newReq = crypto.randomUUID();
+    renderPanel({
+      ...state,
+      requestId: newReq,
+      status: 'loading',
+      stage: 'calling',
+      startedAt: Date.now(),
+      prompt: undefined,
+      error: undefined,
+      draft: undefined,
+      selectedVersionId: undefined,
+      partial: undefined,
+      extractBaselinePrompt: undefined,
+      linkedHistoryId: undefined,
+      versions: undefined,
+      versionsOpen: false,
+      refineOpen: false,
+      refineLoading: false,
+    });
+    safeSendMessage({
+      type: 'EXTRACT_PROMPT',
+      payload: {
+        imageUrl: urls[0]!,
+        imageUrls: urls,
+        pageUrl: location.href,
+        pageTitle: document.title,
+        requestId: newReq,
+        ...(state.strategy !== undefined ? { strategyOverride: state.strategy } : {}),
+      },
+    });
+    return;
+  }
+  if (action === 'remove-reference') {
+    const idx = Number.parseInt(el.dataset.index || '-1', 10);
+    if (state.status !== 'compose' && state.status !== 'success' && state.status !== 'error') return;
+    const urls = [...panelReferenceUrls(state)];
+    if (idx < 0 || idx >= urls.length) return;
+    urls.splice(idx, 1);
+    const next = normalizeReferenceList(urls);
+    if (next.length === 0) {
+      closePanel();
+      return;
+    }
+    renderPanel({ ...state, imageUrls: next, imageUrl: next[0] || state.imageUrl });
+    return;
+  }
+  if (action === 'add-ref-url') {
+    if (state.status !== 'compose') return;
+    const prev = panelReferenceUrls(state);
+    if (prev.length >= MAX_REFERENCE_IMAGES) return;
+    const input = root.querySelector<HTMLInputElement>('[data-role="ref-url-input"]');
+    const raw = (input?.value || '').trim();
+    if (!raw) return;
+    const next = appendReferenceUrl(prev, raw);
+    if (next.length === prev.length) return;
+    if (input) input.value = '';
+    renderPanel({ ...state, imageUrls: next, imageUrl: next[0] || state.imageUrl });
+    return;
+  }
+  if (action === 'pick-ref-file') {
+    if (state.status !== 'compose') return;
+    root.querySelector<HTMLInputElement>('[data-role="ref-file-input"]')?.click();
+    return;
+  }
   if (action === 'copy') {
     const text =
       state.status === 'loading'
@@ -568,6 +639,8 @@ function handleDataAction(root: HTMLElement, el: HTMLElement, event: MouseEvent)
     safeSendMessage({ type: 'PING' });
     const versions = state.versions || [];
     const hasHistory = versions.length > 0;
+    const urls = normalizeReferenceList(panelReferenceUrls(state));
+    if (!urls.length) return;
     renderPanel({
       ...state,
       status: 'loading',
@@ -583,7 +656,8 @@ function handleDataAction(root: HTMLElement, el: HTMLElement, event: MouseEvent)
     safeSendMessage({
       type: 'EXTRACT_PROMPT',
       payload: {
-        imageUrl: state.imageUrl,
+        imageUrl: urls[0]!,
+        imageUrls: urls,
         pageUrl: location.href,
         pageTitle: document.title,
         requestId: state.requestId,
@@ -891,13 +965,20 @@ function bindPanelDelegatedClicks(root: HTMLElement): void {
       event.stopPropagation();
       dropdown.classList.remove('open');
       if (!currentState) return;
+      const prevStatus = currentState.status;
       const newStrategy = sdItem.dataset.strategy as StrategyId;
       if (!newStrategy || newStrategy === currentState.strategy) return;
-      if (currentState.status !== 'success' || !isExtensionContextValid()) return;
+      if (
+        (prevStatus !== 'success' && prevStatus !== 'compose') ||
+        !isExtensionContextValid()
+      )
+        return;
 
       setCurrentState({ ...currentState, strategy: newStrategy });
       patchStrategyDropdownSelection(root, newStrategy);
-      patchVersionList();
+      if (prevStatus === 'success') {
+        patchVersionList();
+      }
       safeSendMessage(
         { type: 'SET_PROMPT_STRATEGY', payload: { strategy: newStrategy } } satisfies RuntimeMessage,
         () => void chrome.runtime.lastError
@@ -973,6 +1054,28 @@ function bindPanelDelegatedInput(root: HTMLElement): void {
       const btn = root.querySelector<HTMLButtonElement>('[data-action="run-refine"]');
       btn?.click();
     }
+  });
+
+  root.addEventListener('change', (e: Event) => {
+    const t = e.target as HTMLElement;
+    if (!root.contains(t) || !t.matches('[data-role="ref-file-input"]')) return;
+    const inp = t as HTMLInputElement;
+    const file = inp.files?.[0];
+    inp.value = '';
+    const st = currentState;
+    if (!file || !st || st.status !== 'compose') return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      const dataUrl = typeof reader.result === 'string' ? reader.result : '';
+      const cur = currentState;
+      if (!dataUrl || !cur || cur.status !== 'compose') return;
+      const prev = panelReferenceUrls(cur);
+      if (prev.length >= MAX_REFERENCE_IMAGES) return;
+      const next = appendReferenceUrl(prev, dataUrl);
+      if (next.length === prev.length) return;
+      renderPanel({ ...cur, imageUrls: next, imageUrl: next[0] || cur.imageUrl });
+    };
+    reader.readAsDataURL(file);
   });
 }
 

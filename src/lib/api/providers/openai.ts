@@ -24,7 +24,7 @@ import {
 
 export async function callOpenAICompatible(
   cfg: ProviderConfig,
-  img: FetchedImage,
+  imgs: FetchedImage[],
   instruction: string,
   strategy: PromptStrategy,
   onProgress?: ExtractProgressFn
@@ -33,18 +33,20 @@ export async function callOpenAICompatible(
   // 但跨域 + 鉴权 + base64 更稳妥，这里统一转 base64。
   const url = `${normalizeOpenAIBase(cfg.baseUrl)}/chat/completions`;
 
+  const content: Array<
+    | { type: 'text'; text: string }
+    | { type: 'image_url'; image_url: { url: string } }
+  > = [{ type: 'text', text: instruction }];
+  for (const img of imgs) {
+    content.push({ type: 'image_url', image_url: { url: img.dataUrl } });
+  }
+
   const body = {
     model: cfg.model,
     messages: [
       {
         role: 'user',
-        content: [
-          { type: 'text', text: instruction },
-          {
-            type: 'image_url',
-            image_url: { url: img.dataUrl },
-          },
-        ],
+        content,
       },
     ],
     temperature: strategy.temperature,

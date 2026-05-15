@@ -4,6 +4,8 @@ import { REFINE_STREAM_VERSION_ID, EXTRACT_STREAM_VERSION_ID, extractStreamDispl
 import { getVersionOrdinalLabel } from '@/lib/versionLabel';
 import { STRATEGY_LABELS, type StrategyId } from '@/lib/strategies-meta';
 import type { PanelState } from './state';
+import { panelReferenceUrls } from './state';
+import { MAX_REFERENCE_IMAGES } from '@/lib/referenceImages';
 import {
   ICON_CLOSE,
   ICON_COPY,
@@ -31,6 +33,25 @@ export function escapeText(s: string): string {
 }
 export function escapeAttr(s: string): string {
   return escapeText(s).replace(/"/g, '&quot;');
+}
+
+function referenceStripHtml(state: PanelState, removable: boolean): string {
+  const urls = panelReferenceUrls(state);
+  if (urls.length === 0) {
+    return '<div class="ref-strip ref-strip-empty" data-role="ref-strip"></div>';
+  }
+  return (
+    `<div class="ref-strip" data-role="ref-strip">` +
+    urls
+      .map((u, i) => {
+        const rm = removable
+          ? `<button type="button" class="ref-remove" data-action="remove-reference" data-index="${i}" title="移除">×</button>`
+          : '';
+        return `<div class="ref-item">${rm}<img src="${escapeAttr(u)}" alt="" /></div>`;
+      })
+      .join('') +
+    `</div>`
+  );
 }
 
 function formatTime(t: number): string {
@@ -365,7 +386,6 @@ function versionsChromeForRow(
 }
 
 export function panelHtml(state: PanelState): string {
-  const safeImg = escapeAttr(state.imageUrl);
   if (state.status === 'loading') {
     const hasPartial = !!state.partial;
     const pct = Math.round(stageProgress(state.stage, hasPartial) * 100);
@@ -407,7 +427,7 @@ export function panelHtml(state: PanelState): string {
       <div class="panel-row${versionsOpenClass}">
         ${versionsSidebar}
         <div class="body">
-          <div class="thumb"><img src="${safeImg}" alt="" /></div>
+          <div class="thumb ref-thumb-wrap">${referenceStripHtml(state, false)}</div>
           <div class="loader-wrap">
             <div class="bar progress">
               <span data-role="bar-fill" style="width:${pct}%"></span>
@@ -453,11 +473,47 @@ export function panelHtml(state: PanelState): string {
         <button class="icon-btn" data-action="close" title="关闭">${ICON_CLOSE}</button>
       </div>
       <div class="body">
-        <div class="thumb"><img src="${safeImg}" alt="" /></div>
+        <div class="thumb ref-thumb-wrap">${referenceStripHtml(state, true)}</div>
         <div class="error-msg">${escapeText(state.error || '未知错误')}</div>
         <div class="actions">
           <button class="btn ghost" data-action="open-options">打开设置</button>
           <button class="btn primary" data-action="retry">重试</button>
+        </div>
+      </div>
+    `;
+  }
+  if (state.status === 'compose') {
+    const urls = panelReferenceUrls(state);
+    const canRun = urls.length > 0;
+    const atCap = urls.length >= MAX_REFERENCE_IMAGES;
+    return `
+      <div class="header">
+        <div class="title">
+          <span class="dot success"></span>
+          <span>收集参考图</span>
+        </div>
+        <button class="icon-btn" data-action="close" title="关闭">${ICON_CLOSE}</button>
+      </div>
+      <div class="body compose-body">
+        ${referenceStripHtml(state, true)}
+        <div class="compose-toolbar">
+          <input type="text" class="ref-url-input" data-role="ref-url-input" placeholder="粘贴图片 URL 后点击添加" ${
+            atCap ? 'disabled' : ''
+          } />
+          <button type="button" class="btn ghost sm" data-action="add-ref-url" ${
+            atCap ? 'disabled' : ''
+          }>添加</button>
+          <button type="button" class="btn ghost sm" data-action="pick-ref-file" ${
+            atCap ? 'disabled' : ''
+          }>本地图片</button>
+          <input type="file" class="ref-file-input-hidden" data-role="ref-file-input" accept="image/*" />
+        </div>
+        <p class="compose-hint">可在网页中继续右键「添加到参考」。当前 ${urls.length} / ${MAX_REFERENCE_IMAGES} 张。</p>
+        <div class="compose-meta">${strategySelectHtml(state.strategy)}</div>
+        <div class="actions compose-actions">
+          <button type="button" class="btn primary" data-action="run-extract" ${
+            canRun ? '' : 'disabled'
+          }>生成提示词</button>
         </div>
       </div>
     `;
@@ -509,7 +565,7 @@ export function panelHtml(state: PanelState): string {
     <div class="panel-row${versionsOpenClass}">
       ${versionsSidebar}
       <div class="body">
-        <div class="thumb"><img src="${safeImg}" alt="" /></div>
+        <div class="thumb ref-thumb-wrap">${referenceStripHtml(state, true)}</div>
         <div class="prompt-editor-wrap">
           <textarea
             class="prompt-text${refining ? ' streaming' : ''}"

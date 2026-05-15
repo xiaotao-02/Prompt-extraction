@@ -4,6 +4,7 @@
  */
 import { STYLE } from './styles';
 import type { OneClickRewriteRandomness, PromptVersion, StrategyId } from '@/lib/types';
+import { normalizeReferenceList, appendReferenceUrl } from '@/lib/referenceImages';
 import { EXTRACT_STREAM_VERSION_ID } from '@/lib/refineStreamVersion';
 import {
   HOST_ID,
@@ -17,6 +18,7 @@ import {
   setCurrentState,
   panelActions,
   type PanelState,
+  panelReferenceUrls,
 } from './state';
 import {
   manageLoadingTicker,
@@ -174,15 +176,73 @@ export function renderPanel(state: PanelState): void {
 }
 
 /**
+ * 右键「添加到参考」：并入参考列表，进入 compose，不触发反推。
+ */
+export function appendReferenceFromBackground(imageUrl: string): void {
+  const url = (imageUrl || '').trim();
+  if (!url) return;
+  const cur = currentState;
+  if (cur?.status === 'loading') {
+    console.debug('[PromptExtracto] skip PANEL_APPEND_REFERENCE during loading');
+    return;
+  }
+
+  const freshCompose = (
+    requestId: string,
+    urls: string[],
+    inherit?: Pick<PanelState, 'strategy' | 'rewriteRandomness'>
+  ): PanelState => {
+    const list = normalizeReferenceList(urls);
+    const first = list[0] || '';
+    return {
+      requestId,
+      imageUrl: first,
+      imageUrls: list,
+      status: 'compose',
+      strategy: inherit?.strategy,
+      rewriteRandomness: inherit?.rewriteRandomness,
+    };
+  };
+
+  if (!cur) {
+    renderPanel(freshCompose(crypto.randomUUID(), [url]));
+    return;
+  }
+  if (cur.status === 'success' || cur.status === 'error') {
+    renderPanel(
+      freshCompose(crypto.randomUUID(), [url], {
+        strategy: cur.strategy,
+        rewriteRandomness: cur.rewriteRandomness,
+      })
+    );
+    return;
+  }
+  if (cur.status === 'compose') {
+    const next = appendReferenceUrl(panelReferenceUrls(cur), url);
+    renderPanel({
+      ...cur,
+      imageUrls: next,
+      imageUrl: next[0] || cur.imageUrl,
+    });
+    return;
+  }
+}
+
+/**
  * 处理 EXTRACT_PENDING：同 requestId 的续跑（如面板内「重新生成」）需合并现有状态，
  * 保留历史版本列表与侧栏展开态；否则最小状态会清空 versions，`历史版本 · 0` 且侧栏 DOM 丢失。
  */
 export function renderPanelForExtractPending(payload: {
   requestId: string;
   imageUrl: string;
+  imageUrls?: string[];
   strategy?: StrategyId;
   rewriteRandomness?: OneClickRewriteRandomness;
 }): void {
+  const urls = normalizeReferenceList(
+    payload.imageUrls?.length ? payload.imageUrls : [payload.imageUrl]
+  );
+  const primary = urls[0] || payload.imageUrl;
   const prev = currentState;
   if (prev != null && prev.requestId === payload.requestId) {
     const versions = prev.versions || [];
@@ -190,7 +250,8 @@ export function renderPanelForExtractPending(payload: {
     renderPanel({
       ...prev,
       requestId: payload.requestId,
-      imageUrl: payload.imageUrl,
+      imageUrl: primary,
+      imageUrls: urls,
       status: 'loading',
       stage: 'calling',
       startedAt: Date.now(),
@@ -214,7 +275,8 @@ export function renderPanelForExtractPending(payload: {
   }
   renderPanel({
     requestId: payload.requestId,
-    imageUrl: payload.imageUrl,
+    imageUrl: primary,
+    imageUrls: urls,
     status: 'loading',
     stage: 'calling',
     startedAt: Date.now(),

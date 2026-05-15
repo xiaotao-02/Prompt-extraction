@@ -4,6 +4,7 @@
  */
 import type { AppSettings } from '../types';
 import { fetchImageAsBase64 } from '../image';
+import { normalizeReferenceList } from '../referenceImages';
 import { getStrategy, resolveCustomStrategy, type PromptStrategy } from '../strategies';
 import { callOpenAICompatible } from './providers/openai';
 import { callAnthropic } from './providers/anthropic';
@@ -13,6 +14,9 @@ import {
   type ExtractParams,
   type ExtractResult,
 } from './types';
+
+const MULTI_IMAGE_INSTRUCTION_NOTE =
+  '\n\n（以上指令之后）请综合理解本消息中的多张参考图，输出一条完整、连贯的提示词；不要分开描述每张图。';
 
 function buildInstruction(settings: AppSettings, strategy: PromptStrategy): string {
   const base = strategy.stylePrompts[settings.outputStyle] ?? strategy.stylePrompts['natural-zh'];
@@ -28,16 +32,16 @@ function buildInstruction(settings: AppSettings, strategy: PromptStrategy): stri
 }
 
 export async function extractPrompt(params: ExtractParams): Promise<ExtractResult> {
-  const { imageUrl, settings, prefetched, onProgress } = params;
+  const { imageUrls: rawUrls, settings, prefetched, onProgress } = params;
+  const imageUrls = normalizeReferenceList(rawUrls);
+  if (imageUrls.length === 0) {
+    throw new Error('没有可用的参考图');
+  }
   const providerId = settings.activeProvider;
   const cfg = settings.providers[providerId];
   if (!cfg.apiKey) {
     throw new Error(`请先在「设置」中为 ${providerId} 配置 API Key`);
   }
-  // 策略档位决定 stylePrompts + 采样参数 + custom 拼接位置。在 extract 入口
-  // 取一次，后续无论是 instruction 还是各家 API 的 body 都从这一份 strategy
-  // 派生，保证"用户选了哪档就完整生效"，不会出现"指令换了但温度还是旧值"
-  // 这种半新半旧的脏状态。
   const strategy =
     settings.promptStrategy === 'custom' && settings.customComponents
       ? resolveCustomStrategy(settings.customComponents, {
@@ -46,27 +50,31 @@ export async function extractPrompt(params: ExtractParams): Promise<ExtractResul
           maxTokens: settings.customMaxTokens,
         })
       : getStrategy(settings.promptStrategy);
-  const instruction = buildInstruction(settings, strategy);
-
-  // 阶段 1：图片就绪
-  let img;
-  if (prefetched) {
-    img = prefetched;
-  } else {
-    safeProgress(onProgress, { stage: 'fetching' });
-    img = await fetchImageAsBase64(imageUrl);
+  let instruction = buildInstruction(settings, strategy);
+  if (imageUrls.length > 1) {
+    instruction += MULTI_IMAGE_INSTRUCTION_NOTE;
   }
 
-  // 阶段 2：开始呼叫大模型（首 token 之前都属于 calling）
+  let imgs;
+  if (
+    prefetched &&
+    prefetched.length === imageUrls.length
+  ) {
+    imgs = prefetched;
+  } else {
+    safeProgress(onProgress, { stage: 'fetching' });
+    imgs = await Promise.all(imageUrls.map((u) => fetchImageAsBase64(u)));
+  }
+
   safeProgress(onProgress, { stage: 'calling' });
 
   let prompt: string;
   switch (providerId) {
     case 'anthropic':
-      prompt = await callAnthropic(cfg, img, instruction, strategy, onProgress);
+      prompt = await callAnthropic(cfg, imgs, instruction, strategy, onProgress);
       break;
     case 'gemini':
-      prompt = await callGemini(cfg, img, instruction, strategy, onProgress);
+      prompt = await callGemini(cfg, imgs, instruction, strategy, onProgress);
       break;
     case 'openai':
     case 'zhipu':
@@ -88,7 +96,7 @@ export async function extractPrompt(params: ExtractParams): Promise<ExtractResul
     case 'shukelongda':
     case 'custom':
     default:
-      prompt = await callOpenAICompatible(cfg, img, instruction, strategy, onProgress);
+      prompt = await callOpenAICompatible(cfg, imgs, instruction, strategy, onProgress);
       break;
   }
 

@@ -22,7 +22,7 @@ import {
 
 export async function callGemini(
   cfg: ProviderConfig,
-  img: FetchedImage,
+  imgs: FetchedImage[],
   instruction: string,
   strategy: PromptStrategy,
   onProgress?: ExtractProgressFn
@@ -32,19 +32,22 @@ export async function callGemini(
   const url = `${trimSlash(cfg.baseUrl)}/models/${encodeURIComponent(
     cfg.model
   )}:streamGenerateContent?alt=sse&key=${encodeURIComponent(cfg.apiKey)}`;
+  const parts: Array<
+    { text: string } | { inline_data: { mime_type: string; data: string } }
+  > = [{ text: instruction }];
+  for (const img of imgs) {
+    parts.push({
+      inline_data: {
+        mime_type: img.mediaType,
+        data: img.base64,
+      },
+    });
+  }
   const body = {
     contents: [
       {
         role: 'user',
-        parts: [
-          { text: instruction },
-          {
-            inline_data: {
-              mime_type: img.mediaType,
-              data: img.base64,
-            },
-          },
-        ],
+        parts,
       },
     ],
     generationConfig: {
