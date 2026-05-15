@@ -683,7 +683,29 @@ export const STYLE = `
   }
 }
 
-.actions { display: flex; gap: 6px; justify-content: flex-end; flex-wrap: wrap; }
+.actions { display: flex; gap: 6px; justify-content: flex-end; flex-wrap: wrap; align-items: center; }
+
+.rewrite-randomness {
+  font-size: 11px;
+  padding: 5px 8px;
+  border-radius: 8px;
+  border: 1px solid rgba(0,0,0,0.12);
+  background: rgba(255,255,255,0.85);
+  color: inherit;
+  cursor: pointer;
+  font-family: inherit;
+  max-width: 76px;
+}
+.rewrite-randomness:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+@media (prefers-color-scheme: dark) {
+  .rewrite-randomness {
+    border-color: rgba(255,255,255,0.14);
+    background: rgba(30,30,34,0.92);
+  }
+}
 .btn {
   display: inline-flex; align-items: center; gap: 6px;
   padding: 7px 12px; border-radius: 8px;

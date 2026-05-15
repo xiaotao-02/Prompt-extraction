@@ -9,7 +9,13 @@
  * 使用 `export let` + 显式 setter 函数模式，
  * 让所有子模块都能读到同一份单例，避免重复挂载 Shadow DOM。
  */
-import type { ExtractStage, PromptVersion, RefineStage, StrategyId } from '@/lib/types';
+import type {
+  ExtractStage,
+  OneClickRewriteRandomness,
+  PromptVersion,
+  RefineStage,
+  StrategyId,
+} from '@/lib/types';
 
 export interface PanelState {
   /** 本次会话用于路由 EXTRACT_* 消息的 id；同图合并后可能与库 id 不同，见 {@link linkedHistoryId}。 */
@@ -81,6 +87,8 @@ export interface PanelState {
    * 直接复用同一字段即可。
    */
   strategy?: StrategyId;
+  /** 一键洗稿随机强度（与 AppSettings.oneClickRewriteRandomness 对齐） */
+  rewriteRandomness?: OneClickRewriteRandomness;
 }
 
 export const HOST_ID = '__image_prompt_extractor_host__';

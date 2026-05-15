@@ -31,7 +31,7 @@ export function RefineInline({
             onSubmit();
           }
         }}
-        placeholder="例如：改得更电影感、翻译成英文、删掉色调、加上 8k 高清等参数…（Ctrl/⌘ + Enter 提交）"
+        placeholder="例如：扩写提示词、优化提示词、改得更电影感、翻译成英文…（Ctrl/⌘ + Enter 提交）"
         spellCheck={false}
         className="input min-h-[80px] max-h-[160px] resize-y text-[12px] disabled:opacity-60"
       />

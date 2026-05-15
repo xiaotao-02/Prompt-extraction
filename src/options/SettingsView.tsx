@@ -44,12 +44,14 @@ import type {
 } from '@/lib/strategies-meta';
 import type {
   AppSettings,
+  OneClickRewriteRandomness,
   OutputStyle,
   ProviderConfig,
   ProviderId,
   ProviderMeta,
   UserStrategyPreset,
 } from '@/lib/types';
+import { normalizeOneClickRewriteRandomness } from '@/lib/oneClickRewrite';
 import { listModels } from '@/lib/api';
 import UpdateSection from './UpdateSection';
 import SetupGuide from './SetupGuide';
@@ -60,6 +62,28 @@ const STYLE_OPTIONS: { value: OutputStyle; label: string; desc: string }[] = [
   { value: 'natural-en', label: 'Natural (English)', desc: '英文段落式描述，适合 Flux/SDXL 等' },
   { value: 'sd-tags', label: 'Stable Diffusion 标签', desc: 'Danbooru 风格英文 tag 列表' },
   { value: 'midjourney', label: 'Midjourney 风格', desc: 'MJ v6 自然语言 + 参数风格' },
+];
+
+const REWRITE_RANDOMNESS_OPTIONS: {
+  value: OneClickRewriteRandomness;
+  label: string;
+  desc: string;
+}[] = [
+  {
+    value: 'subtle',
+    label: '轻度',
+    desc: '保留主体与构图骨架，主要微调措辞、光影与轻微配色变化。',
+  },
+  {
+    value: 'moderate',
+    label: '中度',
+    desc: '主体呈现、色调、构图与元素多项可见变化，同类题材内可重组。',
+  },
+  {
+    value: 'bold',
+    label: '强烈',
+    desc: '同一大类用途下可大幅更换呈现方式、配色与构图，探索激进变体。',
+  },
 ];
 
 interface Props {
@@ -155,7 +179,13 @@ export default function SettingsView({ registerSaveHandler, onDirtyChange }: Pro
           setSettings(fresh);
           setLastSavedSig(JSON.stringify(fresh));
         } else {
-          setSettings({ ...prev, promptStrategy: fresh.promptStrategy });
+          setSettings({
+            ...prev,
+            promptStrategy: fresh.promptStrategy,
+            oneClickRewriteRandomness: normalizeOneClickRewriteRandomness(
+              fresh.oneClickRewriteRandomness
+            ),
+          });
         }
       });
     };
@@ -719,6 +749,38 @@ export default function SettingsView({ registerSaveHandler, onDirtyChange }: Pro
                   key={opt.value}
                   type="button"
                   onClick={() => setSettings({ ...settings, popupToolbarPromptAction: opt.value })}
+                  className={`text-left w-full p-3 rounded-xl border transition ${
+                    active
+                      ? 'border-violet-500 bg-violet-50 dark:bg-violet-500/10'
+                      : 'border-zinc-200 dark:border-zinc-800 hover:border-zinc-300'
+                  }`}
+                >
+                  <div className="text-sm font-medium">{opt.label}</div>
+                  <div className="text-[11px] text-zinc-500 mt-0.5">{opt.desc}</div>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
+        <div className="mt-4 pt-4 border-t border-zinc-200 dark:border-zinc-800 space-y-3">
+          <div className="text-sm font-medium text-zinc-900 dark:text-zinc-100">
+            一键洗稿随机强度
+          </div>
+          <p className="text-xs text-zinc-500">
+            控制浮动面板与提示词库中「一键洗稿」每次生成时的变异幅度；同一档位下多次点击仍会略有不同。
+          </p>
+          <div className="flex flex-col gap-2">
+            {REWRITE_RANDOMNESS_OPTIONS.map((opt) => {
+              const active =
+                normalizeOneClickRewriteRandomness(settings.oneClickRewriteRandomness) === opt.value;
+              return (
+                <button
+                  key={opt.value}
+                  type="button"
+                  onClick={() =>
+                    setSettings({ ...settings, oneClickRewriteRandomness: opt.value })
+                  }
                   className={`text-left w-full p-3 rounded-xl border transition ${
                     active
                       ? 'border-violet-500 bg-violet-50 dark:bg-violet-500/10'

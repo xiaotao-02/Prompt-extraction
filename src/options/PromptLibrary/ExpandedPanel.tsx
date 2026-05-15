@@ -6,12 +6,12 @@ import {
   Wand2,
   Info,
   Save,
-  RotateCcw,
+  Shuffle,
   Copy,
   Check,
   StickyNote,
 } from 'lucide-react';
-import type { HistoryItem, PromptVersion } from '@/lib/types';
+import type { HistoryItem, OneClickRewriteRandomness, PromptVersion } from '@/lib/types';
 import { REFINE_STREAM_VERSION_ID, refineStreamDisplayedBody } from '@/lib/refineStreamVersion';
 import { VersionsSidebar } from './tabs/VersionsTab';
 import { MetaTab } from './tabs/MetaTab';
@@ -32,7 +32,9 @@ export function ExpandedPanel({
   onChangeDraft,
   onChangeNote,
   onSaveDraft,
-  onResetDraft,
+  rewriteRandomness,
+  onRewriteRandomnessChange,
+  onOneClickRewrite,
   onCopy,
   copiedKey,
   onRestoreVersion,
@@ -53,7 +55,9 @@ export function ExpandedPanel({
   onChangeDraft: (v: string) => void;
   onChangeNote: (v: string) => void;
   onSaveDraft: () => void;
-  onResetDraft: () => void;
+  rewriteRandomness: OneClickRewriteRandomness;
+  onRewriteRandomnessChange: (level: OneClickRewriteRandomness) => void;
+  onOneClickRewrite: () => void;
   onCopy: (text: string, key: string) => void;
   copiedKey: string | null;
   onRestoreVersion: (v: PromptVersion) => void;
@@ -167,6 +171,7 @@ export function ExpandedPanel({
     refineLoading ? false : draft.trim() !== item.prompt.trim();
   const dirtyNote = (draftNote || '') !== (item.note || '');
   const dirty = dirtyPrompt || dirtyNote;
+  const rewriteBusy = refineLoading || !(draft || item.prompt).trim();
 
   const handleSelectVersion = (v: PromptVersion) => {
     if (refineLoading) {
@@ -325,12 +330,27 @@ export function ExpandedPanel({
 
         {/* 操作按钮行 */}
         <div className="flex items-center gap-1.5 flex-wrap">
+          <select
+            value={rewriteRandomness}
+            disabled={rewriteBusy}
+            aria-label="一键洗稿随机强度"
+            title="随机强度"
+            onChange={(e) =>
+              onRewriteRandomnessChange(e.target.value as OneClickRewriteRandomness)
+            }
+            className="text-[11px] px-2 py-1 rounded-md border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 text-zinc-700 dark:text-zinc-200 disabled:opacity-40 max-w-[76px]"
+          >
+            <option value="subtle">轻度</option>
+            <option value="moderate">中度</option>
+            <option value="bold">强烈</option>
+          </select>
           <button
-            onClick={onResetDraft}
-            disabled={!dirty}
+            type="button"
+            onClick={onOneClickRewrite}
+            disabled={rewriteBusy}
             className="inline-flex items-center gap-1 text-[11px] px-2.5 py-1 rounded-md border border-zinc-200 dark:border-zinc-700 hover:bg-zinc-100 dark:hover:bg-zinc-800 disabled:opacity-40 text-zinc-600 dark:text-zinc-300 transition"
           >
-            <RotateCcw className="w-3.5 h-3.5" /> 撤销修改
+            <Shuffle className="w-3.5 h-3.5" /> 一键洗稿
           </button>
           <button
             onClick={onSaveDraft}

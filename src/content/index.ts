@@ -1,4 +1,6 @@
-import type { RuntimeMessage, StrategyId } from '@/lib/types';
+import '@/content/bgPort';
+import type { OneClickRewriteRandomness, RuntimeMessage, StrategyId } from '@/lib/types';
+import { normalizeOneClickRewriteRandomness } from '@/lib/oneClickRewrite';
 import { SETTINGS_KEY } from '@/lib/storage/keys';
 import {
   renderPanel,
@@ -8,6 +10,7 @@ import {
   applyHistoryReady,
   applyHistoryPrefetch,
   applyStoredPromptStrategy,
+  applyStoredRewriteRandomness,
 } from './panel';
 import { expandPanelForSidebar } from './panel/geometry';
 import { isExtensionContextValid, safeSendMessage } from '@/content/extensionBridge';
@@ -25,6 +28,7 @@ try {
         requestId: message.payload.requestId,
         imageUrl: message.payload.imageUrl,
         strategy: message.payload.strategy,
+        rewriteRandomness: message.payload.oneClickRewriteRandomness,
       });
       return false;
     }
@@ -35,6 +39,9 @@ try {
       if (message.payload.strategy !== undefined) patch.strategy = message.payload.strategy;
       if (message.payload.provider !== undefined) patch.provider = message.payload.provider;
       if (message.payload.model !== undefined) patch.model = message.payload.model;
+      if (message.payload.oneClickRewriteRandomness !== undefined) {
+        patch.rewriteRandomness = message.payload.oneClickRewriteRandomness;
+      }
       updatePanel(message.payload.requestId, patch);
       return false;
     }
@@ -102,6 +109,9 @@ try {
           model: item.model,
           versions: item.versions,
           strategy: item.strategy,
+          rewriteRandomness: normalizeOneClickRewriteRandomness(
+            message.payload.oneClickRewriteRandomness
+          ),
           versionsOpen,
           ...(refineOpen ? { refineOpen: true } : {}),
         });
@@ -126,9 +136,14 @@ try {
   chrome.storage.onChanged.addListener((changes, _area) => {
     const ch = changes[SETTINGS_KEY];
     if (!ch?.newValue || typeof ch.newValue !== 'object') return;
-    const ps = (ch.newValue as { promptStrategy?: StrategyId }).promptStrategy;
-    if (ps == null) return;
-    applyStoredPromptStrategy(ps);
+    const nv = ch.newValue as {
+      promptStrategy?: StrategyId;
+      oneClickRewriteRandomness?: OneClickRewriteRandomness;
+    };
+    const ps = nv.promptStrategy;
+    const rr = nv.oneClickRewriteRandomness;
+    if (ps != null) applyStoredPromptStrategy(ps);
+    if (rr != null) applyStoredRewriteRandomness(normalizeOneClickRewriteRandomness(rr));
   });
 } catch {
   // Extension context already invalidated at registration time

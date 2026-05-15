@@ -8,9 +8,9 @@ export const REFINE_SUGGESTIONS = [
   '翻译成英文',
   '翻译成中文',
   '改得更电影感',
-  '加上 8k, masterpiece, best quality',
-  '删掉色调描述',
-  '改成 SD tag 格式',
+  '扩写提示词',
+  '优化提示词',
+  '更改主体为xxx',
   '精简成不超过 30 字',
 ];
 

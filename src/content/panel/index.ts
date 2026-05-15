@@ -3,7 +3,7 @@
  * 这是 src/content/index.ts 唯一引用到的入口。
  */
 import { STYLE } from './styles';
-import type { PromptVersion, StrategyId } from '@/lib/types';
+import type { OneClickRewriteRandomness, PromptVersion, StrategyId } from '@/lib/types';
 import { EXTRACT_STREAM_VERSION_ID } from '@/lib/refineStreamVersion';
 import {
   HOST_ID,
@@ -38,7 +38,7 @@ import {
   syncEditorCharCount,
 } from './events';
 
-export { applyStoredPromptStrategy } from './events';
+export { applyStoredPromptStrategy, applyStoredRewriteRandomness } from './events';
 import {
   ensureGeometry,
   applyGeometryToPanel,
@@ -181,6 +181,7 @@ export function renderPanelForExtractPending(payload: {
   requestId: string;
   imageUrl: string;
   strategy?: StrategyId;
+  rewriteRandomness?: OneClickRewriteRandomness;
 }): void {
   const prev = currentState;
   if (prev != null && prev.requestId === payload.requestId) {
@@ -194,6 +195,7 @@ export function renderPanelForExtractPending(payload: {
       stage: 'calling',
       startedAt: Date.now(),
       strategy: payload.strategy ?? prev.strategy,
+      rewriteRandomness: payload.rewriteRandomness ?? prev.rewriteRandomness,
       prompt: undefined,
       error: undefined,
       draft: undefined,
@@ -217,6 +219,7 @@ export function renderPanelForExtractPending(payload: {
     stage: 'calling',
     startedAt: Date.now(),
     strategy: payload.strategy,
+    rewriteRandomness: payload.rewriteRandomness,
     linkedHistoryId: undefined,
   });
 }
@@ -239,7 +242,8 @@ export function updatePanel(requestId: string, patch: Partial<PanelState>): void
       patch.partial !== undefined ||
       patch.strategy !== undefined ||
       patch.provider !== undefined ||
-      patch.model !== undefined);
+      patch.model !== undefined ||
+      patch.rewriteRandomness !== undefined);
 
   if (lightUpdate && panel) {
     applyLoadingPatch(merged);

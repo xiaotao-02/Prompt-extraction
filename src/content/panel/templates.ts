@@ -1,4 +1,5 @@
-import type { PromptVersion } from '@/lib/types';
+import type { OneClickRewriteRandomness, PromptVersion } from '@/lib/types';
+import { normalizeOneClickRewriteRandomness } from '@/lib/oneClickRewrite';
 import { REFINE_STREAM_VERSION_ID, EXTRACT_STREAM_VERSION_ID, extractStreamDisplayedBody, refineStreamDisplayedBody } from '@/lib/refineStreamVersion';
 import { getVersionOrdinalLabel } from '@/lib/versionLabel';
 import { STRATEGY_LABELS, type StrategyId } from '@/lib/strategies-meta';
@@ -72,9 +73,9 @@ function strategySelectHtml(currentStrategy: StrategyId | undefined): string {
 export const SUGGESTIONS = [
   '翻译成英文',
   '改得更电影感',
-  '加上 8k, masterpiece, best quality',
-  '删掉色调描述',
-  '改成 SD tag 格式',
+  '扩写提示词',
+  '优化提示词',
+  '更改主体为xxx',
 ];
 
 function refineBlockHtml(
@@ -121,7 +122,7 @@ function refineBlockHtml(
               class="refine-input"
               data-role="refine-input"
               spellcheck="false"
-              placeholder="例如：改得更电影感、翻译成英文、删掉色调、加上 8k 高清等参数…"
+              placeholder="例如：扩写提示词、优化提示词、改得更电影感、翻译成英文…"
               ${refining ? 'disabled' : ''}
             >${escapeText(refineInstruction)}</textarea>
             ${
@@ -205,18 +206,37 @@ function metaRowHtml(
 
 function actionsHtml(
   dirty: boolean,
-  options: { loading?: boolean; canCopy?: boolean } = {}
+  options: {
+    loading?: boolean;
+    canCopy?: boolean;
+    rewriteRandomness?: OneClickRewriteRandomness;
+    rewriteControlsDisabled?: boolean;
+  } = {}
 ): string {
   const loading = !!options.loading;
   const canCopy = options.canCopy ?? !loading;
+  const rr = normalizeOneClickRewriteRandomness(options.rewriteRandomness);
+  const rewriteDisabled = loading || !!options.rewriteControlsDisabled;
+
+  const selectHtml = loading
+    ? ''
+    : `<select class="rewrite-randomness" data-role="rewrite-randomness" aria-label="一键洗稿随机强度" title="随机强度" ${
+        rewriteDisabled ? 'disabled' : ''
+      }>
+          <option value="subtle"${rr === 'subtle' ? ' selected' : ''}>轻度</option>
+          <option value="moderate"${rr === 'moderate' ? ' selected' : ''}>中度</option>
+          <option value="bold"${rr === 'bold' ? ' selected' : ''}>强烈</option>
+        </select>`;
+
   return `
         <div class="actions">
           <button class="btn ghost ${loading ? 'disabled' : ''}" data-action="retry" ${
     loading ? 'disabled' : ''
   }>${ICON_REFRESH}<span>重新生成</span></button>
-          <button class="btn ghost ${!loading && dirty ? '' : 'disabled'}" data-action="reset" ${
-    !loading && dirty ? '' : 'disabled'
-  }>撤销修改</button>
+          ${selectHtml}
+          <button class="btn ghost ${rewriteDisabled ? 'disabled' : ''}" data-action="rewrite-spin" ${
+    rewriteDisabled ? 'disabled' : ''
+  }><span>一键洗稿</span></button>
           <button class="btn ${!loading && dirty ? 'primary' : 'ghost disabled'}" data-action="save" ${
     !loading && dirty ? '' : 'disabled'
   }>${ICON_SAVE}<span>保存为新版本</span></button>
@@ -506,7 +526,10 @@ export function panelHtml(state: PanelState): string {
           disableHistory: versionCount === 0 && !refining,
         })}
         ${refineBlock}
-        ${actionsHtml(dirty)}
+        ${actionsHtml(dirty, {
+          rewriteRandomness: state.rewriteRandomness,
+          rewriteControlsDisabled: refining || editorContent.trim().length === 0,
+        })}
       </div>
     </div>
   `;

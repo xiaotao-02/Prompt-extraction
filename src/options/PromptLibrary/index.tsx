@@ -33,9 +33,23 @@ import {
   renameFolder,
   restorePromptVersion,
   scanHistoryLibraryStats,
+  getSettings,
+  saveSettings,
 } from '@/lib/storage';
+import { SETTINGS_KEY } from '@/lib/storage/keys';
 import { sendOpenInPanel } from '@/lib/messaging/openSurfaces';
-import type { HistoryItem, LibraryFolder, PromptVersion, RefineResponse } from '@/lib/types';
+import type {
+  HistoryItem,
+  LibraryFolder,
+  OneClickRewriteRandomness,
+  PromptVersion,
+  RefineResponse,
+} from '@/lib/types';
+import {
+  buildOneClickRewriteInstruction,
+  makeRewriteNonce,
+  normalizeOneClickRewriteRandomness,
+} from '@/lib/oneClickRewrite';
 import type { HistoryLibraryStats } from '@/lib/storage/historyDb';
 import type { SortKey, ViewMode, LibraryDockIntent } from './types';
 import {
@@ -156,8 +170,34 @@ export default function PromptLibrary({
   const [refineLoading, setRefineLoading] = useState(false);
   const [refinePartial, setRefinePartial] = useState<string | undefined>(undefined);
   const [refineError, setRefineError] = useState<string | null>(null);
+  const [rewriteRandomness, setRewriteRandomness] =
+    useState<OneClickRewriteRandomness>('moderate');
   const refiningIdRef = useRef<string | null>(null);
   const [actionTip, setActionTip] = useState<{ ok: boolean; msg: string } | null>(null);
+
+  useEffect(() => {
+    void getSettings().then((s) =>
+      setRewriteRandomness(normalizeOneClickRewriteRandomness(s.oneClickRewriteRandomness))
+    );
+  }, []);
+
+  useEffect(() => {
+    const onStorage = (
+      changes: Record<string, chrome.storage.StorageChange>,
+      area: chrome.storage.AreaName
+    ) => {
+      if (area !== 'sync' && area !== 'local') return;
+      const ch = changes[SETTINGS_KEY];
+      if (!ch?.newValue || typeof ch.newValue !== 'object') return;
+      const rr = (ch.newValue as { oneClickRewriteRandomness?: OneClickRewriteRandomness })
+        .oneClickRewriteRandomness;
+      if (rr !== undefined) {
+        setRewriteRandomness(normalizeOneClickRewriteRandomness(rr));
+      }
+    };
+    chrome.storage.onChanged.addListener(onStorage);
+    return () => chrome.storage.onChanged.removeListener(onStorage);
+  }, []);
 
   useEffect(() => {
     listCursorRef.current = listCursor;
@@ -794,12 +834,12 @@ export default function PromptLibrary({
     });
   };
 
-  const runRefine = (item: HistoryItem) => {
-    const instruction = refineInput.trim();
-    if (!instruction) {
-      setRefineError('请先输入修改要求');
-      return;
-    }
+  const persistRewriteRandomness = (level: OneClickRewriteRandomness) => {
+    setRewriteRandomness(level);
+    void getSettings().then((s) => saveSettings({ ...s, oneClickRewriteRandomness: level }));
+  };
+
+  const sendLibraryRefine = (item: HistoryItem, instruction: string) => {
     refiningIdRef.current = item.id;
     setRefinePartial(undefined);
     setRefineLoading(true);
@@ -839,6 +879,24 @@ export default function PromptLibrary({
             setRefineLoading(false);
           });
       }
+    );
+  };
+
+  const runRefine = (item: HistoryItem) => {
+    const instruction = refineInput.trim();
+    if (!instruction) {
+      setRefineError('请先输入修改要求');
+      return;
+    }
+    sendLibraryRefine(item, instruction);
+  };
+
+  const runOneClickRewrite = (item: HistoryItem) => {
+    const text = (draft || item.prompt).trim();
+    if (!text) return;
+    sendLibraryRefine(
+      item,
+      buildOneClickRewriteInstruction(rewriteRandomness, makeRewriteNonce())
     );
   };
 
@@ -1118,10 +1176,9 @@ export default function PromptLibrary({
                     onChangeDraft={setDraft}
                     onChangeNote={setDraftNote}
                     onSaveDraft={() => onSaveDraft(item)}
-                    onResetDraft={() => {
-                      setDraft(item.prompt);
-                      setDraftNote(item.note || '');
-                    }}
+                    rewriteRandomness={rewriteRandomness}
+                    onRewriteRandomnessChange={persistRewriteRandomness}
+                    onOneClickRewrite={() => runOneClickRewrite(item)}
                     onCopy={onCopy}
                     copiedKey={copiedKey}
                     onRestoreVersion={(v) => onRestoreVersion(item, v)}

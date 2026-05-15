@@ -103,6 +103,9 @@ export interface UpdateSettings {
   lastResult: UpdateCheckResult | null;
 }
 
+/** 「一键洗稿」随机变异强度；写入 {@link AppSettings.oneClickRewriteRandomness} */
+export type OneClickRewriteRandomness = 'subtle' | 'moderate' | 'bold';
+
 export interface AppSettings {
   activeProvider: ProviderId;
   providers: Record<ProviderId, ProviderConfig>;
@@ -138,6 +141,8 @@ export interface AppSettings {
    * - panel：在当前/来源网页的浮动面板中打开，并按操作展开对应区域
    */
   popupToolbarPromptAction?: 'library' | 'panel';
+  /** 浮动面板 / 提示词库「一键洗稿」的随机强度，默认 moderate */
+  oneClickRewriteRandomness?: OneClickRewriteRandomness;
 }
 
 /**
@@ -303,6 +308,8 @@ export type RuntimeMessage =
          * EXTRACT_PROGRESS 再补发一次带 strategy 的更新即可。
          */
         strategy?: StrategyId;
+        /** 与设置页共用的一键洗稿随机强度；缺省时由后续 EXTRACT_PROGRESS 补发 */
+        oneClickRewriteRandomness?: OneClickRewriteRandomness;
       };
     }
   | {
@@ -338,6 +345,8 @@ export type RuntimeMessage =
          * 模型 badge。
          */
         model?: string;
+        /** 一键洗稿随机强度（settings 就绪后与 strategy 一并下发） */
+        oneClickRewriteRandomness?: OneClickRewriteRandomness;
       };
     }
   | {
@@ -427,6 +436,11 @@ export type RuntimeMessage =
       payload: { strategy: StrategyId };
     }
   | {
+      /** 浮动面板等处切换「一键洗稿」随机强度后写回全局设置 */
+      type: 'SET_ONE_CLICK_REWRITE_RANDOMNESS';
+      payload: { level: OneClickRewriteRandomness };
+    }
+  | {
       /**
        * 从 popup / options / 浮动面板打开扩展选项页；无 payload 时等同 `openOptionsPage()`。
        * 带参时由 background 拼 hash 深链（tab / focus / dock）。
@@ -492,7 +506,13 @@ export type RuntimeMessage =
        * `dock` 与 OPEN_IN_PANEL 一致，用于初始展开 AI 调整或历史侧栏。
        */
       type: 'PANEL_FROM_HISTORY';
-      payload: { historyId: string; item: HistoryItem; dock?: 'refine' | 'versions' };
+      payload: {
+        historyId: string;
+        item: HistoryItem;
+        dock?: 'refine' | 'versions';
+        /** 当前全局设置中的一键洗稿强度，便于召回面板与选项页一致 */
+        oneClickRewriteRandomness?: OneClickRewriteRandomness;
+      };
     };
 
 export interface RefineResponseOk {

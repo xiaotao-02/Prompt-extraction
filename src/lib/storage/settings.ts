@@ -1,4 +1,5 @@
 import type { AppSettings, ProviderId } from '../types';
+import { DEFAULT_ONE_CLICK_REWRITE_RANDOMNESS } from '../oneClickRewrite';
 import { PROVIDERS } from '../providers';
 import { DEFAULT_STRATEGY_ID } from '../strategies';
 import { DEFAULT_UPDATE_SETTINGS } from '../updater';
@@ -38,6 +39,7 @@ function defaultSettings(): AppSettings {
     saveHistory: true,
     updates: { ...DEFAULT_UPDATE_SETTINGS },
     promptStrategy: DEFAULT_STRATEGY_ID,
+    oneClickRewriteRandomness: DEFAULT_ONE_CLICK_REWRITE_RANDOMNESS,
     popupToolbarPromptAction: 'library',
     customComponents: {
       stylePromptSet: 'v0.3.0',

@@ -6,7 +6,13 @@ import {
   removePromptVersionFromExtension,
   restorePromptVersionFromExtension,
 } from '@/content/extensionBridge';
-import type { RefineResponse, RuntimeMessage, StrategyId } from '@/lib/types';
+import type {
+  OneClickRewriteRandomness,
+  RefineResponse,
+  RuntimeMessage,
+  StrategyId,
+} from '@/lib/types';
+import { buildOneClickRewriteInstruction, makeRewriteNonce, normalizeOneClickRewriteRandomness } from '@/lib/oneClickRewrite';
 import { STRATEGY_LABELS } from '@/lib/strategies-meta';
 import {
   currentState,
@@ -14,6 +20,7 @@ import {
   panel,
   panelActions,
   panelGeometry,
+  type PanelState,
 } from './state';
 import {
   updateGeometry,
@@ -68,6 +75,13 @@ function syncDirtyHintsImmediate(): void {
   const dirty = currentState.refineLoading ? false : draft !== (currentState.prompt ?? '');
   const hint = root.querySelector<HTMLElement>('.dirty-hint');
   if (hint) hint.classList.toggle('show', dirty);
+  const taEditor = root.querySelector<HTMLTextAreaElement>('[data-role="editor"]');
+  const baselineRaw =
+    currentState.status === 'success' && taEditor
+      ? taEditor.value
+      : draft || (currentState.prompt ?? '');
+  const baselineEmpty = baselineRaw.trim().length === 0;
+  const spinDisabled = !!currentState.refineLoading || baselineEmpty;
   const setDisabled = (sel: string, disabled: boolean) => {
     const btn = root.querySelector<HTMLButtonElement>(sel);
     if (!btn) return;
@@ -78,7 +92,9 @@ function syncDirtyHintsImmediate(): void {
       btn.classList.toggle('ghost', disabled);
     }
   };
-  setDisabled('[data-action="reset"]', !dirty);
+  setDisabled('[data-action="rewrite-spin"]', spinDisabled);
+  const rrSel = root.querySelector<HTMLSelectElement>('[data-role="rewrite-randomness"]');
+  if (rrSel) rrSel.disabled = spinDisabled;
   setDisabled('[data-action="save"]', !dirty);
   syncEditorCharCount();
 }
@@ -229,6 +245,17 @@ export function applyStoredPromptStrategy(strategy: StrategyId): void {
   setCurrentState({ ...st, strategy });
   patchStrategyDropdownSelection(panel, strategy);
   patchVersionList();
+}
+
+/** storage 同步「一键洗稿强度」后刷新面板下拉（不重渲整板）。 */
+export function applyStoredRewriteRandomness(level: OneClickRewriteRandomness): void {
+  const st = currentState;
+  if (!st || !panel || st.status !== 'success') return;
+  const next = normalizeOneClickRewriteRandomness(level);
+  if (st.rewriteRandomness === next) return;
+  setCurrentState({ ...st, rewriteRandomness: next });
+  const sel = panel.querySelector<HTMLSelectElement>('[data-role="rewrite-randomness"]');
+  if (sel) sel.value = next;
 }
 
 /**
@@ -411,6 +438,112 @@ function bindEdgeResize(root: HTMLElement): void {
   });
 }
 
+function beginPanelRefineSession(
+  sessionState: PanelState,
+  baseline: string,
+  instruction: string,
+  refineInstructionSnapshot: string
+): void {
+  const requestIdSnapshot = sessionState.requestId;
+  setCurrentState({
+    ...sessionState,
+    refineLoading: true,
+    refineError: undefined,
+    refineInstruction: refineInstructionSnapshot,
+    refineStage: 'calling',
+    refinePartial: undefined,
+    refineStartedAt: Date.now(),
+    refineBaselinePrompt: baseline,
+    selectedVersionId: REFINE_STREAM_VERSION_ID,
+  });
+  renderPanel(currentState!);
+  if (!isExtensionContextValid()) {
+    setCurrentState({
+      ...currentState!,
+      refineLoading: false,
+      refineError: '扩展已更新，请刷新页面',
+      refineStage: undefined,
+      refinePartial: undefined,
+      refineStartedAt: undefined,
+      refineBaselinePrompt: undefined,
+    });
+    renderPanel(currentState!);
+    return;
+  }
+  try {
+    chrome.runtime.sendMessage(
+      {
+        type: 'REFINE_PROMPT',
+        payload: {
+          historyId: libraryStorageId(sessionState),
+          instruction,
+          current: baseline,
+        },
+      },
+      (resp: RefineResponse | undefined) => {
+        if (!currentState || currentState.requestId !== requestIdSnapshot) return;
+        if (chrome.runtime.lastError || !resp) {
+          setCurrentState({
+            ...currentState,
+            refineLoading: false,
+            refineError:
+              chrome.runtime.lastError?.message || '后台未响应，请稍后再试',
+            refineStage: undefined,
+            refinePartial: undefined,
+            refineStartedAt: undefined,
+            refineBaselinePrompt: undefined,
+          });
+          renderPanel(currentState);
+          return;
+        }
+        if (!resp.ok) {
+          setCurrentState({
+            ...currentState,
+            refineLoading: false,
+            refineError: resp.error,
+            refineStage: undefined,
+            refinePartial: undefined,
+            refineStartedAt: undefined,
+            refineBaselinePrompt: undefined,
+          });
+          renderPanel(currentState);
+          return;
+        }
+        const wasOpen = currentState.versionsOpen;
+        setCurrentState({
+          ...currentState,
+          refineLoading: false,
+          refineError: undefined,
+          refineInstruction: '',
+          refineOpen: false,
+          refineStage: undefined,
+          refinePartial: undefined,
+          refineStartedAt: undefined,
+          refineBaselinePrompt: undefined,
+          prompt: resp.prompt,
+          draft: resp.prompt,
+          versionsOpen: true,
+          selectedVersionId: resp.versionId,
+        });
+        if (!wasOpen) expandPanelForSidebar();
+        void syncVersions(requestIdSnapshot);
+        renderPanel(currentState);
+      }
+    );
+  } catch {
+    setCurrentState({
+      ...currentState!,
+      refineLoading: false,
+      refineError: '扩展已更新，请刷新页面',
+      refineStage: undefined,
+      refinePartial: undefined,
+      refineStartedAt: undefined,
+      refineBaselinePrompt: undefined,
+    });
+    renderPanel(currentState!);
+  }
+}
+
 function handleDataAction(root: HTMLElement, el: HTMLElement, event: MouseEvent): void {
   // 历史版本 li 整行带 data-action="select-version"，行内的「复制 / 恢复」按钮也各自有
   // data-action；子控件先触发并 stopPropagation，避免父级 li 误判。
@@ -527,18 +660,15 @@ function handleDataAction(root: HTMLElement, el: HTMLElement, event: MouseEvent)
     }
     return;
   }
-  if (action === 'reset') {
-    const restored = state.prompt ?? '';
-    let nextSel = state.selectedVersionId;
-    if (nextSel) {
-      const v = state.versions?.find((x) => x.id === nextSel);
-      if (!v || v.prompt !== restored) nextSel = undefined;
-    }
-    setCurrentState({ ...state, draft: restored, selectedVersionId: nextSel });
+  if (action === 'rewrite-spin') {
+    if (state.status !== 'success' || state.refineLoading) return;
     const actionRoot = root.isConnected ? root : panel ?? root;
     const ta = actionRoot.querySelector<HTMLTextAreaElement>('[data-role="editor"]');
-    if (ta) ta.value = restored;
-    updateDirtyChromeImmediate();
+    const baseline = (ta?.value ?? state.draft ?? state.prompt ?? '').trim();
+    if (!baseline) return;
+    const level = normalizeOneClickRewriteRandomness(state.rewriteRandomness);
+    const instruction = buildOneClickRewriteInstruction(level, makeRewriteNonce());
+    beginPanelRefineSession(state, baseline, instruction, '');
     return;
   }
   if (
@@ -742,103 +872,7 @@ function handleDataAction(root: HTMLElement, el: HTMLElement, event: MouseEvent)
       return;
     }
     const baseline = state.draft ?? state.prompt ?? '';
-    setCurrentState({
-      ...state,
-      refineLoading: true,
-      refineError: undefined,
-      refineInstruction: instruction,
-      refineStage: 'calling',
-      refinePartial: undefined,
-      refineStartedAt: Date.now(),
-      refineBaselinePrompt: baseline,
-      selectedVersionId: REFINE_STREAM_VERSION_ID,
-    });
-    renderPanel(currentState!);
-    if (!isExtensionContextValid()) {
-      setCurrentState({
-        ...currentState!,
-        refineLoading: false,
-        refineError: '扩展已更新，请刷新页面',
-        refineStage: undefined,
-        refinePartial: undefined,
-        refineStartedAt: undefined,
-        refineBaselinePrompt: undefined,
-      });
-      renderPanel(currentState!);
-      return;
-    }
-    try {
-      chrome.runtime.sendMessage(
-        {
-          type: 'REFINE_PROMPT',
-          payload: {
-            historyId: libraryStorageId(state),
-            instruction,
-            current: baseline,
-          },
-        },
-        (resp: RefineResponse | undefined) => {
-          if (!currentState || currentState.requestId !== state.requestId) return;
-          if (chrome.runtime.lastError || !resp) {
-            setCurrentState({
-              ...currentState,
-              refineLoading: false,
-              refineError:
-                chrome.runtime.lastError?.message || '后台未响应，请稍后再试',
-              refineStage: undefined,
-              refinePartial: undefined,
-              refineStartedAt: undefined,
-              refineBaselinePrompt: undefined,
-            });
-            renderPanel(currentState);
-            return;
-          }
-          if (!resp.ok) {
-            setCurrentState({
-              ...currentState,
-              refineLoading: false,
-              refineError: resp.error,
-              refineStage: undefined,
-              refinePartial: undefined,
-              refineStartedAt: undefined,
-              refineBaselinePrompt: undefined,
-            });
-            renderPanel(currentState);
-            return;
-          }
-          const wasOpen = currentState.versionsOpen;
-          setCurrentState({
-            ...currentState,
-            refineLoading: false,
-            refineError: undefined,
-            refineInstruction: '',
-            refineOpen: false,
-            refineStage: undefined,
-            refinePartial: undefined,
-            refineStartedAt: undefined,
-            refineBaselinePrompt: undefined,
-            prompt: resp.prompt,
-            draft: resp.prompt,
-            versionsOpen: true,
-            selectedVersionId: resp.versionId,
-          });
-          if (!wasOpen) expandPanelForSidebar();
-          void syncVersions(state.requestId);
-          renderPanel(currentState);
-        }
-      );
-    } catch {
-      setCurrentState({
-        ...currentState!,
-        refineLoading: false,
-        refineError: '扩展已更新，请刷新页面',
-        refineStage: undefined,
-        refinePartial: undefined,
-        refineStartedAt: undefined,
-        refineBaselinePrompt: undefined,
-      });
-      renderPanel(currentState!);
-    }
+    beginPanelRefineSession(state, baseline, instruction, instruction);
     return;
   }
 }
@@ -888,6 +922,25 @@ function bindPanelDelegatedClicks(root: HTMLElement): void {
   });
 }
 
+function bindPanelRewriteRandomnessChange(root: HTMLElement): void {
+  root.addEventListener('change', (e: Event) => {
+    const t = e.target as HTMLElement;
+    if (!t.matches('[data-role="rewrite-randomness"]') || !root.contains(t)) return;
+    if (!currentState || currentState.status !== 'success' || currentState.refineLoading) return;
+    const sel = t as HTMLSelectElement;
+    const level = sel.value as OneClickRewriteRandomness;
+    if (level !== 'subtle' && level !== 'moderate' && level !== 'bold') return;
+    setCurrentState({ ...currentState, rewriteRandomness: level });
+    safeSendMessage(
+      {
+        type: 'SET_ONE_CLICK_REWRITE_RANDOMNESS',
+        payload: { level },
+      } satisfies RuntimeMessage,
+      () => void chrome.runtime.lastError
+    );
+  });
+}
+
 function bindPanelDelegatedInput(root: HTMLElement): void {
   root.addEventListener('input', (e: Event) => {
     const t = e.target as HTMLElement;
@@ -930,6 +983,7 @@ export function bindEvents(root: HTMLElement): void {
   bindEdgeResize(root);
   bindPanelDelegatedClicks(root);
   bindPanelDelegatedInput(root);
+  bindPanelRewriteRandomnessChange(root);
 }
 
 export function flashCopied(btn: HTMLElement, text = '已复制 ✔'): void {

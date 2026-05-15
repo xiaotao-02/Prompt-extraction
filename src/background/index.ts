@@ -13,6 +13,7 @@ import {
 import { ensureLibraryReady } from '@/lib/storage/history';
 import { getByDedupeKey, naturalDedupeKey, toPublicHistory } from '@/lib/storage/historyDb';
 import type { HistoryItem, RefineResponse, RuntimeMessage, StrategyId, UpdateCheckResult } from '@/lib/types';
+import { PROMPT_EXTRACTO_KEEPALIVE_PORT } from '@/lib/keepalivePort';
 import { DEFAULT_FEED_URL, getCurrentVersion, performUpdateCheck } from '@/lib/updater';
 
 const MENU_ID = 'extract-image-prompt';
@@ -27,6 +28,42 @@ const MENU_ID_FALLBACK = 'extract-image-prompt-fallback';
  * 标签页相互覆盖。fallback 菜单点击时从这里取 URL。
  */
 const pendingFallbackImage = new Map<number, { imageUrl: string; at: number }>();
+
+/** 各标签页内若干 frame 各自 connect；仅存引用便于 disconnect 时清理，不参与业务逻辑。 */
+const keepalivePortsByTab = new Map<number, Set<chrome.runtime.Port>>();
+const keepalivePortsWithoutTab = new Set<chrome.runtime.Port>();
+
+function registerKeepalivePort(port: chrome.runtime.Port): void {
+  const tabId = port.sender?.tab?.id;
+  if (tabId != null) {
+    let set = keepalivePortsByTab.get(tabId);
+    if (!set) {
+      set = new Set();
+      keepalivePortsByTab.set(tabId, set);
+    }
+    set.add(port);
+  } else {
+    keepalivePortsWithoutTab.add(port);
+  }
+  port.onDisconnect.addListener(() => {
+    void chrome.runtime.lastError;
+    const tid = port.sender?.tab?.id;
+    if (tid != null) {
+      const set = keepalivePortsByTab.get(tid);
+      if (set) {
+        set.delete(port);
+        if (set.size === 0) keepalivePortsByTab.delete(tid);
+      }
+    } else {
+      keepalivePortsWithoutTab.delete(port);
+    }
+  });
+}
+
+chrome.runtime.onConnect.addListener((port) => {
+  if (port.name !== PROMPT_EXTRACTO_KEEPALIVE_PORT) return;
+  registerKeepalivePort(port);
+});
 
 function ensureContextMenus(): void {
   if (!chrome.contextMenus) return;
@@ -168,6 +205,23 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     })();
     return true;
   }
+  if (message?.type === 'SET_ONE_CLICK_REWRITE_RANDOMNESS') {
+    const level = message.payload?.level;
+    if (level !== 'subtle' && level !== 'moderate' && level !== 'bold') {
+      sendResponse({ ok: false, error: '缺少或无效的 level' });
+      return true;
+    }
+    void (async () => {
+      try {
+        const s = await getSettings();
+        await saveSettings({ ...s, oneClickRewriteRandomness: level });
+        sendResponse({ ok: true });
+      } catch (e) {
+        sendResponse({ ok: false, error: e instanceof Error ? e.message : String(e) });
+      }
+    })();
+    return true;
+  }
   if (message?.type === 'GET_HISTORY_ITEM') {
     const id = message.payload?.id;
     if (!id) {
@@ -276,6 +330,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           return;
         }
 
+        const appSettings = await getSettings();
+
         const pageUrl = item.pageUrl;
         const isHttpPage = /^https?:/i.test(pageUrl);
 
@@ -340,6 +396,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           payload: {
             historyId,
             item,
+            oneClickRewriteRandomness: appSettings.oneClickRewriteRandomness,
             ...(dock === 'refine' || dock === 'versions' ? { dock } : {}),
           },
         });
@@ -473,6 +530,7 @@ async function runExtraction(params: {
           strategy: strategyOverride ?? settings.promptStrategy,
           provider: activeProvider,
           model: activeModel,
+          oneClickRewriteRandomness: settings.oneClickRewriteRandomness,
         },
       });
       if (settings.saveHistory) {
