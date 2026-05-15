@@ -65,7 +65,6 @@ const STYLE_OPTIONS: { value: OutputStyle; label: string; desc: string }[] = [
 ];
 
 type SettingsPanelId =
-  | 'setup'
   | 'provider'
   | 'output'
   | 'strategy'
@@ -76,7 +75,6 @@ const SETTINGS_PANEL_STORAGE_KEY = 'options_settings_panel_v1';
 
 function isSettingsPanelId(v: string | null): v is SettingsPanelId {
   return (
-    v === 'setup' ||
     v === 'provider' ||
     v === 'output' ||
     v === 'strategy' ||
@@ -86,7 +84,6 @@ function isSettingsPanelId(v: string | null): v is SettingsPanelId {
 }
 
 const SETTINGS_PANEL_NAV: { id: SettingsPanelId; label: string }[] = [
-  { id: 'setup', label: '配置向导' },
   { id: 'provider', label: '模型与连接' },
   { id: 'output', label: '输出与交互' },
   { id: 'strategy', label: '策略版本' },
@@ -165,6 +162,7 @@ export default function SettingsView({ registerSaveHandler, onDirtyChange }: Pro
   const [panelId, setPanelId] = useState<SettingsPanelId>(() => {
     try {
       const raw = sessionStorage.getItem(SETTINGS_PANEL_STORAGE_KEY);
+      if (raw === 'setup') return 'provider';
       if (isSettingsPanelId(raw)) return raw;
     } catch {
       /* ignore */
@@ -543,12 +541,9 @@ export default function SettingsView({ registerSaveHandler, onDirtyChange }: Pro
           }
           className="flex-1 min-h-0 min-w-0 overflow-y-auto overscroll-contain px-4 py-4 sm:p-5"
         >
-          {panelId === 'setup' && (
-            <SetupGuide settings={settings} applyConfig={applyConfig} />
-          )}
-
           {panelId === 'provider' && (
             <section className="space-y-5">
+              <SetupGuide settings={settings} applyConfig={applyConfig} />
         <div className="flex items-center justify-between mb-4">
           <div>
             <h2 className="text-sm font-semibold">模型供应商</h2>
@@ -919,17 +914,17 @@ export default function SettingsView({ registerSaveHandler, onDirtyChange }: Pro
             .map((s) => {
               const active = settings.promptStrategy === s.id;
               return (
-                <div key={s.id}>
+                <div key={s.id} className="h-full min-h-0">
                   <button
                     type="button"
                     onClick={() => setSettings({ ...settings, promptStrategy: s.id })}
-                    className={`w-full text-left p-3 rounded-xl border transition ${
+                    className={`h-full w-full flex flex-col text-left p-3 rounded-xl border transition ${
                       active
                         ? 'border-violet-500 bg-violet-50 dark:bg-violet-500/10'
                         : 'border-zinc-200 dark:border-zinc-800 hover:border-zinc-300'
                     }`}
                   >
-                    <div className="text-sm font-medium flex items-center gap-2">
+                    <div className="text-sm font-medium flex items-center gap-2 shrink-0">
                       {s.label}
                       {active && (
                         <span className="text-[10px] px-1.5 py-0.5 rounded bg-violet-500 text-white">
@@ -937,10 +932,10 @@ export default function SettingsView({ registerSaveHandler, onDirtyChange }: Pro
                         </span>
                       )}
                     </div>
-                    <div className="text-[11px] text-zinc-500 mt-1 leading-relaxed">
+                    <div className="text-[11px] text-zinc-500 mt-1 leading-relaxed flex-1 min-h-0">
                       {s.description}
                     </div>
-                    <div className="text-[10px] text-zinc-400 mt-1.5 font-mono">
+                    <div className="text-[10px] text-zinc-400 mt-auto pt-1.5 font-mono shrink-0">
                       temperature {s.temperature} · max_tokens {s.maxTokens} ·{' '}
                       {s.customPosition === 'prepend' ? '自定义前置' : '自定义追加'}
                     </div>
@@ -962,19 +957,19 @@ export default function SettingsView({ registerSaveHandler, onDirtyChange }: Pro
               resolved = null;
             }
             return (
-              <div key={`user-preset-${preset.id}`}>
+              <div key={`user-preset-${preset.id}`} className="h-full min-h-0">
                 <button
                   type="button"
                   onClick={() =>
                     setSettings(applyUserStrategyPresetToSettings(settings, preset))
                   }
-                  className={`w-full text-left p-3 rounded-xl border transition ${
+                  className={`h-full w-full flex flex-col text-left p-3 rounded-xl border transition ${
                     active
                       ? 'border-violet-500 bg-violet-50 dark:bg-violet-500/10'
                       : 'border-zinc-200 dark:border-zinc-800 hover:border-zinc-300'
                   }`}
                 >
-                  <div className="text-sm font-medium flex items-center gap-2 flex-wrap">
+                  <div className="text-sm font-medium flex items-center gap-2 flex-wrap shrink-0">
                     <span className="min-w-0 truncate">{preset.name}</span>
                     <span className="text-[9px] px-1.5 py-0.5 rounded bg-zinc-200/90 dark:bg-zinc-700 text-zinc-600 dark:text-zinc-300 shrink-0">
                       我的预设
@@ -985,11 +980,11 @@ export default function SettingsView({ registerSaveHandler, onDirtyChange }: Pro
                       </span>
                     )}
                   </div>
-                  <div className="text-[11px] text-zinc-500 mt-1 leading-relaxed line-clamp-2">
+                  <div className="text-[11px] text-zinc-500 mt-1 leading-relaxed line-clamp-2 flex-1 min-h-0">
                     {briefUserPresetFingerprint(preset)}
                   </div>
                   {resolved && (
-                    <div className="text-[10px] text-zinc-400 mt-1.5 font-mono">
+                    <div className="text-[10px] text-zinc-400 mt-auto pt-1.5 font-mono shrink-0">
                       temperature {resolved.temperature} · max_tokens {resolved.maxTokens} ·{' '}
                       {resolved.customPosition === 'prepend' ? '自定义前置' : '自定义追加'}
                     </div>
