@@ -6,6 +6,7 @@ import {
   updatePanel,
   closePanel,
   applyHistoryReady,
+  applyHistoryPrefetch,
   applyStoredPromptStrategy,
 } from './panel';
 import { expandPanelForSidebar } from './panel/geometry';
@@ -68,6 +69,15 @@ try {
         message.payload.versions,
         message.payload.prompt
       );
+      return false;
+    }
+    if (message.type === 'HISTORY_PREFETCH') {
+      const p = message.payload;
+      applyHistoryPrefetch(p.requestId, {
+        storageId: p.storageId,
+        versions: p.versions,
+        prompt: p.prompt,
+      });
       return false;
     }
     if (message.type === 'PANEL_FROM_HISTORY') {
@@ -133,8 +143,8 @@ document.addEventListener('keydown', (e) => {
 //  以及"用 <video> 假装成 GIF"的现代动图（Twitter / Reddit / Discord
 //  把 .gif 转成 mp4 的场景）的识别。
 //
-//  Chrome 原生只在用户右键 <img> 时才会触发 contexts: ['image'] 菜单，
-//  所以我们必须在右键事件触发时：
+//  Chrome 原生在 <img>（image）与 <video>（video）上会出扩展的常驻菜单项；
+//  但遮罩 / pointer-events / 未缓冲视频等仍需要 fallback，因此我们必须在右键时：
 //    1. 找出鼠标位置上最相关的"可视化媒体元素"
 //    2. 如果是视频 → 抓当前帧到 canvas → toDataURL，喂给后台
 //    3. 如果是 canvas/svg/背景图 → 序列化为 data URL
@@ -167,19 +177,29 @@ window.addEventListener(
   true
 );
 
+/** 全页扫描上限，避免超重型瀑布流一次右键卡死主线程 */
+const RECT_HIT_MAX_NODES = 2000;
+/** 忽略过小的占位/追踪图，避免矩形命中误选 */
+const RECT_HIT_MIN_EDGE = 8;
+
 function captureMediaUrlAtPoint(ev: MouseEvent): string {
   const x = ev.clientX;
   const y = ev.clientY;
   const stack = elementsAtPoint(x, y);
   const target = ev.target instanceof Element ? ev.target : null;
 
-  // <video> 优先：现代站点的"假 GIF"几乎全是 <video>。
+  // 直接点到 <video>：Chrome 会给原生 video 上下文 + 我们的 MENU_ID，不要再点亮 fallback。
+  if (target instanceof HTMLVideoElement) {
+    return '';
+  }
+
+  // <video> 优先：现代站点的"假 GIF"几乎全是 <video>；不强制 readyState>=2（懒加载未就绪时仍退回 src）。
   for (const el of stack) {
-    if (el instanceof HTMLVideoElement && el.readyState >= 2) {
+    if (el instanceof HTMLVideoElement) {
       const frame = captureVideoFrame(el);
       if (frame) return frame;
-      // tainted 退路：直接交回 video src，让后台用 fetch 兜底
-      return el.currentSrc || el.src || '';
+      const vsrc = el.currentSrc || el.src || '';
+      if (vsrc) return vsrc;
     }
   }
 
@@ -197,16 +217,24 @@ function captureMediaUrlAtPoint(ev: MouseEvent): string {
   //      被藏起来，用户就什么入口都看不到（这就是"Behance 上右键失效"的根因）。
   //      所以这里主动把被覆盖的 <img> 的 currentSrc 抛给后台，让 fallback 菜单
   //      显示。currentSrc 比 src 更准确——能拿到 srcset 实际选中的那张分辨率。
+  //      栈里多张图时取包围盒面积较小者，减轻瀑布流重叠时的误选。
   const targetIsImage =
     target instanceof HTMLImageElement || (target instanceof Element && target.tagName === 'SOURCE');
   if (targetIsImage) return '';
+
+  const imgsInStack: HTMLImageElement[] = [];
   for (const el of stack) {
-    if (el instanceof HTMLImageElement) {
-      // 不在 content 里 dataUrl 化：让后台 fetch 拿原图（多半命中浏览器缓存，
-      // 比把整张图序列化进 message 倒一遍快得多），动图原始字节也得以保留。
-      const src = el.currentSrc || el.src || '';
-      if (src) return src;
-    }
+    if (el instanceof HTMLImageElement) imgsInStack.push(el);
+  }
+  if (imgsInStack.length > 0) {
+    const pick =
+      imgsInStack.length === 1
+        ? imgsInStack[0]
+        : imgsInStack.reduce((a, b) =>
+            rectArea(a.getBoundingClientRect()) <= rectArea(b.getBoundingClientRect()) ? a : b
+          );
+    const src = pick.currentSrc || pick.src || '';
+    if (src) return src;
   }
 
   // <canvas>：很多动画 / 渲染场景（webgl 图表、游戏画面）走 canvas。
@@ -240,7 +268,54 @@ function captureMediaUrlAtPoint(ev: MouseEvent): string {
     if (url) return url;
   }
 
+  // <video> 设了 pointer-events:none、或不在 elementsFromPoint 栈里时，用矩形命中兜底。
+  const fromRect = pickMediaUrlByRectHit(x, y);
+  if (fromRect) return fromRect;
+
   return '';
+}
+
+function rectArea(r: DOMRectReadOnly): number {
+  return Math.max(0, r.width) * Math.max(0, r.height);
+}
+
+function rectContainsClientPoint(r: DOMRectReadOnly, x: number, y: number): boolean {
+  return x >= r.left && x <= r.right && y >= r.top && y <= r.bottom;
+}
+
+function isRoughlyInViewport(r: DOMRectReadOnly): boolean {
+  const h = window.innerHeight;
+  const w = window.innerWidth;
+  return r.bottom > 0 && r.top < h && r.right > 0 && r.left < w;
+}
+
+/**
+ * 在视口内、包含点击点的 video/img 中，取包围盒面积最小者（通常更接近「用户点中的那张」）。
+ */
+function pickMediaUrlByRectHit(x: number, y: number): string {
+  let best: HTMLVideoElement | HTMLImageElement | null = null;
+  let bestArea = Infinity;
+  let seen = 0;
+  for (const el of document.querySelectorAll('video, img')) {
+    if (++seen > RECT_HIT_MAX_NODES) break;
+    if (!(el instanceof HTMLVideoElement || el instanceof HTMLImageElement)) continue;
+    const r = el.getBoundingClientRect();
+    if (r.width < RECT_HIT_MIN_EDGE || r.height < RECT_HIT_MIN_EDGE) continue;
+    if (!isRoughlyInViewport(r)) continue;
+    if (!rectContainsClientPoint(r, x, y)) continue;
+    const area = rectArea(r);
+    if (area < bestArea) {
+      bestArea = area;
+      best = el;
+    }
+  }
+  if (!best) return '';
+  if (best instanceof HTMLVideoElement) {
+    const frame = captureVideoFrame(best);
+    if (frame) return frame;
+    return best.currentSrc || best.src || '';
+  }
+  return best.currentSrc || best.src || '';
 }
 
 function elementsAtPoint(x: number, y: number): Element[] {

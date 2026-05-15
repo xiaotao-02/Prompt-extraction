@@ -350,6 +350,19 @@ export type RuntimeMessage =
       };
     }
   | {
+      /**
+       * 识图进行中：按与 {@link addHistory} 一致的 dedupe 键命中已有记录时，
+       * 先把库里的 versions / 真实 id 推到浮窗，避免 loading 阶段「历史版本 · 0」闪烁。
+       */
+      type: 'HISTORY_PREFETCH';
+      payload: {
+        requestId: string;
+        storageId: string;
+        versions: PromptVersion[];
+        prompt: string;
+      };
+    }
+  | {
       type: 'REFINE_PROMPT';
       payload: {
         historyId: string;

@@ -71,8 +71,6 @@ export function ExpandedPanel({
   onInitialDockConsumed?: () => void;
 }) {
   const anchorRef = useRef<HTMLDivElement>(null);
-  /** 本次展开若处理过 initialDock（如仅打开 AI 调整），则不再自动打开历史侧栏 */
-  const skipAutoOpenVersionsRef = useRef(false);
   const [versionsOpen, setVersionsOpen] = useState(false);
   const [sidebarLeft, setSidebarLeft] = useState<number>(VERSIONS_PANEL_MIN_LEFT);
 
@@ -95,10 +93,9 @@ export function ExpandedPanel({
     if (refineLoading) setOpenInline('refine');
   }, [refineLoading]);
 
-  /** Popup / hash deep-link：挂载时打开 AI 调整或版本侧栏一次并通知父组件清掉意图 */
+  /** Popup / hash deep-link：一次性打开 AI 调整或历史侧栏，并通知父组件清掉 dockIntent */
   useLayoutEffect(() => {
     if (!initialDock) return;
-    skipAutoOpenVersionsRef.current = true;
     if (initialDock === 'refine') {
       setOpenInline('refine');
       setVersionsOpen(false);
@@ -110,12 +107,6 @@ export function ExpandedPanel({
   const versionsSidebarVisible = versionCount > 0 || refineLoading;
   const versionsDisplayCount = versionCount + (refineLoading ? 1 : 0);
   const versionsListScrollable = versionsDisplayCount >= VERSIONS_SCROLL_THRESHOLD;
-
-  /** 普通展开：有可展示的历史侧栏时默认打开（深链仅为 refine 时由 skip 跳过） */
-  useLayoutEffect(() => {
-    if (skipAutoOpenVersionsRef.current) return;
-    if (versionsSidebarVisible) setVersionsOpen(true);
-  }, [item.id, versionsSidebarVisible]);
 
   const updateSidebarLeft = useCallback(() => {
     const el = anchorRef.current;

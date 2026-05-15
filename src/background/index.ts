@@ -10,13 +10,15 @@ import {
   saveSettings,
   saveUpdateResult,
 } from '@/lib/storage';
+import { ensureLibraryReady } from '@/lib/storage/history';
+import { getByDedupeKey, naturalDedupeKey, toPublicHistory } from '@/lib/storage/historyDb';
 import type { HistoryItem, RefineResponse, RuntimeMessage, StrategyId, UpdateCheckResult } from '@/lib/types';
 import { DEFAULT_FEED_URL, getCurrentVersion, performUpdateCheck } from '@/lib/updater';
 
 const MENU_ID = 'extract-image-prompt';
 /**
- * 兜底菜单：当原生 'image' 上下文没被 Chrome 命中时（CSS 背景图、canvas、
- * 内联 SVG、被遮罩覆盖的图片等），由内容脚本动态把它切到 visible:true。
+ * 兜底菜单：当原生 'image' / 'video' 上下文没被 Chrome 命中时（CSS 背景图、canvas、
+ * 内联 SVG、被遮罩覆盖的图片 / 视频等），由内容脚本动态把它切到 visible:true。
  */
 const MENU_ID_FALLBACK = 'extract-image-prompt-fallback';
 
@@ -34,19 +36,18 @@ function ensureContextMenus(): void {
       {
         id: MENU_ID,
         title: '提取图片提示词',
-        contexts: ['image'],
+        // 与 contexts: ['video'] 一并注册：原生 <video> 右键时 Chrome 走 video 上下文，
+        // 不依赖 CTX_MENU_PREP 异步切换可见性，避免 MV3 SW 竞态导致菜单项不出现。
+        contexts: ['image', 'video'],
       },
       () => void chrome.runtime.lastError
     );
     chrome.contextMenus.create(
       {
         id: MENU_ID_FALLBACK,
-        // fallback 主要服务于 <video>（含"假 GIF"）、<canvas>、内联 SVG、
-        // CSS 背景图等场景，所以文案要把"视频 / 动图"显式标出来。
+        // 兜底：遮罩下的 <img>、CSS 背景图、canvas、内联 SVG 等非原生 image/video 上下文。
         title: '提取图片提示词',
-        // 这里覆盖 image 以外的常见上下文，再用 visible 动态控制显隐，
-        // 避免在普通文本/页面上无脑出现菜单项。
-        contexts: ['page', 'frame', 'link', 'selection', 'editable', 'video', 'audio'],
+        contexts: ['page', 'frame', 'link', 'selection', 'editable'],
         visible: false,
       },
       () => void chrome.runtime.lastError
@@ -81,7 +82,7 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
   if (!tab?.id) return;
 
   if (info.menuItemId === MENU_ID) {
-    // 原生 image 上下文 —— info.srcUrl 一定有
+    // 原生 image / video 上下文 —— Chrome 会提供 srcUrl（个别站点可能为空，直接忽略）
     const imageUrl = info.srcUrl;
     if (!imageUrl) return;
     await runExtraction({
@@ -378,6 +379,42 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   return false;
 });
 
+/**
+ * 与 {@link addHistory} 使用相同的缩略图 + dedupe 键，在识图完成前查询是否已有同图记录；
+ * 若有则通知浮窗预填 versions，并把缩略图字符串交给后续 persist 复用（避免二次编码）。
+ *
+ * Dedupe 与现库一致：HTTP(S) 通常为原 URL 字符串；大 data URL 为压限后的 JPEG dataUrl。
+ */
+async function prefetchLibraryVersionsForExtract(
+  tabId: number,
+  requestId: string,
+  imageUrl: string,
+): Promise<string | undefined> {
+  try {
+    await ensureLibraryReady();
+    const storedUrl = await makeStorageThumbnail(imageUrl);
+    const key = naturalDedupeKey({ imageUrl: storedUrl, thumbnail: storedUrl });
+    if (key) {
+      const row = await getByDedupeKey(key);
+      if (row) {
+        const item = toPublicHistory(row);
+        postToTab(tabId, {
+          type: 'HISTORY_PREFETCH',
+          payload: {
+            requestId,
+            storageId: item.id,
+            versions: item.versions,
+            prompt: item.prompt,
+          },
+        });
+      }
+    }
+    return storedUrl;
+  } catch {
+    return undefined;
+  }
+}
+
 async function runExtraction(params: {
   tabId: number;
   imageUrl: string;
@@ -405,6 +442,9 @@ async function runExtraction(params: {
   const imagePromise = fetchImageAsBase64(imageUrl);
   imagePromise.catch(() => undefined);
 
+  /** 与「是否写入提示词库」挂钩；saveHistory 为 false 时保持 resolved(undefined)。 */
+  let thumbnailForPersistPromise: Promise<string | undefined> = Promise.resolve(undefined);
+
   postToTab(tabId, {
     type: 'EXTRACT_PENDING',
     payload: { requestId, imageUrl },
@@ -417,6 +457,8 @@ async function runExtraction(params: {
   // 之所以也带 provider/model：用户在 loading 阶段就想知道"这次到底用的
   // 哪个模型在跑"——尤其是配了多家 provider / 跑前刚切换过的场景。等到
   // EXTRACT_RESULT 才知道就太晚了（生成可能要十几秒）。
+  //
+  // 若开启入库：并行预取同图已有 versions（HISTORY_PREFETCH），并缓存缩略图供 persist 复用。
   //
   // 注意 stage 不带，由 content/index.ts 在 stage===undefined 时跳过覆盖，
   // 避免把已经推进到 'fetching' 的进度条踢回默认状态。
@@ -433,6 +475,9 @@ async function runExtraction(params: {
           model: activeModel,
         },
       });
+      if (settings.saveHistory) {
+        thumbnailForPersistPromise = prefetchLibraryVersionsForExtract(tabId, requestId, imageUrl);
+      }
     },
     () => undefined
   );
@@ -489,6 +534,7 @@ async function runExtraction(params: {
     });
 
     if (settings.saveHistory) {
+      const precomputedThumbnail = await thumbnailForPersistPromise;
       // 历史落库不阻塞下一次提取：用户连续抽几张图时不再排队，缩略图
       // 重新编码 + storage 写入都在后台完成。失败只打 debug，不影响 UI。
       //
@@ -506,6 +552,7 @@ async function runExtraction(params: {
         pageUrl,
         pageTitle,
         strategy: settings.promptStrategy,
+        precomputedThumbnail,
       }).then((stored) => {
         if (!stored) return;
         postToTab(tabId, {
@@ -538,13 +585,18 @@ async function persistHistory(params: {
   pageUrl: string;
   pageTitle: string;
   strategy?: import('@/lib/strategies-meta').StrategyId;
+  /** 与预取/去重同源时传入，避免对同一 imageUrl 二次 makeStorageThumbnail */
+  precomputedThumbnail?: string;
 }): Promise<HistoryItem | undefined> {
   try {
     const now = Date.now();
     // 视频帧 / canvas / 扁平化动图传过来的 imageUrl 经常是大 dataUrl，
     // 直接整条塞进 chrome.storage.local 几十条就会撑爆 5MB 配额。
     // 这里统一压成 ≤32KB 的小缩略图后再入库（http(s) URL 原样保留）。
-    const storedUrl = await makeStorageThumbnail(params.imageUrl);
+    const storedUrl =
+      params.precomputedThumbnail !== undefined
+        ? params.precomputedThumbnail
+        : await makeStorageThumbnail(params.imageUrl);
     const item: HistoryItem = {
       id: params.requestId,
       imageUrl: storedUrl,

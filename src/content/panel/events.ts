@@ -28,6 +28,11 @@ import { buildVersionsListInnerHtml, loadingEditorDisplayedText, successEditorDi
 import { EXTRACT_STREAM_VERSION_ID, REFINE_STREAM_VERSION_ID } from '@/lib/refineStreamVersion';
 import { openInPanelMessage, openOptionsMessage } from '@/lib/messaging/openSurfaces';
 
+/** 访问提示词库时使用的真实记录 id（预取命中后 requestId 仍为会话 UUID）。 */
+export function libraryStorageId(state: { requestId: string; linkedHistoryId?: string }): string {
+  return state.linkedHistoryId ?? state.requestId;
+}
+
 function renderPanel(...args: Parameters<typeof panelActions.renderPanel>) {
   return panelActions.renderPanel(...args);
 }
@@ -120,12 +125,16 @@ export function updateDirtyChromeImmediate(): void {
   syncVersionHighlightFromState();
 }
 
-export async function syncVersions(requestId: string): Promise<void> {
+export async function syncVersions(sessionRequestId: string): Promise<void> {
   try {
-    const item = await getHistoryItemFromExtension(requestId);
+    const st = currentState;
+    if (!st || st.requestId !== sessionRequestId) return;
+    const storageId = libraryStorageId(st);
+    const item = await getHistoryItemFromExtension(storageId);
     if (!item) return;
-    if (!currentState || currentState.requestId !== requestId) return;
-    let nextSel = currentState.selectedVersionId;
+    const stNow = currentState;
+    if (!stNow || stNow.requestId !== sessionRequestId) return;
+    let nextSel = stNow.selectedVersionId;
     if (
       nextSel &&
       nextSel !== REFINE_STREAM_VERSION_ID &&
@@ -135,10 +144,10 @@ export async function syncVersions(requestId: string): Promise<void> {
       nextSel = undefined;
     }
     const preserveRefine =
-      !!currentState.refineLoading && nextSel === REFINE_STREAM_VERSION_ID;
+      !!stNow.refineLoading && nextSel === REFINE_STREAM_VERSION_ID;
     const preserveExtract =
-      currentState.status === 'loading' && nextSel === EXTRACT_STREAM_VERSION_ID;
-    const nextDraft = currentState.draft ?? item.prompt;
+      stNow.status === 'loading' && nextSel === EXTRACT_STREAM_VERSION_ID;
+    const nextDraft = stNow.draft ?? item.prompt;
     if (!preserveRefine && !preserveExtract && !nextSel) {
       nextSel =
         nextDraft === item.prompt
@@ -146,7 +155,7 @@ export async function syncVersions(requestId: string): Promise<void> {
           : item.versions.find((v) => v.prompt === nextDraft)?.id;
     }
     setCurrentState({
-      ...currentState,
+      ...stNow,
       versions: item.versions,
       selectedVersionId: nextSel,
       draft: nextDraft,
@@ -162,7 +171,7 @@ export async function syncVersions(requestId: string): Promise<void> {
  * 从历史记录同步 versions 后，只刷新侧栏 DOM，避免整块 renderPanel 抢走用户正在进行
  * 的点击（mousedown 后异步完成导致 click 落在已卸载节点上）。
  */
-function patchVersionList(): void {
+export function patchVersionList(): void {
   const st = currentState;
   if (!st || !panel) return;
 
@@ -454,7 +463,7 @@ function handleDataAction(root: HTMLElement, el: HTMLElement, event: MouseEvent)
     if (!btn || btn.disabled) return;
     openInPanelBusy = true;
     btn.disabled = true;
-    const msg = openInPanelMessage(state.requestId);
+    const msg = openInPanelMessage(libraryStorageId(state));
     safeSendMessage(msg, (raw) => {
       openInPanelBusy = false;
       if (btn.isConnected) btn.disabled = false;
@@ -477,7 +486,7 @@ function handleDataAction(root: HTMLElement, el: HTMLElement, event: MouseEvent)
   if (action === 'open-in-library') {
     if (!isExtensionContextValid()) return;
     safeSendMessage(
-      openOptionsMessage({ tab: 'library', focusId: state.requestId }),
+      openOptionsMessage({ tab: 'library', focusId: libraryStorageId(state) }),
       () => void chrome.runtime.lastError
     );
     return;
@@ -532,7 +541,7 @@ function handleDataAction(root: HTMLElement, el: HTMLElement, event: MouseEvent)
   if (action === 'save') {
     const draft = state.draft ?? state.prompt ?? '';
     if (draft === state.prompt) return;
-    void appendPromptVersionFromExtension(state.requestId, draft, 'edited').then((updated) => {
+    void appendPromptVersionFromExtension(libraryStorageId(state), draft, 'edited').then((updated) => {
       if (!updated || !currentState || currentState.requestId !== state.requestId) return;
       const wasOpen = currentState.versionsOpen;
       setCurrentState({
@@ -620,7 +629,7 @@ function handleDataAction(root: HTMLElement, el: HTMLElement, event: MouseEvent)
   if (action === 'restore-version') {
     const vid = el.dataset.versionId;
     if (!vid) return;
-    void restorePromptVersionFromExtension(state.requestId, vid).then((updated) => {
+    void restorePromptVersionFromExtension(libraryStorageId(state), vid).then((updated) => {
       if (!updated || !currentState || currentState.requestId !== state.requestId) return;
       const wasOpen = currentState.versionsOpen;
       setCurrentState({
@@ -646,7 +655,7 @@ function handleDataAction(root: HTMLElement, el: HTMLElement, event: MouseEvent)
       ? '确定删除「当前版本」吗？删除后将由下一条版本自动顶替为新的当前版本，此操作不可撤销'
       : '确定删除该版本吗？此操作不可撤销';
     if (!confirm(msg)) return;
-    void removePromptVersionFromExtension(state.requestId, vid).then((updated) => {
+    void removePromptVersionFromExtension(libraryStorageId(state), vid).then((updated) => {
       if (!currentState || currentState.requestId !== state.requestId) return;
       if (updated && isCurrent) {
         setCurrentState({
@@ -754,7 +763,7 @@ function handleDataAction(root: HTMLElement, el: HTMLElement, event: MouseEvent)
         {
           type: 'REFINE_PROMPT',
           payload: {
-            historyId: state.requestId,
+            historyId: libraryStorageId(state),
             instruction,
             current: baseline,
           },

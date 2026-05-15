@@ -12,6 +12,7 @@
 import type { ExtractStage, PromptVersion, RefineStage, StrategyId } from '@/lib/types';
 
 export interface PanelState {
+  /** 本次会话用于路由 EXTRACT_* 消息的 id；同图合并后可能与库 id 不同，见 {@link linkedHistoryId}。 */
   requestId: string;
   imageUrl: string;
   status: 'loading' | 'success' | 'error';
@@ -21,6 +22,11 @@ export interface PanelState {
   model?: string;
   /** 当前展示的版本快照；为空表示尚未与 storage 同步 */
   versions?: PromptVersion[];
+  /**
+   * 提示词库里已存在的记录 id（预取命中同图时由 HISTORY_PREFETCH 填入）。
+   * 在 HISTORY_READY 把 requestId 切到 actualId 之前，读写库应优先使用本字段。
+   */
+  linkedHistoryId?: string;
   /** 是否展开历史面板 */
   versionsOpen?: boolean;
   /** textarea 当前编辑值（脏值），与 prompt 不同则视为已编辑 */

@@ -34,6 +34,7 @@ import {
   syncVersions,
   cancelPendingDirtyChromeDeferred,
   updateDirtyChromeImmediate,
+  patchVersionList,
 } from './events';
 
 export { applyStoredPromptStrategy } from './events';
@@ -200,6 +201,7 @@ export function renderPanelForExtractPending(payload: {
       refineBaselinePrompt: undefined,
       refineStage: undefined,
       refineStartedAt: undefined,
+      linkedHistoryId: undefined,
     });
     return;
   }
@@ -210,6 +212,7 @@ export function renderPanelForExtractPending(payload: {
     stage: 'calling',
     startedAt: Date.now(),
     strategy: payload.strategy,
+    linkedHistoryId: undefined,
   });
 }
 
@@ -219,7 +222,7 @@ export function updatePanel(requestId: string, patch: Partial<PanelState>): void
   const merged = { ...prev, ...patch } as PanelState;
   setCurrentState(merged);
 
-  if (patch.status === 'success') {
+  if (patch.status === 'success' && !prev.linkedHistoryId) {
     void syncVersions(requestId);
   }
 
@@ -260,6 +263,31 @@ export function updatePanel(requestId: string, patch: Partial<PanelState>): void
 }
 
 /**
+ * 同图识图：落库前把库中已有 versions 填进面板，避免 loading 阶段「历史版本 · 0」。
+ */
+export function applyHistoryPrefetch(
+  requestId: string,
+  payload: {
+    storageId: string;
+    versions: PromptVersion[];
+    prompt: string;
+  },
+): void {
+  if (!currentState || currentState.requestId !== requestId) return;
+  const hasHistory = payload.versions.length > 0;
+  setCurrentState({
+    ...currentState,
+    linkedHistoryId: payload.storageId,
+    versions: payload.versions,
+    selectedVersionId:
+      currentState.status === 'loading' && hasHistory
+        ? EXTRACT_STREAM_VERSION_ID
+        : currentState.selectedVersionId,
+  });
+  patchVersionList();
+}
+
+/**
  * Background 端 `persistHistory` 完成后通过 HISTORY_READY 调过来。
  *
  * 关键作用：当用户对**同一张图**反复反推时，addHistory 会把新结果合并到旧记录上，
@@ -295,6 +323,7 @@ export function applyHistoryReady(
   setCurrentState({
     ...currentState,
     requestId: actualId,
+    linkedHistoryId: undefined,
     versions,
     prompt: nextPrompt,
     draft: nextDraft,
