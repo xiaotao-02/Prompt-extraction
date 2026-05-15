@@ -125,11 +125,11 @@ export default function OptionsApp() {
   };
 
   // 内容容器宽度按 Tab 切换：
-  // - 设置：保持 5xl（≈1024px），表单阅读舒适、避免横向阅读疲劳；
+  // - 设置：6xl，容纳左侧分类导航 + 右栏内容；
   // - 提示词库：拉宽到 1536px，方便在大屏下一次看到更多条目 / 更多列卡片。
   //   用任意值而不是 max-w-screen-2xl，避免 Tailwind v4 中 screen-* 预设变动带来的兼容问题。
   // header 与 main 共用同一个宽度，保证 Tab 居中、保存按钮右对齐时不会与下方内容错位。
-  const containerWidth = tab === 'library' ? 'max-w-[1536px]' : 'max-w-5xl';
+  const containerWidth = tab === 'library' ? 'max-w-[1536px]' : 'max-w-6xl';
 
   return (
     <div className="min-h-screen w-full flex flex-col items-center">

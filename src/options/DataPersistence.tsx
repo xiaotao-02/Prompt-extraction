@@ -62,6 +62,8 @@ import { getCurrentVersion } from '@/lib/updater';
 export interface DataPersistenceProps {
   /** 数据变化时由外层重新拉取（例如恢复后让 SettingsView 重新读 settings）。 */
   onDataRestored?: () => void;
+  /** `plain`：嵌入设置分栏时使用，不产生外层卡片边框（与侧边栏外壳统一）。 */
+  variant?: 'card' | 'plain';
 }
 
 /**
@@ -78,7 +80,10 @@ interface PendingShrinkDecision {
 }
 type Decision = PendingExistingDecision | PendingShrinkDecision | null;
 
-export default function DataPersistence({ onDataRestored }: DataPersistenceProps) {
+export default function DataPersistence({
+  onDataRestored,
+  variant = 'card',
+}: DataPersistenceProps) {
   const [state, setState] = useState<DataDirectoryState | null>(null);
   const [meta, setMeta] = useState<SyncMeta | null>(null);
   const [busy, setBusy] = useState<'pick' | 'sync' | 'restore' | 'export' | 'import' | null>(null);
@@ -367,6 +372,9 @@ export default function DataPersistence({ onDataRestored }: DataPersistenceProps
   };
 
   if (!state) {
+    if (variant === 'plain') {
+      return <div className="text-xs text-zinc-500">加载数据状态…</div>;
+    }
     return (
       <section className="card">
         <div className="text-xs text-zinc-500">加载数据状态…</div>
@@ -376,8 +384,11 @@ export default function DataPersistence({ onDataRestored }: DataPersistenceProps
 
   const fsaSupported = state.supported && supportsFileSystemAccess();
 
+  const Root = variant === 'plain' ? 'div' : 'section';
+  const rootClass = variant === 'plain' ? 'space-y-4' : 'card space-y-4';
+
   return (
-    <section className="card space-y-4">
+    <Root className={rootClass}>
       <header className="flex items-start gap-3">
         <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-emerald-500 to-teal-500 flex items-center justify-center text-white flex-none">
           <HardDrive className="w-4 h-4" />
@@ -577,7 +588,7 @@ export default function DataPersistence({ onDataRestored }: DataPersistenceProps
           }}
         />
       )}
-    </section>
+    </Root>
   );
 }
 

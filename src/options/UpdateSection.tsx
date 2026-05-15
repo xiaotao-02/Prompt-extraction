@@ -10,7 +10,11 @@ import type { UpdateCheckResult, UpdateSettings } from '@/lib/types';
  * 只做一件事：点按钮 → 向 background 发 CHECK_UPDATE → 展示结果。
  * 没有定时检查、桌面通知、徽章提示、忽略版本、一键更新等附加逻辑。
  */
-export default function UpdateSection() {
+export default function UpdateSection({
+  variant = 'card',
+}: {
+  variant?: 'card' | 'plain';
+}) {
   const [u, setU] = useState<UpdateSettings | null>(null);
   const [busy, setBusy] = useState(false);
   const [tip, setTip] = useState<{ ok: boolean; msg: string } | null>(null);
@@ -63,8 +67,11 @@ export default function UpdateSection() {
   const latest = u.lastResult?.latest;
   const hasUpdate = !!u.lastResult?.hasUpdate && !!latest;
 
+  const Root = variant === 'plain' ? 'div' : 'section';
+  const rootClass = variant === 'plain' ? 'space-y-4' : 'card';
+
   return (
-    <section className="card">
+    <Root className={rootClass}>
       <div className="flex items-center justify-between mb-1">
         <h2 className="text-sm font-semibold flex items-center gap-2">
           <RefreshCw className="w-4 h-4 text-violet-500" /> 检查更新
@@ -141,6 +148,6 @@ export default function UpdateSection() {
           )}
         </div>
       </div>
-    </section>
+    </Root>
   );
 }

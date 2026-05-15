@@ -64,6 +64,48 @@ const STYLE_OPTIONS: { value: OutputStyle; label: string; desc: string }[] = [
   { value: 'midjourney', label: 'Midjourney 风格', desc: 'MJ v6 自然语言 + 参数风格' },
 ];
 
+type SettingsPanelId =
+  | 'setup'
+  | 'provider'
+  | 'output'
+  | 'strategy'
+  | 'data'
+  | 'updates';
+
+const SETTINGS_PANEL_STORAGE_KEY = 'options_settings_panel_v1';
+
+function isSettingsPanelId(v: string | null): v is SettingsPanelId {
+  return (
+    v === 'setup' ||
+    v === 'provider' ||
+    v === 'output' ||
+    v === 'strategy' ||
+    v === 'data' ||
+    v === 'updates'
+  );
+}
+
+const SETTINGS_PANEL_NAV: { id: SettingsPanelId; label: string }[] = [
+  { id: 'setup', label: '配置向导' },
+  { id: 'provider', label: '模型与连接' },
+  { id: 'output', label: '输出与交互' },
+  { id: 'strategy', label: '策略版本' },
+  { id: 'data', label: '数据与备份' },
+  { id: 'updates', label: '扩展更新' },
+];
+
+function settingsPanelNavButtonClass(active: boolean, compact: boolean) {
+  const base =
+    'transition text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-violet-500/50 focus-visible:ring-offset-2 focus-visible:ring-offset-white dark:focus-visible:ring-offset-zinc-900';
+  const size = compact
+    ? 'shrink-0 whitespace-nowrap px-3 py-1.5 text-xs rounded-lg'
+    : 'w-full px-3 py-2 text-sm rounded-lg';
+  const tone = active
+    ? 'bg-violet-50 dark:bg-violet-500/15 text-violet-700 dark:text-violet-200 font-medium'
+    : 'text-zinc-600 dark:text-zinc-400 hover:bg-zinc-100/90 dark:hover:bg-zinc-800/80';
+  return `${base} ${size} ${tone}`;
+}
+
 const REWRITE_RANDOMNESS_OPTIONS: {
   value: OneClickRewriteRandomness;
   label: string;
@@ -119,6 +161,16 @@ export default function SettingsView({ registerSaveHandler, onDirtyChange }: Pro
   const [modelFilter, setModelFilter] = useState('');
   /** 「更多供应商」折叠区：选中小众厂商时会在 effect 里自动展开 */
   const [showExtendedProviders, setShowExtendedProviders] = useState(false);
+  /** 左侧导航当前面板；持久化便于反复进入同一分类。默认「模型与连接」。 */
+  const [panelId, setPanelId] = useState<SettingsPanelId>(() => {
+    try {
+      const raw = sessionStorage.getItem(SETTINGS_PANEL_STORAGE_KEY);
+      if (isSettingsPanelId(raw)) return raw;
+    } catch {
+      /* ignore */
+    }
+    return 'provider';
+  });
   const [userPresets, setUserPresets] = useState<UserStrategyPreset[]>([]);
   /**
    * 策略选择器的渲染数据。`getStrategyList()` 内部会逐档解析组件版本（读
@@ -303,6 +355,14 @@ export default function SettingsView({ registerSaveHandler, onDirtyChange }: Pro
     return () => chrome.storage.onChanged.removeListener(handler);
   }, []);
 
+  useEffect(() => {
+    try {
+      sessionStorage.setItem(SETTINGS_PANEL_STORAGE_KEY, panelId);
+    } catch {
+      /* ignore */
+    }
+  }, [panelId]);
+
   const matchesAnySavedPreset = useMemo(() => {
     if (!settings) return false;
     return userPresets.some((p) => isSettingsMatchingUserPreset(settings, p));
@@ -435,11 +495,60 @@ export default function SettingsView({ registerSaveHandler, onDirtyChange }: Pro
         </div>
       )}
 
-      {/* 配置指南：新用户引导放最前，配置完成后自然折叠 */}
-      <SetupGuide settings={settings} applyConfig={applyConfig} />
+      <div className="card !p-0 overflow-hidden flex flex-col min-h-[50vh] lg:flex-row lg:max-h-[min(920px,calc(100dvh-11rem))]">
+        <div className="lg:hidden shrink-0 border-b border-zinc-200 dark:border-zinc-800 bg-zinc-50/85 dark:bg-zinc-950/50 px-2 py-2">
+          <div
+            role="tablist"
+            aria-label="设置分类"
+            className="flex gap-1 overflow-x-auto pb-0.5 [-webkit-overflow-scrolling:touch]"
+          >
+            {SETTINGS_PANEL_NAV.map(({ id, label }) => (
+              <button
+                key={id}
+                type="button"
+                role="tab"
+                aria-selected={panelId === id}
+                aria-controls="settings-main-panel"
+                onClick={() => setPanelId(id)}
+                className={settingsPanelNavButtonClass(panelId === id, true)}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+        </div>
 
-      {/* 模型供应商 */}
-      <section className="card">
+        <aside className="hidden lg:flex w-56 shrink-0 flex-col border-r border-zinc-200 dark:border-zinc-800 bg-zinc-50/85 dark:bg-zinc-950/40 py-3 px-2">
+          <nav aria-label="设置分类" className="flex flex-col gap-0.5">
+            {SETTINGS_PANEL_NAV.map(({ id, label }) => (
+              <button
+                key={id}
+                type="button"
+                aria-current={panelId === id ? 'page' : undefined}
+                onClick={() => setPanelId(id)}
+                className={settingsPanelNavButtonClass(panelId === id, false)}
+              >
+                {label}
+              </button>
+            ))}
+          </nav>
+        </aside>
+
+        <main
+          id="settings-main-panel"
+          aria-label={
+            SETTINGS_PANEL_NAV.find((n) => n.id === panelId)?.label
+              ? `设置 · ${SETTINGS_PANEL_NAV.find((n) => n.id === panelId)!.label}`
+              : '设置内容'
+          }
+          className="flex-1 min-h-0 min-w-0 overflow-y-auto overscroll-contain px-4 py-4 sm:p-5"
+        >
+          {panelId === 'setup' && (
+            <SetupGuide settings={settings} applyConfig={applyConfig} />
+          )}
+
+          {panelId === 'provider' && (
+            <section className="space-y-5">
         <div className="flex items-center justify-between mb-4">
           <div>
             <h2 className="text-sm font-semibold">模型供应商</h2>
@@ -657,9 +766,10 @@ export default function SettingsView({ registerSaveHandler, onDirtyChange }: Pro
           )}
         </div>
       </section>
+          )}
 
-      {/* 输出风格：紧跟供应商，形成"用什么模型 → 出什么格式"的连贯认知流 */}
-      <section className="card">
+          {panelId === 'output' && (
+            <section className="space-y-4">
         <h2 className="text-sm font-semibold mb-1">输出风格</h2>
         <p className="text-xs text-zinc-500 mb-4">决定生成的提示词使用什么语言和格式</p>
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2">
@@ -795,9 +905,10 @@ export default function SettingsView({ registerSaveHandler, onDirtyChange }: Pro
           </div>
         </div>
       </section>
+          )}
 
-      {/* 策略版本：高级调优，频率低，放在输出风格之后 */}
-      <section className="card">
+          {panelId === 'strategy' && (
+            <section className="space-y-4">
         <h2 className="text-sm font-semibold mb-1">策略版本</h2>
         <p className="text-xs text-zinc-500 mb-4">
           一档策略 = <b>指令集 / 采样 / 拼接</b> 三个组件各自挑一个版本号的组合。切档其实是同时换这 3 个组件，对比效果时可以随时切回旧版本。
@@ -924,21 +1035,26 @@ export default function SettingsView({ registerSaveHandler, onDirtyChange }: Pro
             })}
         </div>
       </section>
+          )}
 
-      {/* 数据持久化：维护操作下沉到底部 */}
-      <DataPersistence
-        onDataRestored={async () => {
-          const [next, presets] = await Promise.all([getSettings(), getUserStrategyPresets()]);
-          setSettings(next);
-          setUserPresets(presets);
-        }}
-      />
+          {panelId === 'data' && (
+            <DataPersistence
+              variant="plain"
+              onDataRestored={async () => {
+                const [next, presets] = await Promise.all([getSettings(), getUserStrategyPresets()]);
+                setSettings(next);
+                setUserPresets(presets);
+              }}
+            />
+          )}
 
-      <UpdateSection />
+          {panelId === 'updates' && <UpdateSection variant="plain" />}
 
-      <footer className="text-xs text-zinc-400 dark:text-zinc-500 py-4 text-center">
-        数据仅保存在你的浏览器本地，不会上传到任何第三方服务器。
-      </footer>
+          <footer className="text-xs text-zinc-400 dark:text-zinc-500 pt-6 mt-8 text-center border-t border-zinc-100 dark:border-zinc-800/80">
+            数据仅保存在你的浏览器本地，不会上传到任何第三方服务器。
+          </footer>
+        </main>
+      </div>
     </div>
   );
 }
