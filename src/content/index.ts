@@ -8,6 +8,7 @@ import {
   applyHistoryReady,
   applyStoredPromptStrategy,
 } from './panel';
+import { expandPanelForSidebar } from './panel/geometry';
 import { isExtensionContextValid, safeSendMessage } from '@/content/extensionBridge';
 
 export { safeSendMessage } from '@/content/extensionBridge';
@@ -73,12 +74,14 @@ try {
       // 从 popup / 提示词库「召回到悬浮窗」：数据必须由 background 随消息下发。
       // content script 内访问的 indexedDB 绑定的是当前网页源，不是 chrome-extension://，
       // 在页面里 getHistoryItem 永远读不到后台库，会静默失败、面板不出现。
-      const { historyId, item } = message.payload;
+      const { historyId, item, dock } = message.payload;
       try {
         if (!item || item.id !== historyId) {
           console.warn('[PromptExtracto] PANEL_FROM_HISTORY: invalid payload', historyId);
           return false;
         }
+        const versionsOpen = dock === 'versions';
+        const refineOpen = dock === 'refine';
         renderPanel({
           requestId: item.id,
           imageUrl: item.thumbnail || item.imageUrl,
@@ -88,8 +91,13 @@ try {
           provider: item.provider,
           model: item.model,
           versions: item.versions,
-          versionsOpen: false,
+          strategy: item.strategy,
+          versionsOpen,
+          ...(refineOpen ? { refineOpen: true } : {}),
         });
+        if (versionsOpen) {
+          requestAnimationFrame(() => expandPanelForSidebar());
+        }
       } catch (err) {
         console.warn('[PromptExtracto] PANEL_FROM_HISTORY failed', err);
       }

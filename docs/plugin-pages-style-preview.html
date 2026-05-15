@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Prompt Extracto · UI 预览入口</title>
+    <style>
+      :root {
+        font-family: system-ui, 'Segoe UI', 'PingFang SC', sans-serif;
+        background: #fafafa;
+        color: #18181b;
+      }
+      @media (prefers-color-scheme: dark) {
+        :root {
+          background: #0a0a0a;
+          color: #e4e4e7;
+        }
+      }
+      body {
+        max-width: 56rem;
+        margin: 0 auto;
+        padding: 2rem clamp(16px, 4vw, 2.5rem);
+        line-height: 1.55;
+      }
+      h1 {
+        font-size: 1.25rem;
+        margin-top: 0;
+      }
+      p {
+        opacity: 0.88;
+      }
+      ol {
+        padding-left: 1.5rem;
+      }
+      kbd,
+      code {
+        font-size: 0.9em;
+      }
+      code {
+        padding: 0.1em 0.35em;
+        border-radius: 4px;
+        background: rgba(0, 0, 0, 0.06);
+      }
+      @media (prefers-color-scheme: dark) {
+        code {
+          background: rgba(255, 255, 255, 0.07);
+        }
+      }
+      .actions a {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.35rem;
+        margin-right: 1rem;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>插件 UI 预览（与源码同步）</h1>
+    <p>
+      旧的纯 CSS 静态示意已改为「在 Vite dev 下运行真实组件」；改
+      <code>popup</code> / <code>options</code> / <code>content/panel</code> 后，
+      保存并在浏览器里刷新聚合页即可看到 HMR 效果。
+    </p>
+    <ol>
+      <li>在项目根目录运行 <code>npm run dev</code>（端口见终端，默认 <code>5173</code>）。</li>
+      <li>
+        在浏览器打开：
+        <strong><a href="http://localhost:5173/__dev__/ui-preview">http://localhost:5173/__dev__/ui-preview</a></strong>
+      （可加 <code>#popup</code> / <code>#options</code> / <code>#panel</code> 选中对应预览）
+      </li>
+    </ol>
+    <p class="actions">
+      <a href="http://localhost:5173/__dev__/ui-preview">打开实时预览（需 dev 已启动）</a>
+      <a href="http://localhost:5173/src/dev/preview/popup-preview.html">仅 Popup</a>
+      <a href="http://localhost:5173/src/dev/preview/options-preview.html">仅 Options</a>
+      <a href="http://localhost:5173/src/dev/preview/panel-preview.html">仅浮动面板</a>
+    </p>
+    <p>
+      说明：预览页运行在普通 <code>http:</code> Tab，通过 <code>src/dev/preview/chromeShim.ts</code>
+      提供内存版 <code>chrome.storage</code> 与占位 <code>runtime.sendMessage</code>；Refine / 提取 / 浮动窗召回等仍须在
+      <code>chrome-extension://</code> 环境调试。详见 <code>src/dev/preview/</code>。
+    </p>
+  </body>
+</html>

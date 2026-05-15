@@ -18,7 +18,8 @@
     "store:screenshots": "node scripts/make-store-screenshots.mjs",
     "install:chrome": "node scripts/install-to-chrome.mjs",
     "install:edge": "node scripts/install-to-chrome.mjs --browser=edge",
-    "lint": "tsc --noEmit"
+    "lint": "tsc --noEmit",
+    "test": "vitest run"
   },
   "dependencies": {
     "lucide-react": "^0.460.0",
@@ -37,6 +38,7 @@
     "playwright": "^1.50.0",
     "tailwindcss": "^4.0.0",
     "typescript": "^5.7.2",
-    "vite": "^6.0.3"
+    "vite": "^6.0.3",
+    "vitest": "^3.2.4"
   }
 }

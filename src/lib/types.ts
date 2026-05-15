@@ -132,6 +132,12 @@ export interface AppSettings {
   customTemperature?: number;
   /** 自定义 token 上限（覆盖 sampling 版本） */
   customMaxTokens?: number;
+  /**
+   * 工具栏弹窗里「编辑 / AI 调整」的默认打开位置（「版本」始终在弹窗内展开，不受此项影响）。
+   * - library：打开扩展选项页的提示词库（深链 focus + 可选 dock）
+   * - panel：在当前/来源网页的浮动面板中打开，并按操作展开对应区域
+   */
+  popupToolbarPromptAction?: 'library' | 'panel';
 }
 
 /**
@@ -392,6 +398,18 @@ export type RuntimeMessage =
     }
   | {
       /**
+       * 从 popup / options / 浮动面板打开扩展选项页；无 payload 时等同 `openOptionsPage()`。
+       * 带参时由 background 拼 hash 深链（tab / focus / dock）。
+       */
+      type: 'OPEN_OPTIONS';
+      payload?: {
+        tab?: 'settings' | 'library';
+        focusId?: string;
+        dock?: 'refine' | 'versions';
+      };
+    }
+  | {
+      /**
        * 由 popup（小列表）/ options 提示词库发起，请求 background 把一条
        * 历史记录"召回"到当前活跃的普通网页 tab 的浮动面板里继续编辑。
        *
@@ -400,11 +418,14 @@ export type RuntimeMessage =
        *   2. 激活该 tab + 聚焦其 window
        *   3. 向该 tab 转发 PANEL_FROM_HISTORY，由 content script 渲染面板
        *
+       * 可选 `dock`：`'refine'` 初始展开 AI 调整区，`'versions'` 初始展开历史版本侧栏；
+       * 省略则仅打开主编辑区（与仅「召回」一致）。
+       *
        * 响应：{ ok: true, tabId } 或 { ok: false, error }。前端用于
        * 决定要不要关 popup / 弹错误提示。
        */
       type: 'OPEN_IN_PANEL';
-      payload: { historyId: string };
+      payload: { historyId: string; dock?: 'refine' | 'versions' };
     }
   | {
       /**
@@ -438,9 +459,10 @@ export type RuntimeMessage =
        * background 转发给 content script，要求把指定 history 渲染到浮动面板。
        * 必须带上 `item` 快照：content script 里的 IndexedDB 属于**网页源**，
        * 读不到扩展后台写入的提示词库；不能依赖在页面上下文再 getHistoryItem。
+       * `dock` 与 OPEN_IN_PANEL 一致，用于初始展开 AI 调整或历史侧栏。
        */
       type: 'PANEL_FROM_HISTORY';
-      payload: { historyId: string; item: HistoryItem };
+      payload: { historyId: string; item: HistoryItem; dock?: 'refine' | 'versions' };
     };
 
 export interface RefineResponseOk {

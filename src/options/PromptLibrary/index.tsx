@@ -34,9 +34,10 @@ import {
   restorePromptVersion,
   scanHistoryLibraryStats,
 } from '@/lib/storage';
+import { sendOpenInPanel } from '@/lib/messaging/openSurfaces';
 import type { HistoryItem, LibraryFolder, PromptVersion, RefineResponse } from '@/lib/types';
 import type { HistoryLibraryStats } from '@/lib/storage/historyDb';
-import type { SortKey, ViewMode } from './types';
+import type { SortKey, ViewMode, LibraryDockIntent } from './types';
 import {
   PROJECT_COLORS,
   SYSTEM_NODE,
@@ -79,9 +80,17 @@ const LIBRARY_PAGE_SIZE = 80;
 interface PromptLibraryProps {
   focusId?: string | null;
   onConsumeFocus?: () => void;
+  /** Popup / hash 出库：展开后一次性打开「AI 调整」或「历史版本」侧栏 */
+  dockIntent?: LibraryDockIntent;
+  onConsumeDockIntent?: () => void;
 }
 
-export default function PromptLibrary({ focusId, onConsumeFocus }: PromptLibraryProps) {
+export default function PromptLibrary({
+  focusId,
+  onConsumeFocus,
+  dockIntent,
+  onConsumeDockIntent,
+}: PromptLibraryProps) {
   const [list, setList] = useState<HistoryItem[]>([]);
   const [folders, setFolders] = useState<LibraryFolder[]>([]);
   const [libraryStats, setLibraryStats] = useState<HistoryLibraryStats | null>(null);
@@ -311,6 +320,7 @@ export default function PromptLibrary({ focusId, onConsumeFocus }: PromptLibrary
       });
       return;
     }
+    setView('list');
     setKeyword('');
     setFilterProvider('all');
     setFilterStyle('all');
@@ -769,11 +779,10 @@ export default function PromptLibrary({ focusId, onConsumeFocus }: PromptLibrary
   // 访问过的"普通网页 tab"作为目标，并把那张 tab 切到前台 —— 这条链路用户视线
   // 会从 options 切走，所以这里仅在失败时弹一条 actionTip，让用户知道为啥没召回。
   const onRecallToPanel = (item: HistoryItem) => {
-    chrome.runtime.sendMessage(
-      { type: 'OPEN_IN_PANEL', payload: { historyId: item.id } },
-      (resp: { ok: boolean; error?: string } | undefined) => {
-        if (chrome.runtime.lastError || !resp) {
-          showTip(false, chrome.runtime.lastError?.message || '后台未响应');
+    sendOpenInPanel(item.id, {
+      onResponse: (resp, lastErr) => {
+        if (lastErr || !resp) {
+          showTip(false, lastErr || '后台未响应');
           return;
         }
         if (!resp.ok) {
@@ -781,8 +790,8 @@ export default function PromptLibrary({ focusId, onConsumeFocus }: PromptLibrary
           return;
         }
         showTip(true, '已召回到悬浮窗');
-      }
-    );
+      },
+    });
   };
 
   const runRefine = (item: HistoryItem) => {
@@ -885,7 +894,11 @@ export default function PromptLibrary({ focusId, onConsumeFocus }: PromptLibrary
         </div>
       )}
 
-      <div className="flex-1 min-w-0 space-y-5">
+      <div
+        className={`flex-1 min-w-0 space-y-5 ${
+          selectedIds.size > 0 ? 'pb-24 max-sm:pb-28' : ''
+        }`}
+      >
       {/* 工具栏：面包屑 + 搜索 + 操作按钮 + 筛选 chips 合并为单层 */}
       <section className="card !p-3 space-y-2.5">
         <div className="flex items-center gap-2 flex-wrap">
@@ -1129,6 +1142,10 @@ export default function PromptLibrary({ focusId, onConsumeFocus }: PromptLibrary
                       });
                       if (refineError) setRefineError(null);
                     }}
+                    initialDock={
+                      dockIntent && expandedId === item.id ? dockIntent : null
+                    }
+                    onInitialDockConsumed={onConsumeDockIntent}
                   />
                 )}
               </li>

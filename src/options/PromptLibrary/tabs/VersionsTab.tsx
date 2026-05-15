@@ -5,11 +5,16 @@ import { getVersionOrdinalLabel, type VersionOrdinalKind } from '@/lib/versionLa
 import { STRATEGY_LABELS } from '@/lib/strategies-meta';
 import { SourceTag } from '../SourceTag';
 
+/** 深色侧栏内的序号标签（避免浅色块抢眼） */
 const ORD_TAG_CLASS: Record<VersionOrdinalKind, string> = {
-  current: 'bg-emerald-100 dark:bg-emerald-500/20 text-emerald-700 dark:text-emerald-300',
-  initial: 'bg-sky-100 dark:bg-sky-500/20 text-sky-700 dark:text-sky-300',
-  middle: 'bg-zinc-200/70 dark:bg-zinc-700/70 text-zinc-700 dark:text-zinc-200',
+  current: 'bg-emerald-500/20 text-emerald-300',
+  initial: 'bg-sky-500/20 text-sky-300',
+  middle: 'bg-zinc-700 text-zinc-200',
 };
+
+/** 深色底滚动条（Tailwind v4.3 scrollbar-*：scrollbar-color / scrollbar-width，Windows Chrome 下比 ::-webkit-scrollbar 可靠） */
+const VERSIONS_LIST_SCROLLBAR =
+  'scrollbar-thin scrollbar-track-zinc-800/80 scrollbar-thumb-zinc-600/80 hover:scrollbar-thumb-violet-500/35';
 
 /**
  * 侧边栏版本列表 —— 与 content panel 一致的交互：
@@ -21,6 +26,7 @@ export function VersionsSidebar({
   editorContent,
   selectedVersionId,
   refineLoading,
+  scrollList,
   onSelectGeneratingRow,
   onCopy,
   copiedKey,
@@ -33,6 +39,8 @@ export function VersionsSidebar({
   editorContent: string;
   selectedVersionId: string | null;
   refineLoading?: boolean;
+  /** true：条目较多时在列表区域内滚动并显示自定义滚动条 */
+  scrollList: boolean;
   onSelectGeneratingRow?: () => void;
   onCopy: (text: string, key: string) => void;
   copiedKey: string | null;
@@ -50,15 +58,19 @@ export function VersionsSidebar({
   );
 
   return (
-    <aside className="flex flex-col h-full bg-white dark:bg-zinc-900 shadow-xl shadow-black/10 dark:shadow-black/30">
+    <aside
+      className={`scheme-dark flex flex-col bg-zinc-950 ${
+        scrollList ? 'h-full min-h-0' : 'h-auto'
+      }`}
+    >
       {/* 头部 */}
-      <div className="flex items-center justify-between px-3 py-2.5 border-b border-zinc-100 dark:border-zinc-800 flex-none">
-        <span className="text-[11px] font-semibold text-zinc-600 dark:text-zinc-300">
+      <div className="flex items-center justify-between px-3 py-2.5 border-b border-zinc-800 flex-none">
+        <span className="text-[11px] font-semibold text-zinc-300">
           历史版本 · {listCount}
         </span>
         <button
           onClick={onClose}
-          className="p-1 rounded hover:bg-zinc-100 dark:hover:bg-zinc-800 text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-200 transition"
+          className="p-1 rounded hover:bg-zinc-800 text-zinc-400 hover:text-zinc-200 transition"
           title="收起"
         >
           <X className="w-3.5 h-3.5" />
@@ -67,19 +79,25 @@ export function VersionsSidebar({
 
       {/* 统计提示 */}
       {extractedCount > 1 && (
-        <div className="px-3 py-1.5 text-[10px] text-zinc-500 dark:text-zinc-400 inline-flex items-center gap-1.5 border-b border-zinc-100 dark:border-zinc-800 flex-none">
-          <Layers className="w-3 h-3 text-violet-500 flex-none" />
-          被反推 <b className="text-zinc-700 dark:text-zinc-200">{extractedCount}</b> 次
+        <div className="px-3 py-1.5 text-[10px] text-zinc-400 inline-flex items-center gap-1.5 border-b border-zinc-800 flex-none">
+          <Layers className="w-3 h-3 text-violet-400 flex-none" />
+          被反推 <b className="text-zinc-200">{extractedCount}</b> 次
           {distinctModels.size > 1 && (
             <span>
-              · <b className="text-zinc-700 dark:text-zinc-200">{distinctModels.size}</b> 个模型
+              · <b className="text-zinc-200">{distinctModels.size}</b> 个模型
             </span>
           )}
         </div>
       )}
 
       {/* 版本列表 */}
-      <ul className="flex-1 min-h-0 overflow-y-auto">
+      <ul
+        className={
+          scrollList
+            ? `flex-1 min-h-0 overflow-y-auto pr-0.5 ${VERSIONS_LIST_SCROLLBAR}`
+            : 'overflow-y-visible flex-none'
+        }
+      >
         {refineLoading && (
           <li
             key={REFINE_STREAM_VERSION_ID}
@@ -93,10 +111,10 @@ export function VersionsSidebar({
               }
             }}
             title="点击查看 AI 调整生成中的提示词"
-            className={`px-3 py-2 border-b border-zinc-50 dark:border-zinc-800/60 cursor-pointer transition-colors ${
+            className={`px-3 py-2 border-b border-zinc-800/60 cursor-pointer transition-colors ${
               selectedVersionId === REFINE_STREAM_VERSION_ID
-                ? 'bg-violet-50 dark:bg-violet-500/15 hover:bg-violet-100/80 dark:hover:bg-violet-500/20'
-                : 'hover:bg-violet-50/60 dark:hover:bg-violet-500/10'
+                ? 'bg-violet-500/15 hover:bg-violet-500/20'
+                : 'hover:bg-violet-500/10'
             }`}
           >
             <div className="flex items-center gap-1.5 text-[10px] mb-1 flex-wrap">
@@ -105,10 +123,10 @@ export function VersionsSidebar({
               >
                 生成中
               </span>
-              <SourceTag source="refined" />
-              <span className="text-zinc-400 dark:text-zinc-500">进行中</span>
+              <SourceTag source="refined" variant="onDark" />
+              <span className="text-zinc-500">进行中</span>
             </div>
-            <p className="text-[11px] leading-relaxed text-zinc-600 dark:text-zinc-400 line-clamp-2 break-words italic">
+            <p className="text-[11px] leading-relaxed text-zinc-400 line-clamp-2 break-words italic">
               正在根据你的要求生成新版本，可切换到其它行预览历史正文…
             </p>
           </li>
@@ -143,12 +161,12 @@ export function VersionsSidebar({
                 }
               }}
               title="点击切换到此版本"
-              className={`px-3 py-2 border-b border-zinc-50 dark:border-zinc-800/60 cursor-pointer transition-colors ${
+              className={`px-3 py-2 border-b border-zinc-800/60 cursor-pointer transition-colors ${
                 isSelected
-                  ? 'bg-violet-50 dark:bg-violet-500/15 hover:bg-violet-100/80 dark:hover:bg-violet-500/20'
+                  ? 'bg-violet-500/15 hover:bg-violet-500/20'
                   : isCurrent
-                    ? 'bg-emerald-50/60 dark:bg-emerald-500/8 hover:bg-violet-50/60 dark:hover:bg-violet-500/10'
-                    : 'hover:bg-violet-50/60 dark:hover:bg-violet-500/10'
+                    ? 'bg-emerald-500/8 hover:bg-violet-500/10'
+                    : 'hover:bg-violet-500/10'
               }`}
             >
               {/* 版本标签行 */}
@@ -156,24 +174,24 @@ export function VersionsSidebar({
                 <span className={`px-1.5 py-px rounded font-semibold ${ORD_TAG_CLASS[ord.kind]}`}>
                   {ord.label}
                 </span>
-                <SourceTag source={v.source} />
+                <SourceTag source={v.source} variant="onDark" />
                 {meta.strategy && (
-                  <span className="px-1.5 py-px rounded bg-amber-100 dark:bg-amber-500/20 text-amber-700 dark:text-amber-300">
+                  <span className="px-1.5 py-px rounded bg-amber-500/20 text-amber-300">
                     {STRATEGY_LABELS[meta.strategy] ?? meta.strategy}
                   </span>
                 )}
-                <span className="inline-flex items-center gap-1 px-1.5 py-px rounded bg-white/80 dark:bg-zinc-800/80 text-zinc-600 dark:text-zinc-300 ring-1 ring-zinc-200/60 dark:ring-zinc-700/60">
+                <span className="inline-flex items-center gap-1 px-1.5 py-px rounded bg-zinc-800/90 text-zinc-300 ring-1 ring-zinc-600/60">
                   <span className="font-medium">{meta.provider}</span>
-                  <span className="text-zinc-300 dark:text-zinc-600">·</span>
+                  <span className="text-zinc-600">·</span>
                   <span className="font-mono truncate max-w-[110px]">{meta.model}</span>
                 </span>
-                <span className="text-zinc-400 dark:text-zinc-500">
+                <span className="text-zinc-500">
                   {new Date(v.createdAt).toLocaleString()}
                 </span>
               </div>
 
               {/* 预览文本 */}
-              <p className="text-[13px] leading-[1.6] text-zinc-600 dark:text-zinc-400 line-clamp-2 break-words">
+              <p className="text-[13px] leading-[1.6] text-zinc-400 line-clamp-2 break-words">
                 {preview}{v.prompt.length > 120 ? '…' : ''}
               </p>
 
@@ -181,7 +199,7 @@ export function VersionsSidebar({
               <div className="mt-1.5 flex items-center gap-1 text-[10px]">
                 <button
                   onClick={(e) => { e.stopPropagation(); onCopy(v.prompt, cid); }}
-                  className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded hover:bg-zinc-100 dark:hover:bg-zinc-800 text-zinc-500 dark:text-zinc-400 transition"
+                  className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded hover:bg-zinc-800 text-zinc-400 transition"
                 >
                   {copiedKey === cid ? (
                     <>
@@ -197,7 +215,7 @@ export function VersionsSidebar({
                 {!isCurrent && (
                   <button
                     onClick={(e) => { e.stopPropagation(); onRestoreVersion(v); }}
-                    className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-violet-600 dark:text-violet-300 hover:bg-violet-100 dark:hover:bg-violet-500/20 transition"
+                    className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-violet-300 hover:bg-violet-500/20 transition"
                   >
                     <RotateCcw className="w-3 h-3" /> 恢复此版本
                   </button>
@@ -206,7 +224,7 @@ export function VersionsSidebar({
                   <button
                     onClick={(e) => { e.stopPropagation(); onDeleteVersion(v); }}
                     title={isCurrent ? '删除当前版本（下一条版本将顶替为当前）' : '删除此版本'}
-                    className="ml-auto inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-zinc-400 hover:text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-500/10 transition"
+                    className="ml-auto inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-zinc-500 hover:text-rose-400 hover:bg-rose-500/10 transition"
                   >
                     <Trash2 className="w-3 h-3" />
                   </button>

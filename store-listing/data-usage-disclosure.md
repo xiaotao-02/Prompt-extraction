@@ -7,7 +7,7 @@
 
 ## I collect or use the following user data
 
-按 Chrome Web Store 表单的分类，**勾选**以下两项，**不要**勾其他：
+按 Chrome Web Store 表单的分类，**勾选**以下**三项**（与控制台中的 **Authentication information**、**Personal communications**、**Web content** / **Website content** 等名称对应），**不要**勾其他与下表不一致的类别：
 
 - [x] **Authentication information**
   - 解释：用户在 Options 页中输入的各家模型供应商 API Key。
@@ -17,8 +17,8 @@
   - 解释：用户在「对话式调整」中输入的自然语言指令（例如"翻译成英文"），以及反推得到的提示词文本。
   - 用途：作为模型的 prompt 的一部分，发送给用户选定的供应商。
 
-- [x] **Web content**（注意：这里勾选的是"用户**自己右键的那一张图片**"这种"用户主动指向的网页内容"，而不是"页面其他内容"）
-  - 解释：用户主动右键并选择菜单项后，扩展会读取该图片 / 视频元素的 URL，下载这一份资源，并发送给用户选定的视觉模型供应商。
+- [x] **Web content**（若后台仅显示 **Website content**，选与「用户主动指向的网页媒体」对应的那一项；勿选「整页/站点级内容」语义）
+  - 解释：用户右键并选择菜单项后，扩展仅针对**该次操作所指向的那一张图 / 一段视频相关资源**（URL 或像素），下载这一份并发送给用户选定的视觉模型供应商。**不**采集整页 HTML、全文或站点爬虫式内容。
 
 **不要**勾选以下项（确保和实际行为一致）：
 
@@ -27,9 +27,9 @@
 - [ ] Financial and payment information
 - [ ] Location
 - [ ] User activity（浏览记录、点击轨迹）
-- [ ] Website content（"页面整体内容"含义；本扩展只读用户右键的那一个元素，不读其他 DOM）
+- [ ] 任何表示「收集整站或整页浏览内容 / 非用户单次指向的媒体」之类、与本扩展不符的类别（若与 **Web content**/**Website content** 在表单中合并为同一勾选项，则只勾上一节中说明的那一项，不要额外勾成「整站内容」）
 
-> 备注：Chrome 表单里 "Web content" 与 "Website content" 是同一项（取决于 UI 版本），勾上即可。
+> **与代码对齐**：`clipboardRead` 仅在设置页用户点击「从剪贴板粘贴」时读取剪贴板，用于本地配置导入，不向开发者服务器上传；商店「User data」分类通常无需单独为剪贴板再勾一类 —— 以 Dev Console 当前列表为准；若出现明确的 **Clipboard** 类且要求声明，补充一句「仅用户主动触发的设置导入，不上传」即可。
 
 ---
 

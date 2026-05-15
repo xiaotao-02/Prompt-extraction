@@ -116,9 +116,10 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message?.type === 'OPEN_OPTIONS') {
-    const { tab, focusId } = (message.payload || {}) as {
+    const { tab, focusId, dock } = (message.payload || {}) as {
       tab?: 'settings' | 'library';
       focusId?: string;
+      dock?: 'refine' | 'versions';
     };
     // 没有 deep-link 参数时直接走原生 API，保留默认行为
     if (!tab && !focusId) {
@@ -130,6 +131,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     const params = new URLSearchParams();
     if (tab) params.set('tab', tab);
     if (focusId) params.set('focus', focusId);
+    if (dock === 'refine' || dock === 'versions') params.set('dock', dock);
     const optionsPath = 'src/options/index.html';
     const targetUrl = chrome.runtime.getURL(optionsPath) + '#' + params.toString();
     // 已经打开过 options 页时，复用那个 tab 并刷新到目标 url，避免开一堆重复 tab
@@ -257,7 +259,10 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true;
   }
   if (message?.type === 'OPEN_IN_PANEL') {
-    const { historyId } = (message.payload || {}) as { historyId?: string };
+    const { historyId, dock } = (message.payload || {}) as {
+      historyId?: string;
+      dock?: 'refine' | 'versions';
+    };
     if (!historyId) {
       sendResponse({ ok: false, error: '缺少 historyId' });
       return true;
@@ -331,7 +336,11 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
         const delivered = await sendToTabReliably(targetId, {
           type: 'PANEL_FROM_HISTORY',
-          payload: { historyId, item },
+          payload: {
+            historyId,
+            item,
+            ...(dock === 'refine' || dock === 'versions' ? { dock } : {}),
+          },
         });
         if (!delivered) {
           sendResponse({

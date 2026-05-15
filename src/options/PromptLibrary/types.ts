@@ -1,5 +1,7 @@
 export type SortKey = 'updated' | 'created' | 'versions';
 export type ViewMode = 'list' | 'grid';
+/** 从 options hash / popup 出库打开库内「AI 调整」或「历史版本」侧栏的一次性意图 */
+export type LibraryDockIntent = null | 'refine' | 'versions';
 export type ExpandedTab = 'editor' | 'versions' | 'refine' | 'meta';
 
 export const REFINE_SUGGESTIONS = [

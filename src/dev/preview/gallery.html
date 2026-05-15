@@ -1,0 +1,287 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Prompt Extracto · 开发 UI 实时预览</title>
+    <style>
+      :root {
+        font-family: system-ui, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+        background: #fafafa;
+        color: #18181b;
+      }
+      @media (prefers-color-scheme: dark) {
+        :root {
+          background: #0a0a0a;
+          color: #e4e4e7;
+        }
+      }
+      html {
+        height: 100%;
+      }
+      body {
+        margin: 0;
+        min-height: 100%;
+        padding: 1.25rem clamp(14px, 3vw, 2rem) 1.25rem;
+        line-height: 1.55;
+        box-sizing: border-box;
+        display: flex;
+        flex-direction: column;
+      }
+      h1 {
+        font-size: 1.2rem;
+        margin: 0 0 0.35rem;
+      }
+      .hint {
+        margin: 0 0 0.85rem;
+        font-size: 0.88rem;
+        opacity: 0.78;
+        max-width: 92ch;
+      }
+      .tabs {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.35rem;
+        margin: 0 0 0.65rem;
+      }
+      .tabs button {
+        font: inherit;
+        font-size: 0.88rem;
+        font-weight: 500;
+        padding: 0.45rem 0.75rem;
+        border-radius: 8px;
+        border: 1px solid #e4e4e7;
+        background: #fff;
+        color: inherit;
+        cursor: pointer;
+      }
+      .tabs button:hover {
+        background: #f4f4f5;
+      }
+      .tabs button:focus-visible {
+        outline: 2px solid #6366f1;
+        outline-offset: 2px;
+      }
+      .tabs button[aria-selected='true'] {
+        border-color: #6366f1;
+        background: #eef2ff;
+        color: #3730a3;
+      }
+      @media (prefers-color-scheme: dark) {
+        .tabs button {
+          border-color: #27272a;
+          background: #18181b;
+        }
+        .tabs button:hover {
+          background: #27272a;
+        }
+        .tabs button[aria-selected='true'] {
+          border-color: #818cf8;
+          background: #1e1b4b;
+          color: #c7d2fe;
+        }
+        .tabs button:focus-visible {
+          outline-color: #a5b4fc;
+        }
+      }
+      .preview-stack {
+        position: relative;
+        flex: 1 1 auto;
+        min-height: max(520px, calc(100vh - 13.5rem));
+        width: 100%;
+      }
+      .tabpanel {
+        position: absolute;
+        inset: 0;
+        display: none;
+        flex-direction: column;
+      }
+      .tabpanel.active {
+        display: flex;
+      }
+      iframe {
+        flex: 1;
+        width: 100%;
+        min-height: 0;
+        border: 1px solid #e4e4e7;
+        border-radius: 12px;
+        background: #fff;
+        box-sizing: border-box;
+      }
+      @media (prefers-color-scheme: dark) {
+        iframe {
+          border-color: #27272a;
+          background: #18181b;
+        }
+      }
+      code {
+        font-size: 0.82em;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Prompt Extracto · 开发 UI 实时预览</h1>
+    <p class="hint">
+      先在本仓库根目录执行 <code>npm run dev</code>（默认 <code>http://localhost:5173</code>）。
+      以下为真实 React / 真实 <code>STYLE</code> + <code>panelHtml</code>，随源码与 HMR 更新；与
+      <code>chrome-extension://</code> 里仍会存在行为差异（预览使用内存 <code>chrome.storage</code>
+      与占位 <code>runtime.sendMessage</code>）。顶部标签切换预览；链接可加
+      <code>#popup</code>、<code>#options</code>、<code>#panel</code>；快捷键 <kbd>1</kbd>
+      / <kbd>2</kbd> / <kbd>3</kbd>（本页焦点时）。
+    </p>
+    <p class="hint">
+      占位库条目（同源 IndexedDB，见 <code>src/dev/preview/seedPreviewLibrary.ts</code>）：
+      <code>PREVIEW_DEMO_PRIMARY_ID</code> · <code>preview-demo-1</code>（双版本）、
+      <code>PREVIEW_DEMO_SD_TAGS_ID</code> · <code>preview-demo-2</code>、
+      <code>PREVIEW_DEMO_REFINED_PAIR_ID</code> · <code>preview-demo-3</code>、
+      <code>PREVIEW_DEMO_TEN_VERSIONS_ID</code> · <code>preview-demo-10v</code>（10 条版本链；Popup 上徽章为
+      <code>v10</code> 表示共 10 个版本）。
+      若本地库非空，预览页每次启动仍会<strong>补写缺失</strong>的上述占位 id（无需为看 10 版本而清空整库）。
+      浮动面板预览 iframe 默认加载 <code>preview-demo-10v</code>。本聚合页内的 Panel iframe URL 不带 hash，
+      需在单独 Tab 打开
+      <code>/src/dev/preview/panel-preview.html#focus=preview-demo-1</code>
+      （或 <code>item=</code> 别名）可切换占位记录。
+    </p>
+
+    <div class="tabs" role="tablist" aria-label="预览界面切换">
+      <button type="button" role="tab" id="tab-popup" aria-selected="true" aria-controls="panel-popup" tabindex="0" data-view="popup">
+        工具栏弹窗 · Popup
+      </button>
+      <button type="button" role="tab" id="tab-options" aria-selected="false" aria-controls="panel-options" tabindex="-1" data-view="options">
+        选项页 · Options
+      </button>
+      <button type="button" role="tab" id="tab-panel" aria-selected="false" aria-controls="panel-panelui" tabindex="-1" data-view="panel">
+        浮动面板 · Content panel
+      </button>
+    </div>
+
+    <div class="preview-stack">
+      <div class="tabpanel active" role="tabpanel" id="panel-popup" aria-labelledby="tab-popup" data-view="popup">
+        <iframe src="/src/dev/preview/popup-preview.html" title="Popup 预览"></iframe>
+      </div>
+      <div class="tabpanel" role="tabpanel" id="panel-options" aria-labelledby="tab-options" hidden data-view="options">
+        <iframe src="/src/dev/preview/options-preview.html" title="Options 预览"></iframe>
+      </div>
+      <div class="tabpanel" role="tabpanel" id="panel-panelui" aria-labelledby="tab-panel" hidden data-view="panel">
+        <iframe src="/src/dev/preview/panel-preview.html" title="Panel 预览"></iframe>
+      </div>
+    </div>
+
+    <script>
+      (function () {
+        var VIEWS = ['popup', 'options', 'panel'];
+        var tabs = Array.prototype.slice.call(document.querySelectorAll('[role="tab"][data-view]'));
+        var panels = Array.prototype.slice.call(document.querySelectorAll('.tabpanel[data-view]'));
+
+        function viewFromHash() {
+          var h = (window.location.hash || '').replace(/^#/, '').toLowerCase();
+          return VIEWS.indexOf(h) >= 0 ? h : 'popup';
+        }
+
+        function activate(view, opts) {
+          opts = opts || {};
+          view = VIEWS.indexOf(view) >= 0 ? view : 'popup';
+
+          tabs.forEach(function (btn) {
+            var v = btn.getAttribute('data-view');
+            var on = v === view;
+            btn.setAttribute('aria-selected', on ? 'true' : 'false');
+            btn.tabIndex = on ? 0 : -1;
+          });
+
+          panels.forEach(function (p) {
+            var v = p.getAttribute('data-view');
+            var on = v === view;
+            p.classList.toggle('active', on);
+            if (on) {
+              p.removeAttribute('hidden');
+              p.removeAttribute('aria-hidden');
+            } else {
+              p.setAttribute('hidden', '');
+              p.setAttribute('aria-hidden', 'true');
+            }
+          });
+
+          if (!opts.skipHash && window.location.hash !== '#' + view) {
+            window.history.replaceState(null, '', '#' + view);
+          }
+        }
+
+        /* 与 src/dev/preview/chromeShim.ts 中 DEV_PREVIEW_NAV 保持一致 */
+        var DEV_PREVIEW_NAV = 'DEV_PREVIEW_NAV';
+        window.addEventListener('message', function (e) {
+          if (e.origin !== window.location.origin) return;
+          var d = e.data;
+          if (!d || d.type !== DEV_PREVIEW_NAV) return;
+          var view = d.view;
+          if (VIEWS.indexOf(view) < 0) return;
+          activate(view, { skipHash: false });
+          if (view === 'options' && d.optionsHash) {
+            var optsPanel = document.querySelector('.tabpanel[data-view="options"]');
+            var iframe = optsPanel && optsPanel.querySelector('iframe');
+            if (iframe) {
+              var hash = String(d.optionsHash).replace(/^#/, '');
+              iframe.src = '/src/dev/preview/options-preview.html#' + hash;
+            }
+          }
+        });
+
+        tabs.forEach(function (btn) {
+          btn.addEventListener('click', function () {
+            activate(btn.getAttribute('data-view'), { skipHash: false });
+          });
+        });
+
+        window.addEventListener('hashchange', function () {
+          activate(viewFromHash(), { skipHash: true });
+        });
+
+        tabs.forEach(function (btn) {
+          btn.addEventListener('keydown', function (e) {
+            var i = tabs.indexOf(btn);
+            if (e.key === 'ArrowRight' || e.key === 'ArrowDown') {
+              e.preventDefault();
+              var ni = (i + 1) % tabs.length;
+              tabs[ni].focus();
+              activate(tabs[ni].getAttribute('data-view'), { skipHash: false });
+            }
+            if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') {
+              e.preventDefault();
+              var pi = (i - 1 + tabs.length) % tabs.length;
+              tabs[pi].focus();
+              activate(tabs[pi].getAttribute('data-view'), { skipHash: false });
+            }
+            if (e.key === 'Home') {
+              e.preventDefault();
+              tabs[0].focus();
+              activate(tabs[0].getAttribute('data-view'), { skipHash: false });
+            }
+            if (e.key === 'End') {
+              e.preventDefault();
+              tabs[tabs.length - 1].focus();
+              activate(tabs[tabs.length - 1].getAttribute('data-view'), { skipHash: false });
+            }
+          });
+        });
+
+        document.addEventListener('keydown', function (e) {
+          if (e.defaultPrevented || e.altKey || e.ctrlKey || e.metaKey) return;
+          var t = e.target;
+          if (t && t.closest && t.closest('iframe')) return;
+          if (t.isContentEditable) return;
+
+          if (e.shiftKey || e.repeat) return;
+
+          if (e.code === 'Digit1' || e.code === 'Numpad1') activate('popup', { skipHash: false });
+          else if (e.code === 'Digit2' || e.code === 'Numpad2') activate('options', { skipHash: false });
+          else if (e.code === 'Digit3' || e.code === 'Numpad3') activate('panel', { skipHash: false });
+        });
+
+        activate(viewFromHash(), { skipHash: true });
+        if (!window.location.hash || VIEWS.indexOf(window.location.hash.replace(/^#/, '').toLowerCase()) < 0) {
+          window.history.replaceState(null, '', '#' + viewFromHash());
+        }
+      })();
+    </script>
+  </body>
+</html>

@@ -11,7 +11,7 @@ import {
   FolderInput,
 } from 'lucide-react';
 import type { HistoryItem, LibraryFolder } from '@/lib/types';
-import { formatTime } from '../_shared/time';
+import { formatTime } from '@/lib/format/time';
 import { Thumb } from './Thumb';
 import { IconBtn } from './IconBtn';
 import { MoveToMenu } from './parts/MoveToMenu';
@@ -71,7 +71,7 @@ export function ItemGridCard({
   return (
     <div
       data-history-id={item.id}
-      className={`group card !p-0 overflow-hidden flex flex-col transition-all duration-200 cursor-pointer ${
+      className={`group card !p-0 overflow-hidden flex flex-row min-h-0 transition-all duration-200 cursor-pointer ${
         expanded ? 'ring-2 ring-violet-500/40 shadow-lg shadow-violet-500/5' : 'hover:shadow-md hover:-translate-y-0.5'
       } ${item.pinned ? 'border-amber-300 dark:border-amber-500/40' : ''}`}
       onClick={onCardClick}
@@ -86,35 +86,24 @@ export function ItemGridCard({
         }
       }}
     >
-      <div className="relative aspect-[4/3] bg-zinc-100 dark:bg-zinc-800 overflow-hidden">
-        <Thumb item={item} size="full" />
-        <div className="absolute inset-x-0 top-0 p-2 flex items-start justify-between pointer-events-none">
-          <label
-            onClick={stop}
-            className="pointer-events-auto inline-flex items-center justify-center w-6 h-6 rounded-md bg-white/85 dark:bg-zinc-900/85 backdrop-blur ring-1 ring-black/5 dark:ring-white/10 cursor-pointer transition opacity-0 group-hover:opacity-100 has-[:checked]:opacity-100"
-          >
-            <input
-              type="checkbox"
-              className="w-3.5 h-3.5 accent-violet-500"
-              checked={checked}
-              onChange={onToggleSelect}
-              onClick={stop}
-            />
-          </label>
-          <div className="pointer-events-auto flex items-center gap-1">
-            {item.pinned && (
-              <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-amber-500/90 text-white text-[10px] font-medium shadow-sm">
-                <Pin className="w-3 h-3" /> 置顶
-              </span>
-            )}
-            {versionCount > 1 && (
-              <span className="inline-flex items-center px-1.5 py-0.5 rounded-md bg-violet-500/90 text-white text-[10px] font-medium shadow-sm">
-                v{versionCount}
-              </span>
-            )}
+      <div className="flex-1 min-w-0 flex flex-col min-h-0">
+        <div className="relative aspect-[4/3] bg-zinc-100 dark:bg-zinc-800 overflow-hidden">
+          <Thumb item={item} size="full" />
+          <div className="absolute inset-x-0 top-0 p-2 flex items-start justify-end pointer-events-none">
+            <div className="pointer-events-auto flex items-center gap-1">
+              {item.pinned && (
+                <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-amber-500/90 text-white text-[10px] font-medium shadow-sm">
+                  <Pin className="w-3 h-3" /> 置顶
+                </span>
+              )}
+              {versionCount > 1 && (
+                <span className="inline-flex items-center px-1.5 py-0.5 rounded-md bg-violet-500/90 text-white text-[10px] font-medium shadow-sm">
+                  v{versionCount}
+                </span>
+              )}
+            </div>
           </div>
-        </div>
-        <div className="absolute inset-x-0 bottom-0 p-2 flex items-center justify-end gap-1 opacity-0 group-hover:opacity-100 transition">
+          <div className="absolute inset-x-0 bottom-0 p-2 flex items-center justify-end gap-1 opacity-0 group-hover:opacity-100 transition">
           <IconBtn
             onClick={() => onCopy(item.prompt, `cur:${item.id}`)}
             title="复制提示词"
@@ -213,6 +202,20 @@ export function ItemGridCard({
             </>
           )}
         </button>
+      </div>
+      </div>
+      <div
+        className="flex-none flex items-center justify-center self-stretch px-2 border-l border-zinc-200/80 dark:border-zinc-700/80"
+        onClick={stop}
+      >
+        <input
+          type="checkbox"
+          className="w-4 h-4 accent-violet-500 cursor-pointer"
+          checked={checked}
+          onChange={onToggleSelect}
+          onClick={stop}
+          title="选中此条"
+        />
       </div>
     </div>
   );

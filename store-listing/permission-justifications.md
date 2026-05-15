@@ -37,65 +37,65 @@ No data is transmitted off-device by virtue of this permission. `chrome.storage.
 ## 3. `scripting`
 
 **EN**
-Required so that, after the user clicks the right-click menu item, the extension can inject a small Shadow-DOM floating panel into the current tab to display the returned prompt. Injection happens only on user gesture (after the menu click), never on page load and never on tabs the user has not interacted with.
+Required for `chrome.scripting.executeScript` when the service worker must programmatically inject the same bundled content script into the active tab (for example if the tab predates the install/update, or if declarative injection did not attach). Separately, a lightweight declarative content script runs at `document_idle` on matched pages so the extension can listen for right-click preparation and handle panel messages — **this does not display the visible result UI by itself**. The Shadow-DOM floating panel is created only after the user initiates extraction (context menu or recall flow), not on every page load.
 
 **ZH**
-仅在用户点击右键菜单后用于向当前标签页注入一个 Shadow DOM 浮动面板来展示反推结果。注入完全由用户的右键操作触发，**不会在页面打开时主动注入**，也不会注入到用户从未交互过的标签页。
+用于在后台需要时通过 `chrome.scripting.executeScript` 向当前标签页**程序化注入**与 manifest 相同的内容脚本（例如页面在扩展安装/更新前就打开、或声明式注入未附着等兜底场景）。与此同时，匹配站点在 `document_idle` 会加载**轻量**声明式内容脚本，用于右键探测与面板消息 —— **仅凭脚本加载不会在页面上展示结果界面**。半透明结果浮动面板仅在用户发起「提取提示词」或从库中召回到页面等操作后才创建，而非每次打开网页就自动出现。
 
 ---
 
 ## 4. `activeTab`
 
 **EN**
-Together with `scripting`, this restricts the injection capability to the tab the user is actively interacting with at the moment of the right-click. It is the standard Chrome-recommended pattern for "act on the user's current tab on user gesture, not in the background".
+Works with `scripting` so programmatic injection and tab-scoped work follow Chrome’s recommended pattern for acting on the tab the user is using when they invoke the extension, rather than arbitrary background tab access.
 
 **ZH**
-配合 `scripting` 使用，把注入能力限制在用户当前正在交互的那个标签页。这是 Chrome 官方推荐的"仅在用户主动操作的当前标签页上工作"的标准模式。
+与 `scripting` 配合，使程序化注入与标签页侧行为符合 Chrome 推荐的「在用户操作所及的当前标签页上工作」模式，而非在后台任意访问未参与交互的标签页。
 
 ---
 
 ## 5. `clipboardWrite`
 
 **EN**
-Solely used by the "Copy" button in the result panel and in the toolbar popup, so the user can paste the generated prompt into their AI painting tool. Triggered only by an explicit user click; the clipboard is never written silently.
+Used only by explicit "Copy" actions: the result panel, toolbar popup, and Settings/Prompt Library copy buttons write generated or selected prompt text so the user can paste it elsewhere. The clipboard is never modified without a direct user click.
 
 **ZH**
-仅用于结果面板和工具栏弹窗中的「复制」按钮，让用户能把生成的提示词粘贴到自己的 AI 绘画工具中。完全由用户点击触发，**不会在用户无操作时静默写入剪贴板**。
+仅用于用户明确点击「复制」时：结果面板、工具栏弹窗，以及设置/提示词库中的复制按钮，将生成或选中的提示词写入剪贴板。**不会在无用户点击的情况下静默写入**。
 
 ---
 
-## 6. Host permission `<all_urls>`
+## 6. `clipboardRead`
 
 **EN**
-The extension's core promise is "right-click the image you are looking at". Because users may be on literally any website (Twitter, Pinterest, an art portfolio site, an internal company page, etc.), the right-click menu and the result-panel injection both need to work on arbitrary origins.
-
-The extension does NOT:
-- scan or read page content unrelated to the right-clicked element
-- send any page DOM, URL, cookies, history or browsing data to any server
-- run on tabs the user has not gestured on
-
-It only:
-- registers a right-click handler that reads the URL of the specific image / video element the user clicked
-- on user gesture, fetches that one image and sends it (only) to the vision-LLM endpoint the user has configured in Options
-
-There is no narrower URL pattern that would satisfy "right-click any image on any site"; that is why `<all_urls>` is the minimum viable host permission.
+Used only in the Options "Setup guide": when the user clicks the control to paste a JSON configuration from the clipboard into the import field. The extension does not read the clipboard in the background or on web pages.
 
 **ZH**
-扩展的核心承诺是"右键你正在看的那张图"。由于用户可能在任意网站上（Twitter、Pinterest、画师作品站、公司内网等），右键菜单与结果面板注入都必须支持任意来源。
-
-扩展**不会**：
-- 扫描或读取与"被右键的那个元素"无关的页面内容
-- 把任何页面 DOM、URL、Cookie、历史或浏览数据发送到任何服务器
-- 在用户从未操作的标签页上运行
-
-扩展**只**：
-- 注册一个右键处理器，读取"被用户右键的那一个图片 / 视频元素"的 URL
-- 在用户点击菜单后，仅下载这一张图，并仅发送到用户在「设置」中配置的那家视觉模型端点
-
-由于"在任何网站上右键任何图片都能用"这个能力本身就需要全站匹配，没有更窄的 URL 模式可以满足，因此 `<all_urls>` 是最小可行的 host 权限。
+仅在「设置 → 配置指南」中，当用户点击「**从剪贴板粘贴**」时读取剪贴板文本以填入 JSON 配置导入框。扩展**不会在后台静默读取**，也不会在普通网页上下文中读取剪贴板。
 
 ---
 
-## 7. Remote code
+## 7. Host permission `<all_urls>`
+
+**EN**
+The extension's core promise is "right-click the image you are looking at". Because users may be on any website, the context menu and in-page UI must work on arbitrary origins. A lightweight content script loads with the page (`document_idle`) to support right-click detection and messaging; **loading that script does not send page data anywhere**. The extension does NOT bulk-scrape DOM, cookies, or browsing history.
+
+On user action only, it:
+- resolves the URL or pixels for the specific media under the user's click
+- fetches that one image resource and sends it only to the vision-LLM endpoint configured in Options
+
+No narrower host pattern covers "every site where a user might right‑click an image"; `<all_urls>` is therefore the minimum viable match list for this product.
+
+**ZH**
+扩展承诺在任意站点上「右键当前所看的图」都能用，因此右键入口与页内能力必须覆盖任意来源。声明式内容脚本随页面在 `document_idle` **轻量加载**，用于右键探测与消息通道 —— **仅加载脚本不等于上传或扫描网页内容**。扩展**不会**批量采集 DOM、Cookie 或浏览历史。
+
+仅在用户操作后：
+- 解析用户所点位置对应的那一张图 / 媒体的 URL 或像素
+- 仅下载这一份资源并发送到用户在「设置」中选定的视觉模型端点
+
+没有更窄的 URL 模式能覆盖「用户可能在任意网站右键图片」；故 `<all_urls>` 是该产品形态下最小可行的主机权限。
+
+---
+
+## 8. Remote code
 
 **No remote code is loaded or executed.** The extension does not use `eval`, `new Function`, dynamic `import()` of remote URLs, or `<script>` tags pointing to remote origins. All JavaScript executed by the extension is the JavaScript shipped inside the .crx itself, generated by Vite from the source tree.

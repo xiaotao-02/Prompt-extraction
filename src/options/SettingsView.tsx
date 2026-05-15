@@ -616,6 +616,53 @@ export default function SettingsView({ registerSaveHandler, onDirtyChange }: Pro
             </div>
           </label>
         </div>
+
+        <div className="mt-4 pt-4 border-t border-zinc-200 dark:border-zinc-800 space-y-3">
+          <div className="text-sm font-medium text-zinc-900 dark:text-zinc-100">
+            弹窗里的「编辑 / AI 调整」
+          </div>
+          <p className="text-xs text-zinc-500">
+            选择打开<strong className="font-medium text-zinc-600 dark:text-zinc-400">提示词库</strong>（扩展选项页）还是在
+            <strong className="font-medium text-zinc-600 dark:text-zinc-400">网页浮动面板</strong>
+            中继续编辑与 AI 调整。选浮动面板时会尝试激活该条记录的来源页（与工具栏弹窗里的「悬浮窗编辑」一致）。
+            <span className="block mt-1.5 text-zinc-500">
+              「版本」始终在工具栏弹窗内展开历史列表，不受此项影响。
+            </span>
+          </p>
+          <div className="flex flex-col gap-2">
+            {(
+              [
+                {
+                  value: 'library' as const,
+                  label: '打开提示词库',
+                  desc: '大图编辑与 AI 调整在选项页「提示词库」中；历史版本在弹窗内查看',
+                },
+                {
+                  value: 'panel' as const,
+                  label: '在网页浮动面板中打开',
+                  desc: '在来源网页上的悬浮窗中编辑，并按按钮展开主编辑区与 AI 调整；历史版本仍在弹窗内查看',
+                },
+              ] as const
+            ).map((opt) => {
+              const active = (settings.popupToolbarPromptAction ?? 'library') === opt.value;
+              return (
+                <button
+                  key={opt.value}
+                  type="button"
+                  onClick={() => setSettings({ ...settings, popupToolbarPromptAction: opt.value })}
+                  className={`text-left w-full p-3 rounded-xl border transition ${
+                    active
+                      ? 'border-violet-500 bg-violet-50 dark:bg-violet-500/10'
+                      : 'border-zinc-200 dark:border-zinc-800 hover:border-zinc-300'
+                  }`}
+                >
+                  <div className="text-sm font-medium">{opt.label}</div>
+                  <div className="text-[11px] text-zinc-500 mt-0.5">{opt.desc}</div>
+                </button>
+              );
+            })}
+          </div>
+        </div>
       </section>
 
       {/* 策略版本：高级调优，频率低，放在输出风格之后 */}

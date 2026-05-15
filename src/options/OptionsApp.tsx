@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { Save, Settings as SettingsIcon, BookOpen, Check } from 'lucide-react';
 import SettingsView from './SettingsView';
 import PromptLibrary from './PromptLibrary';
+import type { LibraryDockIntent } from './PromptLibrary/types';
 
 // 顶部「保存设置 / 已保存」按钮共用的基础布局类。
 // 颜色和交互态在渲染时再根据 dirty 拼接，避免 disabled 时仍残留 hover/active 反馈。
@@ -22,28 +23,42 @@ const TAB_STORAGE_KEY = 'options_active_tab_v1';
 /**
  * 解析 options 页 URL 的 hash 参数。content script 浮动面板点击「在提示词库中编辑」
  * 时由 background 把目标 tab / focusId 拼到 hash 上传过来。
- * 形如 `#tab=library&focus=abc123`。
+ * 形如 `#tab=library&focus=abc123&dock=refine`：`dock` 仅在同时存在 `focus` 时生效，
+ * 避免仅有 `dock` 时用户第一次手动展开条目误开 AI 调整 / 历史侧栏。
  */
-function readHashParams(): { tab: Tab | null; focusId: string | null } {
+function readHashParams(): {
+  tab: Tab | null;
+  focusId: string | null;
+  dockRaw: string | null;
+} {
   try {
     const hash = window.location.hash.replace(/^#/, '');
-    if (!hash) return { tab: null, focusId: null };
+    if (!hash) return { tab: null, focusId: null, dockRaw: null };
     const params = new URLSearchParams(hash);
     const t = params.get('tab');
     const focus = params.get('focus');
     return {
       tab: t === 'library' || t === 'settings' ? (t as Tab) : null,
       focusId: focus || null,
+      dockRaw: params.get('dock'),
     };
   } catch {
-    return { tab: null, focusId: null };
+    return { tab: null, focusId: null, dockRaw: null };
   }
+}
+
+function normalizeLibraryDock(raw: string | null): LibraryDockIntent {
+  if (raw === 'refine' || raw === 'versions') return raw;
+  return null;
 }
 
 export default function OptionsApp() {
   // hash 参数只在初始 mount 时消费一次：URL hash > sessionStorage > 默认 'settings'。
   // 消费完后清掉 hash，避免用户刷新页面又跳回 library 干扰正常浏览。
   const initialHash = readHashParams();
+  const hadDeepLink = Boolean(
+    initialHash.tab || initialHash.focusId || initialHash.dockRaw
+  );
   const [tab, setTab] = useState<Tab>(() => {
     if (initialHash.tab) return initialHash.tab;
     try {
@@ -54,11 +69,17 @@ export default function OptionsApp() {
     }
   });
   const [libraryFocusId, setLibraryFocusId] = useState<string | null>(initialHash.focusId);
+  const [libraryDockIntent, setLibraryDockIntent] = useState<LibraryDockIntent>(() => {
+    const dock = normalizeLibraryDock(initialHash.dockRaw);
+    return initialHash.focusId && dock ? dock : null;
+  });
+
+  const clearLibraryDockIntent = useCallback(() => setLibraryDockIntent(null), []);
 
   // 把 deep-link 消费掉：清掉 hash，并在 PromptLibrary 收到 focusId 后由它再调用
   // onConsumeFocus 把这里的 focusId 也清掉，避免组件被反复触发自动展开。
   useEffect(() => {
-    if (!initialHash.tab && !initialHash.focusId) return;
+    if (!hadDeepLink) return;
     try {
       history.replaceState(null, '', window.location.pathname + window.location.search);
     } catch {
@@ -217,6 +238,8 @@ export default function OptionsApp() {
           <PromptLibrary
             focusId={libraryFocusId}
             onConsumeFocus={() => setLibraryFocusId(null)}
+            dockIntent={libraryDockIntent}
+            onConsumeDockIntent={clearLibraryDockIntent}
           />
         )}
       </main>

@@ -29,7 +29,10 @@ export function BulkActionBar({
   const [moveOpen, setMoveOpen] = useState(false);
   const moveBtnRef = useRef<HTMLButtonElement>(null);
   return (
-    <div className="sticky bottom-4 z-20 flex justify-center pointer-events-none">
+    <div
+      className="fixed left-0 right-0 z-20 flex justify-center pointer-events-none"
+      style={{ bottom: 'calc(1rem + env(safe-area-inset-bottom, 0px))' }}
+    >
       <div className="pointer-events-auto flex items-center gap-2 px-3 py-2 rounded-2xl bg-zinc-900/95 dark:bg-zinc-800/95 text-zinc-100 shadow-2xl shadow-black/20 backdrop-blur ring-1 ring-white/10">
         <span className="inline-flex items-center gap-1.5 text-xs px-2 py-1 rounded-md bg-white/10">
           <CheckCheck className="w-3.5 h-3.5 text-violet-300" />

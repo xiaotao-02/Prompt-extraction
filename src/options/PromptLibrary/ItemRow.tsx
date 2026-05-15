@@ -15,7 +15,7 @@ import {
   Folder,
 } from 'lucide-react';
 import type { HistoryItem, LibraryFolder } from '@/lib/types';
-import { formatTime } from '../_shared/time';
+import { formatTime } from '@/lib/format/time';
 import { Thumb } from './Thumb';
 import { MoveToMenu } from './parts/MoveToMenu';
 import { getProjectColor } from './types';
@@ -80,7 +80,7 @@ export function ItemRow({
 
   return (
     <div
-      className="group flex gap-3 p-3.5 cursor-pointer select-text"
+      className="group flex items-center gap-3 p-3.5 cursor-pointer select-text"
       onClick={onRowClick}
       role="button"
       tabIndex={0}
@@ -93,14 +93,6 @@ export function ItemRow({
         }
       }}
     >
-      <input
-        type="checkbox"
-        className="mt-1 w-4 h-4 accent-violet-500 flex-none cursor-pointer"
-        checked={checked}
-        onChange={onToggleSelect}
-        onClick={stop}
-        title="选中此条"
-      />
       <Thumb item={item} size="md" />
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-1.5 flex-wrap text-[11px] text-zinc-500 mb-1">
@@ -277,6 +269,14 @@ export function ItemRow({
           </button>
         </div>
       </div>
+      <input
+        type="checkbox"
+        className="w-4 h-4 accent-violet-500 shrink-0 cursor-pointer ml-1"
+        checked={checked}
+        onChange={onToggleSelect}
+        onClick={stop}
+        title="选中此条"
+      />
     </div>
   );
 }

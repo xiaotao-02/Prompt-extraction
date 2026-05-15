@@ -68,7 +68,7 @@ npm run release:store
 | 字段 | 复制自 |
 |---|---|
 | Single purpose | `store-listing/single-purpose.zh.md` 或 `.en.md` |
-| Permission justifications · 每个权限单独的输入框 | `store-listing/permission-justifications.md` 中对应小节 |
+| Permission justifications · 每个权限单独的输入框（与 zip 内 `manifest.json` 的 `permissions` **逐项对应**） | `store-listing/permission-justifications.md` 中对应小节 |
 | Data usage 勾选项 + Approved use cases 文本 | `store-listing/data-usage-disclosure.md` |
 | Privacy policy URL | `store-listing/privacy-policy-url.txt` |
 

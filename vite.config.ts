@@ -3,10 +3,37 @@ import react from '@vitejs/plugin-react';
 import tailwindcss from '@tailwindcss/vite';
 import { crx } from '@crxjs/vite-plugin';
 import path from 'node:path';
+import fs from 'node:fs';
+import type { Connect } from 'vite';
 import manifest from './src/manifest.config';
 
+/** dev 专用：聚合 iframe 指向 popup / options / 面板预览，随 HMR 与本机源码一致。 */
+function devUiPreviewGallery(): import('vite').Plugin {
+  const galleryAbs = path.resolve(__dirname, 'src/dev/preview/gallery.html');
+  return {
+    name: 'dev-ui-preview-gallery',
+    apply: 'serve',
+    configureServer(server) {
+      server.middlewares.use(((req, res, next) => {
+        const url = (req.url ?? '').split('?')[0];
+        if (
+          url === '/__dev__/ui-preview' ||
+          url === '/__dev__/ui-preview/' ||
+          url === '/__dev__/ui-preview/index.html'
+        ) {
+          res.statusCode = 200;
+          res.setHeader('Content-Type', 'text/html; charset=utf-8');
+          res.end(fs.readFileSync(galleryAbs, 'utf-8'));
+          return;
+        }
+        next();
+      }) as Connect.NextHandleFunction);
+    },
+  };
+}
+
 export default defineConfig({
-  plugins: [react(), tailwindcss(), crx({ manifest })],
+  plugins: [react(), tailwindcss(), devUiPreviewGallery(), crx({ manifest })],
   resolve: {
     alias: {
       '@': path.resolve(__dirname, 'src'),

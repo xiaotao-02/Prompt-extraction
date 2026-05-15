@@ -1,5 +1,6 @@
 import * as React from 'react';
-import { useEffect, useLayoutEffect, useState } from 'react';
+import { createPortal } from 'react-dom';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import {
   History as HistoryIcon,
   Wand2,
@@ -15,8 +16,14 @@ import { REFINE_STREAM_VERSION_ID, refineStreamDisplayedBody } from '@/lib/refin
 import { VersionsSidebar } from './tabs/VersionsTab';
 import { MetaTab } from './tabs/MetaTab';
 import { RefineInline } from './tabs/RefineInline';
+import type { LibraryDockIntent } from './types';
 
 type InlineSection = 'refine' | 'meta';
+
+const VERSIONS_SCROLL_THRESHOLD = 6;
+const VERSIONS_PANEL_W = 300;
+const VERSIONS_PANEL_GAP = 12;
+const VERSIONS_PANEL_MIN_LEFT = 8;
 
 export function ExpandedPanel({
   item,
@@ -37,6 +44,8 @@ export function ExpandedPanel({
   onChangeRefine,
   onRunRefine,
   onPickRefineSuggestion,
+  initialDock = null,
+  onInitialDockConsumed,
 }: {
   item: HistoryItem;
   draft: string;
@@ -57,9 +66,15 @@ export function ExpandedPanel({
   onChangeRefine: (v: string) => void;
   onRunRefine: () => void;
   onPickRefineSuggestion: (s: string) => void;
+  /** 从 Popup / options hash 出库时一次性打开对应区域 */
+  initialDock?: LibraryDockIntent;
+  onInitialDockConsumed?: () => void;
 }) {
-  const [openInline, setOpenInline] = useState<InlineSection | null>(null);
+  const anchorRef = useRef<HTMLDivElement>(null);
   const [versionsOpen, setVersionsOpen] = useState(false);
+  const [sidebarLeft, setSidebarLeft] = useState<number>(VERSIONS_PANEL_MIN_LEFT);
+
+  const [openInline, setOpenInline] = useState<InlineSection | null>(null);
   const [selectedVersionId, setSelectedVersionId] = useState<string | null>(null);
 
   const toggleInline = (s: InlineSection) => setOpenInline((cur) => (cur === s ? null : s));
@@ -78,9 +93,59 @@ export function ExpandedPanel({
     if (refineLoading) setOpenInline('refine');
   }, [refineLoading]);
 
+  /** Popup / hash deep-link：挂载时打开 AI 调整或版本侧栏一次并通知父组件清掉意图 */
+  useLayoutEffect(() => {
+    if (!initialDock) return;
+    if (initialDock === 'refine') setOpenInline('refine');
+    else if (initialDock === 'versions') setVersionsOpen(true);
+    onInitialDockConsumed?.();
+  }, [initialDock, item.id, onInitialDockConsumed]);
+
   const versionCount = item.versions?.length || 0;
   const versionsSidebarVisible = versionCount > 0 || refineLoading;
   const versionsDisplayCount = versionCount + (refineLoading ? 1 : 0);
+  const versionsListScrollable = versionsDisplayCount >= VERSIONS_SCROLL_THRESHOLD;
+
+  const updateSidebarLeft = useCallback(() => {
+    const el = anchorRef.current;
+    if (!el) return;
+    const r = el.getBoundingClientRect();
+    const vw = typeof window !== 'undefined' ? window.innerWidth : 1200;
+    const idealLeft = r.left - VERSIONS_PANEL_W - VERSIONS_PANEL_GAP;
+    let next = idealLeft;
+    if (idealLeft < VERSIONS_PANEL_MIN_LEFT) {
+      const rightDockLeft = r.right + VERSIONS_PANEL_GAP;
+      if (rightDockLeft + VERSIONS_PANEL_W <= vw - VERSIONS_PANEL_MIN_LEFT) {
+        next = rightDockLeft;
+      } else {
+        next = idealLeft;
+      }
+    }
+    setSidebarLeft(next);
+  }, []);
+
+  useLayoutEffect(() => {
+    if (!versionsSidebarVisible) return;
+    updateSidebarLeft();
+  }, [versionsSidebarVisible, updateSidebarLeft, item.id, versionsListScrollable, versionsOpen]);
+
+  useEffect(() => {
+    if (!versionsSidebarVisible) return;
+    const onWin = () => updateSidebarLeft();
+    window.addEventListener('scroll', onWin, true);
+    window.addEventListener('resize', onWin);
+    const el = anchorRef.current;
+    let ro: ResizeObserver | undefined;
+    if (el && typeof ResizeObserver !== 'undefined') {
+      ro = new ResizeObserver(() => updateSidebarLeft());
+      ro.observe(el);
+    }
+    return () => {
+      window.removeEventListener('scroll', onWin, true);
+      window.removeEventListener('resize', onWin);
+      ro?.disconnect();
+    };
+  }, [versionsSidebarVisible, updateSidebarLeft]);
 
   const editorValue = (() => {
     if (!refineLoading) return draft;
@@ -121,35 +186,52 @@ export function ExpandedPanel({
   };
 
   return (
-    <div className="border-t border-zinc-200 dark:border-zinc-800 bg-zinc-50/60 dark:bg-zinc-950/30 relative">
-      {/* 版本侧边栏：向左挂出卡片外，不遮挡编辑区 */}
-      <div
-        className="absolute right-full top-1/2 z-10 overflow-hidden rounded-l-2xl transition-all duration-300 ease-[cubic-bezier(.2,.9,.3,1)] -translate-y-1/2"
-        style={{
-          width: versionsOpen && versionsSidebarVisible ? 300 : 0,
-          height: versionsOpen && versionsSidebarVisible ? 'max(75vh, 100%)' : '100%',
-          opacity: versionsOpen && versionsSidebarVisible ? 1 : 0,
-          pointerEvents: versionsOpen && versionsSidebarVisible ? 'auto' : 'none',
-        }}
-      >
-        <div className="h-full" style={{ minWidth: 300 }}>
-          <VersionsSidebar
-            item={item}
-            editorContent={editorValue}
-            selectedVersionId={selectedVersionId}
-            refineLoading={refineLoading}
-            onSelectGeneratingRow={() => setSelectedVersionId(REFINE_STREAM_VERSION_ID)}
-            onCopy={onCopy}
-            copiedKey={copiedKey}
-            onSelectVersion={handleSelectVersion}
-            onRestoreVersion={handleRestoreVersion}
-            onDeleteVersion={handleDeleteVersion}
-            onClose={() => setVersionsOpen(false)}
-          />
-        </div>
-      </div>
+    <div
+      ref={anchorRef}
+      className="border-t border-zinc-200 dark:border-zinc-800 bg-zinc-50/60 dark:bg-zinc-950/30"
+    >
+      {versionsSidebarVisible
+        ? createPortal(
+            <div
+              className="fixed z-[20] bottom-4 w-[300px] h-[calc(100vh-2rem)] max-h-[calc(100vh-2rem)] flex flex-col justify-end pointer-events-none overflow-visible"
+              style={{ left: sidebarLeft }}
+            >
+              <div
+                className={`flex flex-col rounded-2xl border border-zinc-700/70 bg-zinc-950 text-zinc-100 overflow-hidden shadow-2xl shadow-black/40 transition-transform duration-300 ease-out ${
+                  versionsListScrollable
+                    ? 'h-full min-h-0 max-h-full'
+                    : 'h-auto max-h-full'
+                } ${versionsOpen ? 'pointer-events-auto' : 'pointer-events-none'}`}
+                style={{
+                  transform: versionsOpen
+                    ? 'translateY(0)'
+                    : `translateY(calc(100% + ${VERSIONS_PANEL_GAP}px))`,
+                }}
+                aria-hidden={!versionsOpen}
+              >
+                <VersionsSidebar
+                  item={item}
+                  editorContent={editorValue}
+                  selectedVersionId={selectedVersionId}
+                  refineLoading={refineLoading}
+                  scrollList={versionsListScrollable}
+                  onSelectGeneratingRow={() =>
+                    setSelectedVersionId(REFINE_STREAM_VERSION_ID)
+                  }
+                  onCopy={onCopy}
+                  copiedKey={copiedKey}
+                  onSelectVersion={handleSelectVersion}
+                  onRestoreVersion={handleRestoreVersion}
+                  onDeleteVersion={handleDeleteVersion}
+                  onClose={() => setVersionsOpen(false)}
+                />
+              </div>
+            </div>,
+            document.body
+          )
+        : null}
 
-      {/* 主编辑区：宽度始终不变 */}
+      {/* 主编辑区：宽度始终不变（历史侧栏经 portal 固定定位，不挤压布局） */}
       <div className="px-4 py-3 space-y-3">
         {/* 编辑器 textarea */}
         <div>

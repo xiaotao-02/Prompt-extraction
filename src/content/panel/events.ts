@@ -26,6 +26,7 @@ import {
 } from './geometry';
 import { buildVersionsListInnerHtml, loadingEditorDisplayedText, successEditorDisplayedText } from './templates';
 import { EXTRACT_STREAM_VERSION_ID, REFINE_STREAM_VERSION_ID } from '@/lib/refineStreamVersion';
+import { openInPanelMessage, openOptionsMessage } from '@/lib/messaging/openSurfaces';
 
 function renderPanel(...args: Parameters<typeof panelActions.renderPanel>) {
   return panelActions.renderPanel(...args);
@@ -442,7 +443,7 @@ function handleDataAction(root: HTMLElement, el: HTMLElement, event: MouseEvent)
   }
   if (action === 'open-options') {
     if (!isExtensionContextValid()) return;
-    safeSendMessage({ type: 'OPEN_OPTIONS' });
+    safeSendMessage(openOptionsMessage());
     return;
   }
   if (action === 'open-in-panel') {
@@ -453,10 +454,7 @@ function handleDataAction(root: HTMLElement, el: HTMLElement, event: MouseEvent)
     if (!btn || btn.disabled) return;
     openInPanelBusy = true;
     btn.disabled = true;
-    const msg: RuntimeMessage = {
-      type: 'OPEN_IN_PANEL',
-      payload: { historyId: state.requestId },
-    };
+    const msg = openInPanelMessage(state.requestId);
     safeSendMessage(msg, (raw) => {
       openInPanelBusy = false;
       if (btn.isConnected) btn.disabled = false;
@@ -478,10 +476,10 @@ function handleDataAction(root: HTMLElement, el: HTMLElement, event: MouseEvent)
   }
   if (action === 'open-in-library') {
     if (!isExtensionContextValid()) return;
-    safeSendMessage({
-      type: 'OPEN_OPTIONS',
-      payload: { tab: 'library', focusId: state.requestId },
-    });
+    safeSendMessage(
+      openOptionsMessage({ tab: 'library', focusId: state.requestId }),
+      () => void chrome.runtime.lastError
+    );
     return;
   }
   if (action === 'toggle-versions') {

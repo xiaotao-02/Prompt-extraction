@@ -1,7 +1,7 @@
 # Privacy Policy / 隐私政策
 
 > 适用产品 / Applies to: **Prompt Extracto** Chrome 浏览器扩展
-> 最近更新 / Last updated: 2026-05-14
+> 最近更新 / Last updated: 2026-05-15
 > 联系方式 / Contact: xiaotao666.1@gmail.com
 
 ---
@@ -64,9 +64,10 @@ GET https://api.github.com/repos/xiaotao-02/Prompt-extraction/releases/latest
 |---|---|
 | `contextMenus` | 在你右键图片 / 视频 / 动图时显示「提取提示词」菜单 |
 | `storage` | 本地保存 API Key、偏好、历史记录 |
-| `scripting` + `activeTab` | 在你点击右键菜单后向当前标签页注入"结果浮动面板" |
-| `clipboardWrite` | 你点「复制」时把提示词写入剪贴板 |
-| `host_permissions: <all_urls>` | 因为你可能在任何网站上对图片右键，所以必须能注入到任何网页；**不会主动扫描或上传任何网页内容** |
+| `scripting` + `activeTab` | 在需要时由后台向当前标签页程序化注入扩展内容脚本（例如兜底注入）；声明式内容脚本还会随页面在 `document_idle` 轻量加载，用于右键探测与消息。**可见的结果浮动面板仅在用户发起「提取提示词」等操作后出现**，不会在每次打开页面时自动展示 |
+| `clipboardWrite` | 你点「复制」时把提示词等文本写入剪贴板（含面板、弹窗、设置/库中的复制操作） |
+| `clipboardRead` | 仅在「设置 → 配置指南」中，当你点击「从剪贴板粘贴」时读取剪贴板文本；**不会在后台或网页里静默读取** |
+| `host_permissions: <all_urls>` | 支持在任意站点使用右键与页内能力；声明式脚本随页加载仅用于监听与消息，**不会像爬虫一样上传整页内容**；仅在您操作后才会读取/发送您所指的那一张图相关的数据 |
 
 ### 六、儿童隐私
 
@@ -145,9 +146,10 @@ It reads only the latest version number and release notes. No API key, image, or
 |---|---|
 | `contextMenus` | Add "Extract Prompt" item to right-click menu on images / videos / animations |
 | `storage` | Save API keys, preferences and history locally |
-| `scripting` + `activeTab` | Inject the floating result panel into the current tab after the user clicks the menu item |
-| `clipboardWrite` | Copy generated prompts to clipboard when the user clicks "Copy" |
-| `host_permissions: <all_urls>` | Required because the user may right-click an image on any website. The extension does NOT actively scan or upload any page content |
+| `scripting` + `activeTab` | Programmatic injection when needed (fallback), plus a lightweight declarative content script at `document_idle` for right-click preparation and messaging. The visible floating result panel appears only after the user starts extraction, not on every page load |
+| `clipboardWrite` | Write prompts or selected text to the clipboard when the user clicks a copy control (panel, popup, options / library) |
+| `clipboardRead` | Read clipboard text only when the user explicitly asks to paste a JSON configuration from the clipboard in Settings → Setup guide |
+| `host_permissions: <all_urls>` | The user may use the extension on any website; content scripts may load with the page for listeners/messaging, but page-wide scraping or non-targeted upload is not performed |
 
 ### 6. Children's privacy
 
