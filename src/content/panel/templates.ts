@@ -14,7 +14,7 @@ import {
   parseRefineJobSentinel,
 } from '@/lib/refineStreamVersion';
 import { getVersionOrdinalLabel } from '@/lib/versionLabel';
-import { STRATEGY_LABELS, type StrategyId } from '@/lib/strategies-meta';
+import { DEFAULT_STRATEGY_ID, STRATEGY_LABELS, type StrategyId } from '@/lib/strategies-meta';
 import type { PanelState, PanelRefineJob } from './state';
 import {
   panelExtractJobs,
@@ -90,11 +90,11 @@ function formatTime(t: number): string {
  */
 function strategySelectHtml(currentStrategy: StrategyId | undefined): string {
   const entries = Object.entries(STRATEGY_LABELS) as [StrategyId, string][];
-  const currentLabel =
-    (currentStrategy && STRATEGY_LABELS[currentStrategy]) || entries[0]?.[1] || '';
+  const effectiveStrategy = currentStrategy ?? DEFAULT_STRATEGY_ID;
+  const currentLabel = STRATEGY_LABELS[effectiveStrategy] ?? '';
   const items = entries
     .map(([id, label]) => {
-      const active = id === currentStrategy ? ' active' : '';
+      const active = id === effectiveStrategy ? ' active' : '';
       return `<li class="sd-item${active}" data-strategy="${escapeAttr(id)}">${escapeText(label)}</li>`;
     })
     .join('');

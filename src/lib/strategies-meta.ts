@@ -203,13 +203,12 @@ export type StrategyId = keyof typeof STRATEGIES_INTERNAL;
 export const STRATEGIES: Readonly<Record<StrategyId, StrategyDefinition>> = STRATEGIES_INTERNAL;
 
 /**
- * 新装用户的缺省策略。
+ * 新装用户的缺省策略（当前为 v0.3.5 / `v035`）。
  *
- * classic 是历史最久的行为基线，覆盖 v0.1.0 ~ v0.1.6 的原始输出感。
- * 旧用户 settings 里如果存了已删除的 'v010' / 'v016'，getStrategy() 会
- * 自动回退到此档。
+ * `getStrategy()` 在 id 缺失、未知或已下线（如老用户存的 'v010' / 'v016'）时
+ * 也会回退到此档。偏好经典（v0.1.x）行为的用户可在设置中手动选择「经典策略」。
  */
-export const DEFAULT_STRATEGY_ID: StrategyId = 'classic';
+export const DEFAULT_STRATEGY_ID: StrategyId = 'v035';
 
 /**
  * 轻量 id → label 映射。**只读 STRATEGIES 的 label 字段**，不依赖 STYLE_PROMPT_SETS
