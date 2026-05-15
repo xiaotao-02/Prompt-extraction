@@ -1,11 +1,16 @@
 /**
- * 浮动面板对外的 3 个公开 API：renderPanel / updatePanel / closePanel。
- * 这是 src/content/index.ts 唯一引用到的入口。
+ * 浮动面板对外的入口：renderPanel / extract & refine 流式补丁 / closePanel。
  */
 import { STYLE } from './styles';
-import type { OneClickRewriteRandomness, PromptVersion, StrategyId } from '@/lib/types';
+import type {
+  ExtractStage,
+  OneClickRewriteRandomness,
+  PromptVersion,
+  RefineStage,
+  StrategyId,
+} from '@/lib/types';
+import { parseExtractJobSentinel, extractStreamSentinelForJob } from '@/lib/refineStreamVersion';
 import { normalizeReferenceList, appendReferenceUrl } from '@/lib/referenceImages';
-import { EXTRACT_STREAM_VERSION_ID } from '@/lib/refineStreamVersion';
 import {
   HOST_ID,
   host,
@@ -19,6 +24,12 @@ import {
   panelActions,
   type PanelState,
   panelReferenceUrls,
+  libraryStorageId,
+  matchesExtractStreamRequest,
+  panelExtractJobs,
+  panelHasActiveRefine,
+  panelRefineJobs,
+  type PanelRefineJob,
 } from './state';
 import {
   manageLoadingTicker,
@@ -182,7 +193,7 @@ export function appendReferenceFromBackground(imageUrl: string): void {
   const url = (imageUrl || '').trim();
   if (!url) return;
   const cur = currentState;
-  if (cur?.status === 'loading') {
+  if (!cur || cur.status === 'loading' || panelExtractJobs(cur).length > 0) {
     console.debug('[PromptExtracto] skip PANEL_APPEND_REFERENCE during loading');
     return;
   }
@@ -229,8 +240,7 @@ export function appendReferenceFromBackground(imageUrl: string): void {
 }
 
 /**
- * 处理 EXTRACT_PENDING：同 requestId 的续跑（如面板内「重新生成」）需合并现有状态，
- * 保留历史版本列表与侧栏展开态；否则最小状态会清空 versions，`历史版本 · 0` 且侧栏 DOM 丢失。
+ * 处理 EXTRACT_PENDING：续跑合并状态；并行任务用 extractJobs[].streamRequestId 对齐。
  */
 export function renderPanelForExtractPending(payload: {
   requestId: string;
@@ -244,14 +254,35 @@ export function renderPanelForExtractPending(payload: {
   );
   const primary = urls[0] || payload.imageUrl;
   const prev = currentState;
-  if (prev != null && prev.requestId === payload.requestId) {
+  const sid = payload.requestId;
+
+  if (prev != null && matchesExtractStreamRequest(prev, sid)) {
+    const ej = panelExtractJobs(prev).map((j) =>
+      j.streamRequestId === sid
+        ? { ...j, startedAt: Date.now(), stage: 'calling' as const, partial: undefined }
+        : j
+    );
+    renderPanel({
+      ...prev,
+      imageUrl: primary,
+      imageUrls: urls,
+      extractJobs: ej,
+      strategy: payload.strategy ?? prev.strategy,
+      rewriteRandomness: payload.rewriteRandomness ?? prev.rewriteRandomness,
+      linkedHistoryId: undefined,
+    });
+    return;
+  }
+
+  if (prev != null && prev.requestId === sid) {
     const versions = prev.versions || [];
     const hasHistory = versions.length > 0;
     renderPanel({
       ...prev,
-      requestId: payload.requestId,
+      requestId: sid,
       imageUrl: primary,
       imageUrls: urls,
+      extractJobs: [{ streamRequestId: sid, startedAt: Date.now() }],
       status: 'loading',
       stage: 'calling',
       startedAt: Date.now(),
@@ -260,23 +291,21 @@ export function renderPanelForExtractPending(payload: {
       prompt: undefined,
       error: undefined,
       draft: undefined,
-      selectedVersionId: hasHistory ? EXTRACT_STREAM_VERSION_ID : undefined,
+      selectedVersionId: hasHistory ? extractStreamSentinelForJob(sid) : undefined,
       extractBaselinePrompt: undefined,
       partial: undefined,
-      refineLoading: false,
+      refineJobs: undefined,
       refineError: undefined,
-      refinePartial: undefined,
-      refineBaselinePrompt: undefined,
-      refineStage: undefined,
-      refineStartedAt: undefined,
       linkedHistoryId: undefined,
     });
     return;
   }
+
   renderPanel({
-    requestId: payload.requestId,
+    requestId: sid,
     imageUrl: primary,
     imageUrls: urls,
+    extractJobs: [{ streamRequestId: sid, startedAt: Date.now() }],
     status: 'loading',
     stage: 'calling',
     startedAt: Date.now(),
@@ -286,20 +315,50 @@ export function renderPanelForExtractPending(payload: {
   });
 }
 
-export function updatePanel(requestId: string, patch: Partial<PanelState>): void {
-  if (!currentState || currentState.requestId !== requestId) return;
-  const prev = currentState;
-  const merged = { ...prev, ...patch } as PanelState;
-  setCurrentState(merged);
+export function applyExtractStreamProgress(
+  streamRequestId: string,
+  patch: {
+    stage?: ExtractStage;
+    partial?: string;
+    strategy?: StrategyId;
+    provider?: string;
+    model?: string;
+    rewriteRandomness?: OneClickRewriteRandomness;
+  }
+): void {
+  const cur = currentState;
+  if (!cur) return;
 
-  if (patch.status === 'success' && !prev.linkedHistoryId) {
-    void syncVersions(requestId);
+  const ej = [...panelExtractJobs(cur)];
+  const ix = ej.findIndex((j) => j.streamRequestId === streamRequestId);
+  let merged: PanelState;
+
+  if (ix >= 0) {
+    ej[ix] = {
+      ...ej[ix]!,
+      ...(patch.stage !== undefined ? { stage: patch.stage } : {}),
+      ...(patch.partial !== undefined ? { partial: patch.partial } : {}),
+    };
+    merged = { ...cur, extractJobs: ej };
+  } else if (cur.status === 'loading' && cur.requestId === streamRequestId) {
+    merged = {
+      ...cur,
+      ...(patch.stage !== undefined ? { stage: patch.stage } : {}),
+      ...(patch.partial !== undefined ? { partial: patch.partial } : {}),
+    };
+  } else {
+    return;
   }
 
-  const lightUpdate =
-    prev.status === 'loading' &&
+  if (patch.strategy !== undefined) merged.strategy = patch.strategy;
+  if (patch.provider !== undefined) merged.provider = patch.provider;
+  if (patch.model !== undefined) merged.model = patch.model;
+  if (patch.rewriteRandomness !== undefined) merged.rewriteRandomness = patch.rewriteRandomness;
+
+  setCurrentState(merged);
+
+  const lightExtract =
     merged.status === 'loading' &&
-    patch.status === undefined &&
     (patch.stage !== undefined ||
       patch.partial !== undefined ||
       patch.strategy !== undefined ||
@@ -307,23 +366,139 @@ export function updatePanel(requestId: string, patch: Partial<PanelState>): void
       patch.model !== undefined ||
       patch.rewriteRandomness !== undefined);
 
-  if (lightUpdate && panel) {
+  if (lightExtract && panel) {
     applyLoadingPatch(merged);
     manageLoadingTicker(merged);
     manageLoadingStallWatchdog(merged);
     return;
   }
 
-  // refine 阶段的轻量刷新：refineLoading 期间的 stage / partial 增量只更新
-  // 进度条 + hint + 流式 textarea，不重渲整面板，避免主 editor textarea 失焦
-  // 和历史版本列表回滚到顶部。
+  if (merged.status === 'success' && panelExtractJobs(merged).length > 0) {
+    renderPanel(merged);
+    return;
+  }
+
+  renderPanel(merged);
+}
+
+export function applyExtractStreamResult(
+  streamRequestId: string,
+  result: {
+    prompt: string;
+    provider?: string;
+    model?: string;
+  }
+): void {
+  const cur = currentState;
+  if (!cur) return;
+
+  const prevEj = panelExtractJobs(cur);
+  const ej = prevEj.filter((j) => j.streamRequestId !== streamRequestId);
+  const wasTracked = prevEj.some((j) => j.streamRequestId === streamRequestId);
+  const legacyMatch =
+    cur.status === 'loading' && cur.requestId === streamRequestId && prevEj.length === 0;
+
+  if (!wasTracked && !legacyMatch) return;
+
+  let nextSel = cur.selectedVersionId;
+  if (
+    nextSel === extractStreamSentinelForJob(streamRequestId) ||
+    parseExtractJobSentinel(nextSel ?? undefined) === streamRequestId
+  ) {
+    nextSel = undefined;
+  }
+
+  const merged: PanelState = {
+    ...cur,
+    extractJobs: ej.length ? ej : undefined,
+    partial: undefined,
+    stage: undefined,
+    extractBaselinePrompt: undefined,
+    prompt: result.prompt,
+    draft: result.prompt,
+    provider: result.provider ?? cur.provider,
+    model: result.model ?? cur.model,
+    status: 'success',
+    error: undefined,
+    linkedHistoryId: undefined,
+    selectedVersionId: nextSel,
+  };
+
+  setCurrentState(merged);
+
+  const shouldSync = !cur.linkedHistoryId && cur.status === 'loading';
+  if (shouldSync) void syncVersions();
+
+  renderPanel(currentState!);
+}
+
+export function applyExtractStreamError(streamRequestId: string, error: string): void {
+  const cur = currentState;
+  if (!cur) return;
+
+  const prevEj = panelExtractJobs(cur);
+  const ej = prevEj.filter((j) => j.streamRequestId !== streamRequestId);
+  const wasTracked = prevEj.some((j) => j.streamRequestId === streamRequestId);
+  const legacyMatch =
+    cur.status === 'loading' && cur.requestId === streamRequestId && prevEj.length === 0;
+
+  if (!wasTracked && !legacyMatch) return;
+
+  let merged: PanelState = {
+    ...cur,
+    extractJobs: ej.length ? ej : undefined,
+    partial: undefined,
+    stage: undefined,
+  };
+
+  if (
+    merged.status === 'loading' &&
+    panelExtractJobs(merged).length === 0 &&
+    !(merged.prompt ?? '').trim()
+  ) {
+    merged = { ...merged, status: 'error', error };
+  }
+
+  setCurrentState(merged);
+  renderPanel(merged);
+}
+
+export function patchRefineProgress(payload: {
+  historyId: string;
+  refineJobId?: string;
+  stage?: RefineStage;
+  partial?: string;
+}): void {
+  const cur = currentState;
+  if (!cur || libraryStorageId(cur) !== payload.historyId) return;
+
+  const jobs = [...panelRefineJobs(cur)];
+  if (jobs.length === 0) return;
+
+  const patchJob = (j: PanelRefineJob): PanelRefineJob => ({
+    ...j,
+    ...(payload.stage !== undefined ? { stage: payload.stage } : {}),
+    ...(payload.partial !== undefined ? { partial: payload.partial } : {}),
+  });
+
+  let nextJobs: PanelRefineJob[];
+  if (payload.refineJobId) {
+    const ix = jobs.findIndex((x) => x.jobId === payload.refineJobId);
+    if (ix < 0) return;
+    nextJobs = jobs.map((j, i) => (i === ix ? patchJob(j) : j));
+  } else if (jobs.length === 1) {
+    nextJobs = [patchJob(jobs[0]!)];
+  } else {
+    return;
+  }
+
+  const merged = { ...cur, refineJobs: nextJobs };
+  setCurrentState(merged);
+
   const refineLightUpdate =
-    prev.status === 'success' &&
     merged.status === 'success' &&
-    patch.status === undefined &&
-    prev.refineLoading === true &&
-    merged.refineLoading === true &&
-    (patch.refineStage !== undefined || patch.refinePartial !== undefined);
+    panelHasActiveRefine(merged) &&
+    (payload.stage !== undefined || payload.partial !== undefined);
 
   if (refineLightUpdate && panel) {
     applyRefinePatch(merged);
@@ -344,31 +519,24 @@ export function applyHistoryPrefetch(
     prompt: string;
   },
 ): void {
-  if (!currentState || currentState.requestId !== requestId) return;
+  const cur = currentState;
+  if (!cur || (cur.requestId !== requestId && !matchesExtractStreamRequest(cur, requestId))) return;
+
   const hasHistory = payload.versions.length > 0;
   setCurrentState({
-    ...currentState,
+    ...cur,
     linkedHistoryId: payload.storageId,
     versions: payload.versions,
     selectedVersionId:
-      currentState.status === 'loading' && hasHistory
-        ? EXTRACT_STREAM_VERSION_ID
-        : currentState.selectedVersionId,
+      cur.status === 'loading' && hasHistory
+        ? extractStreamSentinelForJob(requestId)
+        : cur.selectedVersionId,
   });
   patchVersionList();
 }
 
 /**
- * Background 端 `persistHistory` 完成后通过 HISTORY_READY 调过来。
- *
- * 关键作用：当用户对**同一张图**反复反推时，addHistory 会把新结果合并到旧记录上，
- * storage 里真实存在的 id 仍是旧的 existing.id，但 background 当时是用一个新生成的
- * requestId 发的 EXTRACT_RESULT，content 持有的 currentState.requestId 是 storage
- * 里根本不存在的 id —— 后续 save / restore / syncVersions 全部 findIndex<0 静默失败，
- * 表现为「编辑保存后历史版本没更新」。
- *
- * 这里收到通知后直接把 currentState.requestId 切到 actualId，并把版本数组填好。
- * panel 本身不需要重建，只是改一下 state + 重渲染。
+ * Background 端 persistHistory 完成后：对齐 storage id，并从并行队列移除已完成反推。
  */
 export function applyHistoryReady(
   requestId: string,
@@ -376,12 +544,27 @@ export function applyHistoryReady(
   versions: PromptVersion[],
   prompt: string
 ): void {
-  if (!currentState || currentState.requestId !== requestId) return;
-  // 用户已经在编辑了就保留 draft；没编辑时 draft 跟着真实 prompt 走。
-  // currentState.prompt 一般已经被 EXTRACT_RESULT 设过，但拿不到时用落库的 prompt 兜底。
-  const nextDraft = currentState.draft ?? prompt;
-  const nextPrompt = currentState.prompt ?? prompt;
-  let nextSel = currentState.selectedVersionId;
+  const cur = currentState;
+  if (!cur) return;
+
+  const hitStream = matchesExtractStreamRequest(cur, requestId);
+  if (!hitStream && cur.requestId !== requestId) return;
+
+  const nextEj = hitStream
+    ? panelExtractJobs(cur).filter((j) => j.streamRequestId !== requestId)
+    : panelExtractJobs(cur);
+
+  const nextRequestId = cur.requestId === requestId ? actualId : cur.requestId;
+
+  const nextDraft = cur.draft ?? prompt;
+  const nextPrompt = cur.prompt ?? prompt;
+  let nextSel = cur.selectedVersionId;
+  if (
+    nextSel === extractStreamSentinelForJob(requestId) ||
+    parseExtractJobSentinel(nextSel ?? undefined) === requestId
+  ) {
+    nextSel = undefined;
+  }
   if (nextSel && !versions.some((v) => v.id === nextSel)) {
     nextSel = undefined;
   }
@@ -391,14 +574,16 @@ export function applyHistoryReady(
         ? versions[0]?.id
         : versions.find((v) => v.prompt === nextDraft)?.id;
   }
+
   setCurrentState({
-    ...currentState,
-    requestId: actualId,
+    ...cur,
+    requestId: nextRequestId,
     linkedHistoryId: undefined,
     versions,
     prompt: nextPrompt,
     draft: nextDraft,
     selectedVersionId: nextSel,
+    extractJobs: nextEj.length ? nextEj : undefined,
   });
   renderPanel(currentState!);
 }

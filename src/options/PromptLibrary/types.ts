@@ -4,6 +4,21 @@ export type ViewMode = 'list' | 'grid';
 export type LibraryDockIntent = null | 'refine' | 'versions';
 export type ExpandedTab = 'editor' | 'versions' | 'refine' | 'meta';
 
+/** 选项页提示词库并行 REFINE（一键洗稿 / 应用调整）单条任务 */
+export type LibraryRefineJobKind = 'rewrite' | 'refine';
+
+export type LibraryRefineJob = {
+  jobId: string;
+  kind: LibraryRefineJobKind;
+  /** 发起时基线正文，流式首 token 前回落用 */
+  baselinePrompt: string;
+  instruction: string;
+  partial?: string;
+};
+
+/** 同一展开条内并行 REFINE 上限 */
+export const MAX_PARALLEL_LIBRARY_REFINES = 8;
+
 export const REFINE_SUGGESTIONS = [
   '翻译成英文',
   '翻译成中文',

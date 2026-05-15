@@ -14,7 +14,11 @@ import { ensureLibraryReady } from '@/lib/storage/history';
 import { getByDedupeKey, naturalDedupeKey, toPublicHistory } from '@/lib/storage/historyDb';
 import type { HistoryItem, RefineResponse, RuntimeMessage, StrategyId, UpdateCheckResult } from '@/lib/types';
 import { normalizeReferenceList } from '@/lib/referenceImages';
-import { PROMPT_EXTRACTO_KEEPALIVE_PORT } from '@/lib/keepalivePort';
+import {
+  type CtxMenuPrepPayload,
+  KEEPALIVE_PORT_PREP_KIND,
+  PROMPT_EXTRACTO_KEEPALIVE_PORT,
+} from '@/lib/keepalivePort';
 import { DEFAULT_FEED_URL, getCurrentVersion, performUpdateCheck } from '@/lib/updater';
 
 /** 原生 image/video 上下文：立刻按当前图反推 */
@@ -27,10 +31,61 @@ const MENU_FALLBACK_DIRECT = 'extract-image-prompt-fb-direct';
 const MENU_FALLBACK_ADD = 'extract-image-prompt-fb-add';
 
 /**
- * 最近一次内容脚本探测到的"鼠标位置图片"。每个 tab 一份，避免不同
- * 标签页相互覆盖。fallback 菜单点击时从这里取 URL。
+ * 内容脚本 contextmenu 写入的「本轮首选提取 URL」（含视频 JPEG、遮罩图 URL 等）。
+ * 原生菜单点击时若在 TTL 内可优先于 `info.srcUrl`；兜底菜单点击后消费并删除。
  */
-const pendingFallbackImage = new Map<number, { imageUrl: string; at: number }>();
+const pendingTabExtract = new Map<number, { imageUrl: string; at: number }>();
+
+/** 与最近一次右键 prep 对齐；过期后不再覆盖 Chrome 提供的 srcUrl */
+const NATIVE_PREP_TTL_MS = 10_000;
+
+/** 同一 dedupe 图并行反推落库时串行化 addHistory，避免读改写竞态丢版本 */
+const persistHistoryTailByKey = new Map<string, Promise<HistoryItem | undefined>>();
+
+function applyCtxMenuPrep(tabId: number, payload: CtxMenuPrepPayload): void {
+  const { extractionUrl, showFallback } = payload;
+  if (extractionUrl) {
+    pendingTabExtract.set(tabId, { imageUrl: extractionUrl, at: Date.now() });
+  } else {
+    pendingTabExtract.delete(tabId);
+  }
+  const showItems = showFallback && !!extractionUrl;
+  chrome.contextMenus.update(MENU_FALLBACK_DIRECT, { visible: showItems }, () => {
+    void chrome.runtime.lastError;
+  });
+  chrome.contextMenus.update(MENU_FALLBACK_ADD, { visible: showItems }, () => {
+    void chrome.runtime.lastError;
+  });
+}
+
+function peekFreshPendingExtract(tabId: number): string | undefined {
+  const row = pendingTabExtract.get(tabId);
+  if (!row) return;
+  if (Date.now() - row.at > NATIVE_PREP_TTL_MS) return;
+  return row.imageUrl;
+}
+
+function looksLikeVideoMenuSrcUrl(url: string | undefined): boolean {
+  if (!url) return false;
+  const u = url.trim();
+  if (u.startsWith('blob:')) return true;
+  if (u.startsWith('data:video/')) return true;
+  const head = u.split(/[?#]/)[0]?.toLowerCase() ?? '';
+  if (/\.(m3u8|mp4|webm|m4v|mov|mkv|ogv|m4p)(\s*$)/i.test(head)) return true;
+  return /^https?:\/\/[^/]+\/[^?#]*\.(mp4|webm|m3u8)($|[?#])/i.test(u);
+}
+
+/**
+ * 原生 image/video 上下文：优先用右键 prep 缓存（视频 JPEG / poster），其次 `info.srcUrl`。
+ */
+function resolveUrlForNativeContextMenu(tabId: number, srcUrl: string | undefined): string {
+  const pending = peekFreshPendingExtract(tabId)?.trim();
+  if (pending) {
+    if (pending.startsWith('data:image/jpeg')) return pending;
+    if (looksLikeVideoMenuSrcUrl(srcUrl)) return pending;
+  }
+  return srcUrl || '';
+}
 
 /** 各标签页内若干 frame 各自 connect；仅存引用便于 disconnect 时清理，不参与业务逻辑。 */
 const keepalivePortsByTab = new Map<number, Set<chrome.runtime.Port>>();
@@ -66,6 +121,18 @@ function registerKeepalivePort(port: chrome.runtime.Port): void {
 chrome.runtime.onConnect.addListener((port) => {
   if (port.name !== PROMPT_EXTRACTO_KEEPALIVE_PORT) return;
   registerKeepalivePort(port);
+
+  port.onMessage.addListener((msg: unknown) => {
+    if (!msg || typeof msg !== 'object') return;
+    const m = msg as { kind?: string; payload?: unknown };
+    if (m.kind !== KEEPALIVE_PORT_PREP_KIND) return;
+    const tabId = port.sender?.tab?.id;
+    if (tabId == null) return;
+    const p = m.payload as { extractionUrl?: unknown; showFallback?: unknown };
+    const extractionUrl = typeof p.extractionUrl === 'string' ? p.extractionUrl : '';
+    const showFallback = p.showFallback === true;
+    applyCtxMenuPrep(tabId, { extractionUrl, showFallback });
+  });
 });
 
 function ensureContextMenus(): void {
@@ -129,7 +196,7 @@ chrome.runtime.onStartup.addListener(() => {
 
 // 标签关闭时清理待处理的 fallback 图片缓存
 chrome.tabs?.onRemoved.addListener((tabId) => {
-  pendingFallbackImage.delete(tabId);
+  pendingTabExtract.delete(tabId);
 });
 
 function hideFallbackContextMenus(): void {
@@ -145,7 +212,7 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
   if (!tab?.id) return;
 
   if (info.menuItemId === MENU_ID_DIRECT) {
-    const imageUrl = info.srcUrl;
+    const imageUrl = resolveUrlForNativeContextMenu(tab.id, info.srcUrl);
     if (!imageUrl) return;
     await runExtraction({
       tabId: tab.id,
@@ -157,15 +224,15 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
   }
 
   if (info.menuItemId === MENU_ID_ADD_REF) {
-    const imageUrl = info.srcUrl;
+    const imageUrl = resolveUrlForNativeContextMenu(tab.id, info.srcUrl);
     if (!imageUrl) return;
     postToTab(tab.id, { type: 'PANEL_APPEND_REFERENCE', payload: { imageUrl } });
     return;
   }
 
   if (info.menuItemId === MENU_FALLBACK_DIRECT || info.menuItemId === MENU_FALLBACK_ADD) {
-    const cached = pendingFallbackImage.get(tab.id);
-    pendingFallbackImage.delete(tab.id);
+    const cached = pendingTabExtract.get(tab.id);
+    pendingTabExtract.delete(tab.id);
     hideFallbackContextMenus();
     const imageUrl = cached?.imageUrl || info.srcUrl || info.linkUrl || '';
     if (!imageUrl) return;
@@ -185,11 +252,16 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message?.type === 'OPEN_OPTIONS') {
-    const { tab, focusId, dock } = (message.payload || {}) as {
+    const raw = (message.payload || {}) as {
       tab?: 'settings' | 'library';
       focusId?: string;
       dock?: 'refine' | 'versions';
     };
+    let { tab, focusId, dock } = raw;
+    // 仅有 focus、漏传 tab 时也要能进提示词库（与其它入口深链一致）
+    if (focusId && tab == null) {
+      tab = 'library';
+    }
     // 没有 deep-link 参数时直接走原生 API，保留默认行为
     if (!tab && !focusId) {
       chrome.runtime.openOptionsPage();
@@ -305,14 +377,14 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true;
   }
   if (message?.type === 'REFINE_PROMPT') {
-    const { historyId, instruction, current } = message.payload || {};
+    const { historyId, instruction, current, refineJobId } = message.payload || {};
     if (!historyId || !instruction || typeof current !== 'string') {
       sendResponse({ ok: false, error: '参数缺失' } satisfies RefineResponse);
       return true;
     }
     // sender.tab?.id 仅在 content script 浮动面板发起时存在；popup / options
     // 没有 tab，progress 直接 fire-and-forget 丢弃即可。
-    runRefine(historyId, current, instruction, sender.tab?.id)
+    runRefine(historyId, current, instruction, sender.tab?.id, refineJobId)
       .then((res) => sendResponse(res))
       .catch((e) => {
         sendResponse({
@@ -324,24 +396,11 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
   if (message?.type === 'CTX_MENU_PREP') {
     const tabId = sender.tab?.id;
-    const imageUrl: string = message.payload?.imageUrl || '';
-    if (tabId) {
-      if (imageUrl) {
-        pendingFallbackImage.set(tabId, { imageUrl, at: Date.now() });
-      } else {
-        pendingFallbackImage.delete(tabId);
-      }
-      // 只在"原生 image 上下文未命中"时才需要兜底菜单。
-      // 如果是原生 <img>，Chrome 会同时显示 image/video 上下文下的「直接生成 / 添加到参考」，
-      // 这里再显示 fallback 就会重复 —— 所以内容脚本只在非原生场景才
-      // 发送非空 imageUrl，下面只需老实根据 imageUrl 是否存在切换 visible。
-      const vis = !!imageUrl;
-      chrome.contextMenus.update(MENU_FALLBACK_DIRECT, { visible: vis }, () => {
-        void chrome.runtime.lastError;
-      });
-      chrome.contextMenus.update(MENU_FALLBACK_ADD, { visible: vis }, () => {
-        void chrome.runtime.lastError;
-      });
+    const raw = message.payload as { extractionUrl?: unknown; showFallback?: unknown } | undefined;
+    if (tabId != null) {
+      const extractionUrl = typeof raw?.extractionUrl === 'string' ? raw.extractionUrl : '';
+      const showFallback = raw?.showFallback === true;
+      applyCtxMenuPrep(tabId, { extractionUrl, showFallback });
     }
     sendResponse({ ok: true });
     return true;
@@ -712,7 +771,12 @@ async function persistHistory(params: {
         },
       ],
     };
-    return await addHistory(item);
+    const dedupeKey = naturalDedupeKey(item);
+    const queueKey = dedupeKey || params.requestId;
+    const prev = persistHistoryTailByKey.get(queueKey) ?? Promise.resolve(undefined);
+    const mine = prev.catch(() => undefined).then(() => addHistory(item));
+    persistHistoryTailByKey.set(queueKey, mine);
+    return await mine;
   } catch (err) {
     console.debug('[PromptExtracto] persist history failed', err);
     return undefined;
@@ -723,7 +787,8 @@ async function runRefine(
   historyId: string,
   current: string,
   instruction: string,
-  tabId?: number
+  tabId?: number,
+  refineJobId?: string
 ): Promise<RefineResponse> {
   try {
     const settings = await getSettings();
@@ -733,7 +798,13 @@ async function runRefine(
       stage: 'calling' | 'streaming';
       partial?: string;
     }) => {
-      const payload = { historyId, stage: ev.stage, partial: ev.partial };
+      const payload: {
+        historyId: string;
+        refineJobId?: string;
+        stage?: typeof ev.stage;
+        partial?: string;
+      } = { historyId, stage: ev.stage, partial: ev.partial };
+      if (refineJobId) payload.refineJobId = refineJobId;
       if (tabId != null) {
         postToTab(tabId, { type: 'REFINE_PROGRESS', payload });
         return;
@@ -764,6 +835,7 @@ async function runRefine(
       provider: result.provider,
       model: result.model,
       versionId,
+      ...(refineJobId ? { refineJobId } : {}),
     };
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);

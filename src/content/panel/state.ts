@@ -16,6 +16,29 @@ import type {
   RefineStage,
   StrategyId,
 } from '@/lib/types';
+import { parseRefineJobSentinel } from '@/lib/refineStreamVersion';
+
+/** 浮动面板并行「一键洗稿 / AI 调整」任务 */
+export interface PanelRefineJob {
+  jobId: string;
+  kind: 'rewrite' | 'refine';
+  stage?: RefineStage;
+  partial?: string;
+  startedAt: number;
+  refineBaselinePrompt: string;
+  refineInstructionSnapshot?: string;
+}
+
+/** 浮动面板并行「重新生成」反推任务 */
+export interface PanelExtractJob {
+  streamRequestId: string;
+  stage?: ExtractStage;
+  partial?: string;
+  startedAt: number;
+}
+
+export const MAX_PARALLEL_PANEL_REFINES = 8;
+export const MAX_PARALLEL_PANEL_EXTRACTS = 8;
 
 export interface PanelState {
   /** 本次会话用于路由 EXTRACT_* 消息的 id；同图合并后可能与库 id 不同，见 {@link linkedHistoryId}。 */
@@ -47,26 +70,14 @@ export interface PanelState {
   selectedVersionId?: string;
   /** 是否展开"AI 调整"输入区 */
   refineOpen?: boolean;
-  /** 调整中 */
-  refineLoading?: boolean;
-  /** 调整失败信息 */
+  /** 并行 AI 调整 / 一键洗稿任务 */
+  refineJobs?: PanelRefineJob[];
+  /** 并行重新生成（反推）任务 */
+  extractJobs?: PanelExtractJob[];
+  /** 调整失败信息（并行时记录最近一次失败文案） */
   refineError?: string;
   /** AI 调整输入框的内容（不在每次按键重渲染，仅在重新渲染时回填） */
   refineInstruction?: string;
-  /**
-   * AI 调整流式进度：当前阶段。仅在 refineLoading 期间有效，
-   * 完成后由 events 层清空，避免下一次 refine 复用残值。
-   */
-  refineStage?: RefineStage;
-  /** AI 调整流式累积到的文本（每次都是全文，不是 delta）。 */
-  refinePartial?: string;
-  /**
-   * 本次 AI 调整开始瞬间的编辑器基线（与发往后台的 current 一致）。
-   * 首 token 未到时主编辑区回落到此，避免空白；结束/失败后清空。
-   */
-  refineBaselinePrompt?: string;
-  /** AI 调整开始时间戳，用于 UI 上显示 "已用时 xx s"。 */
-  refineStartedAt?: number;
   /**
    * 反推进度阶段。loading 状态下用来切换"下载图片 / 调用模型 / 接收回复"
    * 三段文案，success/error 时被清成 undefined。
@@ -167,4 +178,45 @@ export function panelReferenceUrls(
 ): string[] {
   if (state.imageUrls?.length) return state.imageUrls;
   return state.imageUrl ? [state.imageUrl] : [];
+}
+
+export function panelRefineJobs(state: PanelState): PanelRefineJob[] {
+  return state.refineJobs ?? [];
+}
+
+export function panelExtractJobs(state: PanelState): PanelExtractJob[] {
+  return state.extractJobs ?? [];
+}
+
+/** 是否存在任意进行中的 refine（并行 jobs） */
+export function panelHasActiveRefine(state: PanelState): boolean {
+  return panelRefineJobs(state).length > 0;
+}
+
+export function panelHasActiveExtractJobs(state: PanelState): boolean {
+  return panelExtractJobs(state).length > 0;
+}
+
+export function matchesExtractStreamRequest(
+  state: PanelState,
+  streamRequestId: string
+): boolean {
+  return panelExtractJobs(state).some((j) => j.streamRequestId === streamRequestId);
+}
+
+/** refine 侧栏进度条：优先当前选中的占位 job，否则第一条 */
+export function primaryRefineJobForUi(state: PanelState): PanelRefineJob | undefined {
+  const jobs = panelRefineJobs(state);
+  if (jobs.length === 0) return undefined;
+  const jid = parseRefineJobSentinel(state.selectedVersionId ?? undefined);
+  if (jid) {
+    const hit = jobs.find((j) => j.jobId === jid);
+    if (hit) return hit;
+  }
+  return jobs[0];
+}
+
+/** 读写库记录 id：prefetch 命中后 linkedHistoryId 优先于临时 requestId */
+export function libraryStorageId(state: { requestId: string; linkedHistoryId?: string }): string {
+  return state.linkedHistoryId ?? state.requestId;
 }

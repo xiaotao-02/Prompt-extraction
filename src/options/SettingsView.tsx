@@ -828,7 +828,7 @@ export default function SettingsView({ registerSaveHandler, onDirtyChange }: Pro
           <p className="text-xs text-zinc-500">
             选择打开<strong className="font-medium text-zinc-600 dark:text-zinc-400">提示词库</strong>（扩展选项页）还是在
             <strong className="font-medium text-zinc-600 dark:text-zinc-400">网页浮动面板</strong>
-            中继续编辑与 AI 调整。选浮动面板时会尝试激活该条记录的来源页（与工具栏弹窗里的「悬浮窗编辑」一致）。
+            中继续编辑与 AI 调整。选浮动面板时会尝试激活该条记录的来源页（与工具栏弹窗里的「弹窗编辑」一致）。
             <span className="block mt-1.5 text-zinc-500">
               「版本」始终在工具栏弹窗内展开历史列表，不受此项影响。
             </span>
@@ -870,10 +870,10 @@ export default function SettingsView({ registerSaveHandler, onDirtyChange }: Pro
 
         <div className="mt-4 pt-4 border-t border-zinc-200 dark:border-zinc-800 space-y-3">
           <div className="text-sm font-medium text-zinc-900 dark:text-zinc-100">
-            一键洗稿随机强度
+            随机风格强度
           </div>
           <p className="text-xs text-zinc-500">
-            控制浮动面板与提示词库中「一键洗稿」每次生成时的变异幅度；同一档位下多次点击仍会略有不同。
+            控制浮动面板与提示词库中「随机风格」每次生成时的变异幅度；同一档位下多次点击仍会略有不同。
           </p>
           <div className="flex flex-col gap-2">
             {REWRITE_RANDOMNESS_OPTIONS.map((opt) => {

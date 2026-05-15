@@ -1,6 +1,6 @@
 import type { ExtractStage, RefineStage, StrategyId } from '@/lib/types';
 import { STRATEGY_LABELS, DEFAULT_STRATEGY_ID } from '@/lib/strategies-meta';
-import { EXTRACT_STREAM_VERSION_ID, REFINE_STREAM_VERSION_ID } from '@/lib/refineStreamVersion';
+import { EXTRACT_STREAM_VERSION_ID, REFINE_STREAM_VERSION_ID, extractStreamDisplayedBody, parseExtractJobSentinel } from '@/lib/refineStreamVersion';
 import {
   panel,
   currentState,
@@ -9,9 +9,28 @@ import {
   refineTickHandle,
   setRefineTickHandle,
   panelActions,
+  panelExtractJobs,
+  panelHasActiveRefine,
+  primaryRefineJobForUi,
 } from './state';
 import type { PanelState } from './state';
 import { syncEditorCharCount } from './events';
+
+function loadingMainEditorPatchValue(state: PanelState): string {
+  if (state.status === 'loading') {
+    const sel = state.selectedVersionId;
+    if (
+      sel &&
+      sel !== EXTRACT_STREAM_VERSION_ID &&
+      !sel.startsWith(`${EXTRACT_STREAM_VERSION_ID}:`)
+    ) {
+      const v = state.versions?.find((x) => x.id === sel);
+      if (v) return v.prompt;
+    }
+    return extractStreamDisplayedBody(state);
+  }
+  return state.partial ?? '';
+}
 
 /**
  * 策略 id → loading 面板上显示的简短中文 label。
@@ -159,7 +178,13 @@ export function applyLoadingPatch(state: PanelState): void {
     if (modelLabel) modelEl.setAttribute('title', `本次使用：${modelLabel}`);
   }
 
-  const hasPartial = !!state.partial;
+  const anyExtractPartial = panelExtractJobs(state).some((j) =>
+    !!(j.partial ?? '').trim()
+  );
+  const hasPartial =
+    anyExtractPartial ||
+    !!(state.partial ?? '').trim() ||
+    !!(state.extractBaselinePrompt?.trim());
   const barEl = panel.querySelector<HTMLElement>('[data-role="bar-fill"]');
   if (barEl) {
     barEl.style.width = `${Math.round(stageProgress(state.stage, hasPartial) * 100)}%`;
@@ -183,16 +208,14 @@ export function applyLoadingPatch(state: PanelState): void {
 
   const previewingExtractHistory =
     state.selectedVersionId != null &&
-    state.selectedVersionId !== EXTRACT_STREAM_VERSION_ID;
+    state.selectedVersionId !== EXTRACT_STREAM_VERSION_ID &&
+    parseExtractJobSentinel(state.selectedVersionId ?? undefined) == null;
 
   const editor = panel.querySelector<HTMLTextAreaElement>('[data-role="editor"]');
   if (editor && !previewingExtractHistory) {
     const atBottom =
       Math.abs(editor.scrollHeight - editor.clientHeight - editor.scrollTop) < 8;
-    editor.value =
-      state.partial ??
-      state.extractBaselinePrompt ??
-      (state.prompt ?? state.draft ?? '');
+    editor.value = loadingMainEditorPatchValue(state);
     if (atBottom) editor.scrollTop = editor.scrollHeight;
     syncEditorCharCount();
   }
@@ -213,7 +236,7 @@ export function applyLoadingPatch(state: PanelState): void {
       // 用户没主动滚动时自动跟随；否则保持滚动位置
       const atBottom =
         Math.abs(ta.scrollHeight - ta.clientHeight - ta.scrollTop) < 8;
-      ta.value = state.partial || '';
+      ta.value = loadingMainEditorPatchValue(state);
       if (atBottom) ta.scrollTop = ta.scrollHeight;
     } else {
       previewBox.classList.add('hidden');
@@ -238,20 +261,22 @@ export function refineStageHint(stage: RefineStage | undefined, hasPartial: bool
 
 /** refine 中每 200ms 更新一次 [data-role="refine-elapsed"]。 */
 export function manageRefineTicker(state: PanelState): void {
-  if (!state.refineLoading || !state.refineStartedAt) {
+  const job = primaryRefineJobForUi(state);
+  if (!panelHasActiveRefine(state) || !job?.startedAt) {
     stopRefineTicker();
     return;
   }
   if (refineTickHandle !== null) return;
   setRefineTickHandle(
     window.setInterval(() => {
-      if (!panel || !currentState || !currentState.refineLoading) {
+      if (!panel || !currentState || !panelHasActiveRefine(currentState)) {
         stopRefineTicker();
         return;
       }
+      const j = primaryRefineJobForUi(currentState);
       const el = panel.querySelector<HTMLElement>('[data-role="refine-elapsed"]');
-      if (el && currentState.refineStartedAt) {
-        el.textContent = formatElapsed(Date.now() - currentState.refineStartedAt);
+      if (el && j?.startedAt) {
+        el.textContent = formatElapsed(Date.now() - j.startedAt);
       }
     }, 200)
   );
@@ -276,30 +301,34 @@ export function stopRefineTicker(): void {
  */
 export function applyRefinePatch(state: PanelState): void {
   if (!panel) return;
-  const hasPartial = !!state.refinePartial;
+  const job = primaryRefineJobForUi(state);
+  const hasPartial = !!job?.partial;
   const barEl = panel.querySelector<HTMLElement>('[data-role="refine-bar-fill"]');
   if (barEl) {
-    barEl.style.width = `${Math.round(refineStageProgress(state.refineStage, hasPartial) * 100)}%`;
+    barEl.style.width = `${Math.round(refineStageProgress(job?.stage, hasPartial) * 100)}%`;
   }
 
   const hintEl = panel.querySelector<HTMLElement>('[data-role="refine-stage-hint"]');
-  if (hintEl) hintEl.textContent = refineStageHint(state.refineStage, hasPartial);
+  if (hintEl) hintEl.textContent = refineStageHint(job?.stage, hasPartial);
 
   const elapsedEl = panel.querySelector<HTMLElement>('[data-role="refine-elapsed"]');
-  if (elapsedEl && state.refineStartedAt) {
-    elapsedEl.textContent = formatElapsed(Date.now() - state.refineStartedAt);
+  if (elapsedEl && job?.startedAt) {
+    elapsedEl.textContent = formatElapsed(Date.now() - job.startedAt);
   }
 
+  const sel = state.selectedVersionId;
   const previewingHistory =
-    state.selectedVersionId != null &&
-    state.selectedVersionId !== REFINE_STREAM_VERSION_ID;
+    !!sel &&
+    sel !== REFINE_STREAM_VERSION_ID &&
+    !sel.startsWith(`${REFINE_STREAM_VERSION_ID}:`) &&
+    !!state.versions?.some((v) => v.id === sel);
 
   if (!previewingHistory) {
     const editor = panel.querySelector<HTMLTextAreaElement>('[data-role="editor"]');
     if (editor) {
       const streamText =
-        state.refinePartial ??
-        state.refineBaselinePrompt ??
+        job?.partial ??
+        job?.refineBaselinePrompt ??
         (state.draft ?? state.prompt ?? '');
       const atBottom =
         Math.abs(editor.scrollHeight - editor.clientHeight - editor.scrollTop) < 8;

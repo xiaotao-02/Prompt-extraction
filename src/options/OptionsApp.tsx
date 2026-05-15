@@ -52,26 +52,38 @@ function normalizeLibraryDock(raw: string | null): LibraryDockIntent {
   return null;
 }
 
+/**
+ * 扩展选项页 JS 载入时快照一次 URL hash。
+ * React 18 StrictMode 开发环境会卸载再挂载；首次挂载里的 useEffect 会 replaceState 清掉 hash，
+ * 第二次挂载若再读 window.location.hash 会得到空值，误判成「上次停留在设置」。冻结快照可避免该问题。
+ */
+const OPTIONS_ENTRY_DEEPLINK = readHashParams();
+
+function resolveInitialOptionsTab(frozen: typeof OPTIONS_ENTRY_DEEPLINK): Tab {
+  // 只要有 focus（含仅有 focus、无 tab 的深链），必进提示词库，否则会渲染 Settings 而放弃定位。
+  if (frozen.focusId) return 'library';
+  if (frozen.tab) return frozen.tab;
+  try {
+    const saved = sessionStorage.getItem(TAB_STORAGE_KEY);
+    return saved === 'library' || saved === 'settings' ? saved : 'settings';
+  } catch {
+    return 'settings';
+  }
+}
+
+const OPTIONS_HAD_DEEP_LINK = Boolean(
+  OPTIONS_ENTRY_DEEPLINK.tab || OPTIONS_ENTRY_DEEPLINK.focusId || OPTIONS_ENTRY_DEEPLINK.dockRaw
+);
+
 export default function OptionsApp() {
-  // hash 参数只在初始 mount 时消费一次：URL hash > sessionStorage > 默认 'settings'。
-  // 消费完后清掉 hash，避免用户刷新页面又跳回 library 干扰正常浏览。
-  const initialHash = readHashParams();
-  const hadDeepLink = Boolean(
-    initialHash.tab || initialHash.focusId || initialHash.dockRaw
+  // hash 只在模块载入时读入 OPTIONS_ENTRY_DEEPLINK；消费完后清掉地址栏 hash，避免刷新又跳库。
+  const [tab, setTab] = useState<Tab>(() => resolveInitialOptionsTab(OPTIONS_ENTRY_DEEPLINK));
+  const [libraryFocusId, setLibraryFocusId] = useState<string | null>(
+    () => OPTIONS_ENTRY_DEEPLINK.focusId
   );
-  const [tab, setTab] = useState<Tab>(() => {
-    if (initialHash.tab) return initialHash.tab;
-    try {
-      const saved = sessionStorage.getItem(TAB_STORAGE_KEY);
-      return saved === 'library' || saved === 'settings' ? saved : 'settings';
-    } catch {
-      return 'settings';
-    }
-  });
-  const [libraryFocusId, setLibraryFocusId] = useState<string | null>(initialHash.focusId);
   const [libraryDockIntent, setLibraryDockIntent] = useState<LibraryDockIntent>(() => {
-    const dock = normalizeLibraryDock(initialHash.dockRaw);
-    return initialHash.focusId && dock ? dock : null;
+    const dock = normalizeLibraryDock(OPTIONS_ENTRY_DEEPLINK.dockRaw);
+    return OPTIONS_ENTRY_DEEPLINK.focusId && dock ? dock : null;
   });
 
   const clearLibraryDockIntent = useCallback(() => setLibraryDockIntent(null), []);
@@ -79,7 +91,7 @@ export default function OptionsApp() {
   // 把 deep-link 消费掉：清掉 hash，并在 PromptLibrary 收到 focusId 后由它再调用
   // onConsumeFocus 把这里的 focusId 也清掉，避免组件被反复触发自动展开。
   useEffect(() => {
-    if (!hadDeepLink) return;
+    if (!OPTIONS_HAD_DEEP_LINK) return;
     try {
       history.replaceState(null, '', window.location.pathname + window.location.search);
     } catch {

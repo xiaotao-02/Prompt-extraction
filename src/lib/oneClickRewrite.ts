@@ -21,7 +21,7 @@ export function buildOneClickRewriteInstruction(
   nonce: string
 ): string {
   return [
-    '请根据下列要求重写提示词（相当于「一键洗稿」变体）：',
+    '请根据下列要求重写提示词（相当于「随机风格」变体）：',
     LEVEL_BODY[level],
     '务必保持与原提示词相同的语言（中文仍为中文，英文仍为英文）。',
     '直接输出改写后的完整提示词正文，不要前缀、不要 Markdown、不要解释。',

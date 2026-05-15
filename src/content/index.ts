@@ -1,11 +1,14 @@
-import '@/content/bgPort';
 import type { OneClickRewriteRandomness, RuntimeMessage, StrategyId } from '@/lib/types';
+import { postCtxMenuPrepViaKeepalivePort } from '@/content/bgPort';
 import { normalizeOneClickRewriteRandomness } from '@/lib/oneClickRewrite';
 import { SETTINGS_KEY } from '@/lib/storage/keys';
 import {
   renderPanel,
   renderPanelForExtractPending,
-  updatePanel,
+  applyExtractStreamProgress,
+  applyExtractStreamResult,
+  applyExtractStreamError,
+  patchRefineProgress,
   closePanel,
   applyHistoryReady,
   applyHistoryPrefetch,
@@ -35,38 +38,26 @@ try {
       return false;
     }
     if (message.type === 'EXTRACT_PROGRESS') {
-      const patch: Parameters<typeof updatePanel>[1] = {};
-      if (message.payload.stage !== undefined) patch.stage = message.payload.stage;
-      if (message.payload.partial !== undefined) patch.partial = message.payload.partial;
-      if (message.payload.strategy !== undefined) patch.strategy = message.payload.strategy;
-      if (message.payload.provider !== undefined) patch.provider = message.payload.provider;
-      if (message.payload.model !== undefined) patch.model = message.payload.model;
-      if (message.payload.oneClickRewriteRandomness !== undefined) {
-        patch.rewriteRandomness = message.payload.oneClickRewriteRandomness;
-      }
-      updatePanel(message.payload.requestId, patch);
+      applyExtractStreamProgress(message.payload.requestId, {
+        stage: message.payload.stage,
+        partial: message.payload.partial,
+        strategy: message.payload.strategy,
+        provider: message.payload.provider,
+        model: message.payload.model,
+        rewriteRandomness: message.payload.oneClickRewriteRandomness,
+      });
       return false;
     }
     if (message.type === 'EXTRACT_RESULT') {
-      updatePanel(message.payload.requestId, {
-        status: 'success',
+      applyExtractStreamResult(message.payload.requestId, {
         prompt: message.payload.prompt,
         provider: message.payload.provider,
         model: message.payload.model,
-        partial: undefined,
-        stage: undefined,
-        extractBaselinePrompt: undefined,
       });
       return false;
     }
     if (message.type === 'EXTRACT_ERROR') {
-      updatePanel(message.payload.requestId, {
-        status: 'error',
-        error: message.payload.error,
-        partial: undefined,
-        stage: undefined,
-        extractBaselinePrompt: undefined,
-      });
+      applyExtractStreamError(message.payload.requestId, message.payload.error);
       return false;
     }
     if (message.type === 'HISTORY_READY') {
@@ -134,11 +125,12 @@ try {
       return false;
     }
     if (message.type === 'REFINE_PROGRESS') {
-      // historyId 在面板里就是 requestId；只更新 refine 相关字段，保持 status='success' 不变。
-      const patch: Parameters<typeof updatePanel>[1] = {};
-      if (message.payload.stage !== undefined) patch.refineStage = message.payload.stage;
-      if (message.payload.partial !== undefined) patch.refinePartial = message.payload.partial;
-      updatePanel(message.payload.historyId, patch);
+      patchRefineProgress({
+        historyId: message.payload.historyId,
+        refineJobId: message.payload.refineJobId,
+        stage: message.payload.stage,
+        partial: message.payload.partial,
+      });
       return false;
     }
     return false;
@@ -173,8 +165,9 @@ document.addEventListener('keydown', (e) => {
 //    1. 找出鼠标位置上最相关的"可视化媒体元素"
 //    2. 如果是视频 → 抓当前帧到 canvas → toDataURL，喂给后台
 //    3. 如果是 canvas/svg/背景图 → 序列化为 data URL
-//    4. 然后通过 CTX_MENU_PREP 把这个 URL 缓存到后台，让 fallback
-//       菜单显示出来；用户点击后 fallback 菜单优先用这个缓存。
+//    4. 然后通过 CTX_MENU_PREP 把 extractionUrl + showFallback 发到后台：
+//       tab 级缓存总是写入（哪怕 showFallback:false，用于原生 `<video>`
+//       菜单点击时优先用抓拍 JPEG）；showFallback 只控制兜底菜单。
 //
 //  注意：必须用 capture phase，避免站点自己 stopPropagation；
 //  并且整个 prep 流程必须尽量同步完成（不 await 网络），因为 Chrome
@@ -187,11 +180,12 @@ window.addEventListener(
   (ev: MouseEvent) => {
     try {
       if (!isExtensionContextValid()) return;
-      const url = captureMediaUrlAtPoint(ev);
+      const payload = computeCtxMenuPrep(ev);
+      postCtxMenuPrepViaKeepalivePort(payload);
       safeSendMessage(
         {
           type: 'CTX_MENU_PREP',
-          payload: { imageUrl: url },
+          payload,
         } satisfies RuntimeMessage,
         () => void chrome.runtime.lastError
       );
@@ -207,24 +201,90 @@ const RECT_HIT_MAX_NODES = 2000;
 /** 忽略过小的占位/追踪图，避免矩形命中误选 */
 const RECT_HIT_MIN_EDGE = 8;
 
-function captureMediaUrlAtPoint(ev: MouseEvent): string {
-  const x = ev.clientX;
-  const y = ev.clientY;
-  const stack = elementsAtPoint(x, y);
-  const target = ev.target instanceof Element ? ev.target : null;
+type CtxMenuPrepResult = { extractionUrl: string; showFallback: boolean };
 
-  // 直接点到 <video>：Chrome 会给原生 video 上下文 + 我们的 MENU_ID，不要再点亮 fallback。
-  if (target instanceof HTMLVideoElement) {
-    return '';
+/** `composedPath` + `elementsFromPoint` 合并，减轻 Shadow / 层叠上下文下的漏检。 */
+function hitStack(ev: MouseEvent, x: number, y: number): Element[] {
+  const fromPoint =
+    typeof document.elementsFromPoint === 'function'
+      ? document.elementsFromPoint(x, y)
+      : (() => {
+          const hit = document.elementFromPoint(x, y);
+          return hit ? [hit] : [];
+        })();
+
+  let fromComposed: Element[] = [];
+  if (typeof ev.composedPath === 'function') {
+    try {
+      fromComposed = ev
+        .composedPath()
+        .filter((node): node is Element => node instanceof Element);
+    } catch {
+      fromComposed = [];
+    }
   }
 
-  // <video> 优先：现代站点的"假 GIF"几乎全是 <video>；不强制 readyState>=2（懒加载未就绪时仍退回 src）。
+  const seen = new Set<Element>();
+  const out: Element[] = [];
+  const push = (el: Element) => {
+    if (seen.has(el)) return;
+    seen.add(el);
+    out.push(el);
+  };
+
+  // composedPath（事件路径）先于视口自上而下命中栈——通常对用户「点中了谁」更准确
+  for (const el of fromComposed) push(el);
+  for (const el of fromPoint) push(el);
+
+  return out;
+}
+
+function resolveVideoPosterUrl(video: HTMLVideoElement): string {
+  const raw = video.getAttribute('poster')?.trim() || '';
+  if (!raw) return '';
+  const base = video.ownerDocument?.baseURI ?? (typeof location !== 'undefined' ? location.href : '');
+  try {
+    return new URL(raw, base || undefined).href;
+  } catch {
+    try {
+      return base ? new URL(raw, base).href : raw;
+    } catch {
+      return raw;
+    }
+  }
+}
+
+/**
+ * video 解码帧 → JPEG；失败后依次 poster、`currentSrc`。
+ */
+function extractVideoBestUrl(video: HTMLVideoElement): string {
+  const frame = captureVideoFrame(video);
+  if (frame) return frame;
+  const poster = resolveVideoPosterUrl(video);
+  if (poster) return poster;
+  return video.currentSrc || video.src || '';
+}
+
+/** 右键位置综合探测：返回值同时驱动 tab 缓存与兜底菜单 visibility。 */
+function computeCtxMenuPrep(ev: MouseEvent): CtxMenuPrepResult {
+  const x = ev.clientX;
+  const y = ev.clientY;
+  const stack = hitStack(ev, x, y);
+  const target = ev.target instanceof Element ? ev.target : null;
+
+  // 直接点到 <video>：原生 video 上下文 + MENU_ID；不写 showFallback；仍缓存抓拍 JPEG 供菜单点击优于 srcUrl。
+  if (target instanceof HTMLVideoElement) {
+    return {
+      extractionUrl: extractVideoBestUrl(target),
+      showFallback: false,
+    };
+  }
+
+  // <video> 优先（遮罩、「假 GIF」video）
   for (const el of stack) {
     if (el instanceof HTMLVideoElement) {
-      const frame = captureVideoFrame(el);
-      if (frame) return frame;
-      const vsrc = el.currentSrc || el.src || '';
-      if (vsrc) return vsrc;
+      const url = extractVideoBestUrl(el);
+      if (url) return { extractionUrl: url, showFallback: true };
     }
   }
 
@@ -245,7 +305,7 @@ function captureMediaUrlAtPoint(ev: MouseEvent): string {
   //      栈里多张图时取包围盒面积较小者，减轻瀑布流重叠时的误选。
   const targetIsImage =
     target instanceof HTMLImageElement || (target instanceof Element && target.tagName === 'SOURCE');
-  if (targetIsImage) return '';
+  if (targetIsImage) return { extractionUrl: '', showFallback: false };
 
   const imgsInStack: HTMLImageElement[] = [];
   for (const el of stack) {
@@ -259,17 +319,17 @@ function captureMediaUrlAtPoint(ev: MouseEvent): string {
             rectArea(a.getBoundingClientRect()) <= rectArea(b.getBoundingClientRect()) ? a : b
           );
     const src = pick.currentSrc || pick.src || '';
-    if (src) return src;
+    if (src) return { extractionUrl: src, showFallback: true };
   }
 
   // <canvas>：很多动画 / 渲染场景（webgl 图表、游戏画面）走 canvas。
   for (const el of stack) {
     if (el instanceof HTMLCanvasElement) {
       try {
-        return el.toDataURL('image/png');
+        return { extractionUrl: el.toDataURL('image/png'), showFallback: true };
       } catch {
         // tainted canvas，没辙
-        return '';
+        return { extractionUrl: '', showFallback: false };
       }
     }
   }
@@ -279,7 +339,10 @@ function captureMediaUrlAtPoint(ev: MouseEvent): string {
     if (el instanceof SVGSVGElement) {
       try {
         const xml = new XMLSerializer().serializeToString(el);
-        return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(xml)}`;
+        return {
+          extractionUrl: `data:image/svg+xml;charset=utf-8,${encodeURIComponent(xml)}`,
+          showFallback: true,
+        };
       } catch {
         // ignore
       }
@@ -290,14 +353,14 @@ function captureMediaUrlAtPoint(ev: MouseEvent): string {
   for (const el of stack) {
     if (!(el instanceof Element)) continue;
     const url = readCssBgUrl(el);
-    if (url) return url;
+    if (url) return { extractionUrl: url, showFallback: true };
   }
 
-  // <video> 设了 pointer-events:none、或不在 elementsFromPoint 栈里时，用矩形命中兜底。
+  // <video> 设了 pointer-events:none、或不在命中栈里时，用矩形命中兜底。
   const fromRect = pickMediaUrlByRectHit(x, y);
-  if (fromRect) return fromRect;
+  if (fromRect) return { extractionUrl: fromRect, showFallback: true };
 
-  return '';
+  return { extractionUrl: '', showFallback: false };
 }
 
 function rectArea(r: DOMRectReadOnly): number {
@@ -336,28 +399,22 @@ function pickMediaUrlByRectHit(x: number, y: number): string {
   }
   if (!best) return '';
   if (best instanceof HTMLVideoElement) {
-    const frame = captureVideoFrame(best);
-    if (frame) return frame;
-    return best.currentSrc || best.src || '';
+    return extractVideoBestUrl(best);
   }
   return best.currentSrc || best.src || '';
-}
-
-function elementsAtPoint(x: number, y: number): Element[] {
-  if (typeof document.elementsFromPoint === 'function') {
-    return document.elementsFromPoint(x, y);
-  }
-  const el = document.elementFromPoint(x, y);
-  return el ? [el] : [];
 }
 
 /**
  * 把 <video> 的当前帧抓到一张 JPEG dataUrl。
  * - 自动按最长边 1280px 缩放，避免 8MB 上限被触发
- * - 跨域 video 没有 crossorigin="anonymous" 时 canvas 会被污染，
- *   toDataURL 会抛 SecurityError，这里捕获并交还空串让上层走兜底
+ * - HAVE_CURRENT_DATA 之前不 draw，便于走 poster / srcUrl
+ * - 跨域 video 无 CORS 时 canvas 污染 → 返回空串
  */
 function captureVideoFrame(video: HTMLVideoElement): string {
+  if (video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA) {
+    return '';
+  }
+
   const w = video.videoWidth || video.clientWidth;
   const h = video.videoHeight || video.clientHeight;
   if (!w || !h) return '';
@@ -373,7 +430,6 @@ function captureVideoFrame(video: HTMLVideoElement): string {
   if (!ctx) return '';
   try {
     ctx.drawImage(video, 0, 0, cw, ch);
-    // JPEG 体积小、被任何视觉 API 都支持
     return off.toDataURL('image/jpeg', 0.9);
   } catch (err) {
     console.debug('[PromptExtracto] video frame capture tainted', err);

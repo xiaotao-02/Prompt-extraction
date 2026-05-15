@@ -1,6 +1,7 @@
 import { Check, Copy, Layers, RotateCcw, Trash2, X } from 'lucide-react';
 import type { HistoryItem, PromptVersion } from '@/lib/types';
-import { REFINE_STREAM_VERSION_ID } from '@/lib/refineStreamVersion';
+import { refineStreamSentinelForJob } from '@/lib/refineStreamVersion';
+import type { LibraryRefineJob } from '../types';
 import { getVersionOrdinalLabel, type VersionOrdinalKind } from '@/lib/versionLabel';
 import { STRATEGY_LABELS } from '@/lib/strategies-meta';
 import { SourceTag } from '../SourceTag';
@@ -25,9 +26,9 @@ export function VersionsSidebar({
   item,
   editorContent,
   selectedVersionId,
-  refineLoading,
+  refineJobs,
   scrollList,
-  onSelectGeneratingRow,
+  onSelectGeneratingJob,
   onCopy,
   copiedKey,
   onSelectVersion,
@@ -38,10 +39,10 @@ export function VersionsSidebar({
   item: HistoryItem;
   editorContent: string;
   selectedVersionId: string | null;
-  refineLoading?: boolean;
+  refineJobs?: LibraryRefineJob[];
   /** true：条目较多时在列表区域内滚动并显示自定义滚动条 */
   scrollList: boolean;
-  onSelectGeneratingRow?: () => void;
+  onSelectGeneratingJob?: (jobId: string) => void;
   onCopy: (text: string, key: string) => void;
   copiedKey: string | null;
   onSelectVersion: (v: PromptVersion) => void;
@@ -49,7 +50,9 @@ export function VersionsSidebar({
   onDeleteVersion: (v: PromptVersion) => void;
   onClose: () => void;
 }) {
-  const listCount = item.versions.length + (refineLoading ? 1 : 0);
+  const jobs = refineJobs ?? [];
+  const anyRefining = jobs.length > 0;
+  const listCount = item.versions.length + jobs.length;
   const extractedCount = item.versions.filter((v) => v.source === 'extracted').length;
   const distinctModels = new Set(
     item.versions
@@ -98,39 +101,42 @@ export function VersionsSidebar({
             : 'overflow-y-visible flex-none'
         }
       >
-        {refineLoading && (
-          <li
-            key={REFINE_STREAM_VERSION_ID}
-            onClick={() => onSelectGeneratingRow?.()}
-            role="button"
-            tabIndex={0}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter' || e.key === ' ') {
-                e.preventDefault();
-                onSelectGeneratingRow?.();
-              }
-            }}
-            title="点击查看 AI 调整生成中的提示词"
-            className={`px-3 py-2 border-b border-zinc-800/60 cursor-pointer transition-colors ${
-              selectedVersionId === REFINE_STREAM_VERSION_ID
-                ? 'bg-violet-500/15 hover:bg-violet-500/20'
-                : 'hover:bg-violet-500/10'
-            }`}
-          >
-            <div className="flex items-center gap-1.5 text-[10px] mb-1 flex-wrap">
-              <span
-                className={`px-1.5 py-px rounded font-semibold ${ORD_TAG_CLASS.middle}`}
-              >
-                生成中
-              </span>
-              <SourceTag source="refined" variant="onDark" />
-              <span className="text-zinc-500">进行中</span>
-            </div>
-            <p className="text-[11px] leading-relaxed text-zinc-400 line-clamp-2 break-words italic">
-              正在根据你的要求生成新版本，可切换到其它行预览历史正文…
-            </p>
-          </li>
-        )}
+        {jobs.map((job) => {
+          const rowId = refineStreamSentinelForJob(job.jobId);
+          const label = job.kind === 'rewrite' ? '随机风格' : 'AI 调整';
+          const hint = job.instruction.replace(/\s+/g, ' ').trim().slice(0, 96);
+          return (
+            <li
+              key={rowId}
+              onClick={() => onSelectGeneratingJob?.(job.jobId)}
+              role="button"
+              tabIndex={0}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' || e.key === ' ') {
+                  e.preventDefault();
+                  onSelectGeneratingJob?.(job.jobId);
+                }
+              }}
+              title="点击查看该条生成中的提示词"
+              className={`px-3 py-2 border-b border-zinc-800/60 cursor-pointer transition-colors ${
+                selectedVersionId === rowId
+                  ? 'bg-violet-500/15 hover:bg-violet-500/20'
+                  : 'hover:bg-violet-500/10'
+              }`}
+            >
+              <div className="flex items-center gap-1.5 text-[10px] mb-1 flex-wrap">
+                <span className={`px-1.5 py-px rounded font-semibold ${ORD_TAG_CLASS.middle}`}>
+                  生成中
+                </span>
+                <SourceTag source="refined" variant="onDark" />
+                <span className="text-zinc-500">{label}</span>
+              </div>
+              <p className="text-[11px] leading-relaxed text-zinc-400 line-clamp-2 break-words italic">
+                {hint || '正在生成新版本…'}
+              </p>
+            </li>
+          );
+        })}
         {item.versions.map((v, i) => {
           const isCurrent = i === 0;
           const cid = `ver:${item.id}::${v.id}`;
@@ -142,7 +148,7 @@ export function VersionsSidebar({
             style: item.style,
             strategy: item.strategy,
           };
-          const isSelected = refineLoading
+          const isSelected = anyRefining
             ? v.id === selectedVersionId
             : selectedVersionId != null
               ? v.id === selectedVersionId

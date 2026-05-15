@@ -89,6 +89,19 @@ export function ItemGridCard({
       <div className="flex-1 min-w-0 flex flex-col min-h-0">
         <div className="relative aspect-[4/3] bg-zinc-100 dark:bg-zinc-800 overflow-hidden">
           <Thumb item={item} size="full" />
+          <div
+            className="absolute left-2 top-2 z-[1] rounded-md bg-white/90 dark:bg-zinc-950/70 backdrop-blur-[2px] p-1 shadow-sm pointer-events-auto"
+            onClick={stop}
+          >
+            <input
+              type="checkbox"
+              className="w-4 h-4 accent-violet-500 cursor-pointer block"
+              checked={checked}
+              onChange={onToggleSelect}
+              onClick={stop}
+              title="选中此条"
+            />
+          </div>
           <div className="absolute inset-x-0 top-0 p-2 flex items-start justify-end pointer-events-none">
             <div className="pointer-events-auto flex items-center gap-1">
               {item.pinned && (
@@ -203,19 +216,6 @@ export function ItemGridCard({
           )}
         </button>
       </div>
-      </div>
-      <div
-        className="flex-none flex items-center justify-center self-stretch px-2 border-l border-zinc-200/80 dark:border-zinc-700/80"
-        onClick={stop}
-      >
-        <input
-          type="checkbox"
-          className="w-4 h-4 accent-violet-500 cursor-pointer"
-          checked={checked}
-          onChange={onToggleSelect}
-          onClick={stop}
-          title="选中此条"
-        />
       </div>
     </div>
   );

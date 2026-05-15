@@ -7,7 +7,6 @@ import {
   PinOff,
   Pencil,
   ChevronUp,
-  ExternalLink,
   Trash2,
   StickyNote,
   PanelTopOpen,
@@ -200,18 +199,6 @@ export function ItemRow({
               </>
             )}
           </button>
-          {item.pageUrl && (
-            <a
-              href={item.pageUrl}
-              target="_blank"
-              rel="noreferrer"
-              onClick={stop}
-              className="inline-flex items-center gap-1 px-2 py-1 rounded-md hover:bg-zinc-100 dark:hover:bg-zinc-800 text-zinc-600 dark:text-zinc-300 transition"
-              title={item.pageTitle || item.pageUrl}
-            >
-              <ExternalLink className="w-3 h-3" /> 来源
-            </a>
-          )}
           {onRecallToPanel && (
             <button
               onClick={(e) => {
@@ -219,9 +206,9 @@ export function ItemRow({
                 onRecallToPanel();
               }}
               className="inline-flex items-center gap-1 px-2 py-1 rounded-md hover:bg-indigo-50 dark:hover:bg-indigo-500/10 text-indigo-600 dark:text-indigo-300 transition"
-              title="把这条提示词召回到当前网页的悬浮编辑窗，继续手动调整 / AI 调整"
+              title="把这条提示词召回到当前网页的编辑弹窗，继续手动调整 / AI 调整"
             >
-              <PanelTopOpen className="w-3 h-3" /> 悬浮窗编辑
+              <PanelTopOpen className="w-3 h-3" /> 弹窗编辑
             </button>
           )}
           {onMoveTo && (

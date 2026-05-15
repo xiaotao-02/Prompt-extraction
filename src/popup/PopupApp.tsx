@@ -4,7 +4,6 @@ import {
   Settings,
   Sparkles,
   Trash2,
-  ExternalLink,
   Check,
   Pencil,
   History,
@@ -291,9 +290,9 @@ export default function PopupApp() {
                           type="button"
                           onClick={() => recallToPanel(item)}
                           className="inline-flex flex-none items-center gap-1 px-2 py-1 rounded-md hover:bg-indigo-50 dark:hover:bg-indigo-500/10 text-indigo-600 dark:text-indigo-300 text-[11px]"
-                          title="把这条提示词召回到当前网页的悬浮编辑窗，继续手动调整 / AI 调整"
+                          title="把这条提示词召回到当前网页的编辑弹窗，继续手动调整 / AI 调整"
                         >
-                          <PanelTopOpen className="w-3 h-3" /> 悬浮窗编辑
+                          <PanelTopOpen className="w-3 h-3" /> 弹窗编辑
                         </button>
                         {versionCount > 1 && (
                           <button
@@ -308,17 +307,6 @@ export default function PopupApp() {
                           >
                             <History className="w-3 h-3" /> 版本 · {versionCount}
                           </button>
-                        )}
-                        {item.pageUrl && (
-                          <a
-                            href={item.pageUrl}
-                            target="_blank"
-                            rel="noreferrer"
-                            className="inline-flex flex-none items-center gap-1 px-2 py-1 rounded-md hover:bg-zinc-100 dark:hover:bg-zinc-800 text-zinc-600 dark:text-zinc-300 text-[11px]"
-                            title={item.pageTitle}
-                          >
-                            <ExternalLink className="w-3 h-3" /> 来源
-                          </a>
                         )}
                       </div>
                       <button

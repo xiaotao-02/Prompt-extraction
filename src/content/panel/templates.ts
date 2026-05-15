@@ -1,9 +1,24 @@
 import type { OneClickRewriteRandomness, PromptVersion } from '@/lib/types';
 import { normalizeOneClickRewriteRandomness } from '@/lib/oneClickRewrite';
-import { REFINE_STREAM_VERSION_ID, EXTRACT_STREAM_VERSION_ID, extractStreamDisplayedBody, refineStreamDisplayedBody } from '@/lib/refineStreamVersion';
+import {
+  REFINE_STREAM_VERSION_ID,
+  EXTRACT_STREAM_VERSION_ID,
+  extractStreamDisplayedBody,
+  refineStreamDisplayedBody,
+  extractStreamSentinelForJob,
+  refineStreamSentinelForJob,
+  parseExtractJobSentinel,
+  parseRefineJobSentinel,
+} from '@/lib/refineStreamVersion';
 import { getVersionOrdinalLabel } from '@/lib/versionLabel';
 import { STRATEGY_LABELS, type StrategyId } from '@/lib/strategies-meta';
-import type { PanelState } from './state';
+import type { PanelState, PanelRefineJob } from './state';
+import {
+  panelExtractJobs,
+  panelHasActiveRefine,
+  panelRefineJobs,
+  primaryRefineJobForUi,
+} from './state';
 import { panelReferenceUrls } from './state';
 import { MAX_REFERENCE_IMAGES } from '@/lib/referenceImages';
 import {
@@ -14,7 +29,6 @@ import {
   ICON_HISTORY,
   ICON_RESTORE,
   ICON_SPARK,
-  ICON_EDIT,
   ICON_LIBRARY,
   ICON_TRASH,
 } from './icons';
@@ -103,16 +117,15 @@ function refineBlockHtml(
   state: PanelState,
   options: { runDisabled?: boolean; runIdleLabel?: string } = {}
 ): string {
-  const refining = !!state.refineLoading;
+  const refining = panelHasActiveRefine(state);
+  const prim = primaryRefineJobForUi(state);
   const refineInstruction = state.refineInstruction ?? '';
-  const refineHasPartial = !!state.refinePartial;
+  const refineHasPartial = !!prim?.partial;
   const refinePct = Math.round(
-    refineStageProgress(state.refineStage, refineHasPartial) * 100
+    refineStageProgress(prim?.stage, refineHasPartial) * 100
   );
   const refineElapsed =
-    state.refineStartedAt != null
-      ? formatElapsed(Date.now() - state.refineStartedAt)
-      : '0.0s';
+    prim?.startedAt != null ? formatElapsed(Date.now() - prim.startedAt) : '0.0s';
   const refineProgressBlock = refining
     ? `
         <div class="refine-progress" data-role="refine-progress">
@@ -121,7 +134,7 @@ function refineBlockHtml(
           </div>
           <div class="hint hint-row">
             <span data-role="refine-stage-hint">${escapeText(
-              refineStageHint(state.refineStage, refineHasPartial)
+              refineStageHint(prim?.stage, refineHasPartial)
             )}</span>
             <span class="elapsed" data-role="refine-elapsed">${escapeText(refineElapsed)}</span>
           </div>
@@ -188,11 +201,9 @@ function metaRowHtml(
     dirty: boolean;
     disableHistory?: boolean;
     disableLibrary?: boolean;
-    disableOpenPanel?: boolean;
   }
 ): string {
   const historyDisabled = options.disableHistory || options.versionCount === 0;
-  const openPanelDisabled = !!options.disableOpenPanel;
   const libraryDisabled = !!options.disableLibrary;
   return `
         <div class="meta-row">
@@ -209,18 +220,12 @@ function metaRowHtml(
             >${ICON_SPARK}<span>AI 调整</span></button>
             <button
               class="link-btn"
-              data-action="open-in-panel"
-              title="跳转到该条记录的来源网页，并在该页打开悬浮编辑窗"
-              ${openPanelDisabled ? 'disabled' : ''}
-            >${ICON_EDIT}<span>在来源页打开</span></button>
-            <button
-              class="link-btn"
               data-action="open-in-library"
               title="跳转到提示词库，进行更完整的编辑、备注、版本管理"
               ${libraryDisabled ? 'disabled' : ''}
             >${ICON_LIBRARY}<span>提示词库</span></button>
           </div>
-          <span class="dirty-hint ${!state.refineLoading && options.dirty ? 'show' : ''}">已修改，未保存</span>
+          <span class="dirty-hint ${!panelHasActiveRefine(state) && options.dirty ? 'show' : ''}">已修改，未保存</span>
         </div>
       `;
 }
@@ -239,25 +244,26 @@ function actionsHtml(
   const rr = normalizeOneClickRewriteRandomness(options.rewriteRandomness);
   const rewriteDisabled = loading || !!options.rewriteControlsDisabled;
 
-  const selectHtml = loading
-    ? ''
-    : `<select class="rewrite-randomness" data-role="rewrite-randomness" aria-label="一键洗稿随机强度" title="随机强度" ${
-        rewriteDisabled ? 'disabled' : ''
-      }>
+  const rewriteSpinBtn = `<button class="btn ghost rewrite-spin-btn ${rewriteDisabled ? 'disabled' : ''}" data-action="rewrite-spin" ${
+    rewriteDisabled ? 'disabled' : ''
+  }><span>随机风格</span></button>`;
+
+  const rewriteSelect = `<select class="rewrite-randomness" data-role="rewrite-randomness" aria-label="随机风格强度" title="随机风格强度" ${
+    rewriteDisabled ? 'disabled' : ''
+  }>
           <option value="subtle"${rr === 'subtle' ? ' selected' : ''}>轻度</option>
           <option value="moderate"${rr === 'moderate' ? ' selected' : ''}>中度</option>
           <option value="bold"${rr === 'bold' ? ' selected' : ''}>强烈</option>
         </select>`;
 
+  const rewriteControlHtml = loading
+    ? rewriteSpinBtn
+    : `<div class="rewrite-control-group">${rewriteSelect}${rewriteSpinBtn}</div>`;
+
   return `
         <div class="actions">
-          <button class="btn ghost ${loading ? 'disabled' : ''}" data-action="retry" ${
-    loading ? 'disabled' : ''
-  }>${ICON_REFRESH}<span>重新生成</span></button>
-          ${selectHtml}
-          <button class="btn ghost ${rewriteDisabled ? 'disabled' : ''}" data-action="rewrite-spin" ${
-    rewriteDisabled ? 'disabled' : ''
-  }><span>一键洗稿</span></button>
+          <button type="button" class="btn ghost" data-action="retry">${ICON_REFRESH}<span>重新生成</span></button>
+          ${rewriteControlHtml}
           <button class="btn ${!loading && dirty ? 'primary' : 'ghost disabled'}" data-action="save" ${
     !loading && dirty ? '' : 'disabled'
   }>${ICON_SAVE}<span>保存为新版本</span></button>
@@ -274,9 +280,27 @@ function actionsHtml(
 /** success 态主编辑器展示用：区分 AI 调整流式 vs 预览某条历史版本。 */
 export function successEditorDisplayedText(state: PanelState): string {
   const draft = state.draft ?? state.prompt ?? '';
-  if (!state.refineLoading) return draft;
   const sel = state.selectedVersionId;
-  if (sel && sel !== REFINE_STREAM_VERSION_ID) {
+
+  if (parseExtractJobSentinel(sel ?? undefined) && panelExtractJobs(state).length > 0) {
+    return extractStreamDisplayedBody({ ...state, selectedVersionId: sel });
+  }
+  if (
+    (parseRefineJobSentinel(sel ?? undefined) || sel === REFINE_STREAM_VERSION_ID) &&
+    panelHasActiveRefine(state)
+  ) {
+    return refineStreamDisplayedBody({ ...state, selectedVersionId: sel });
+  }
+
+  if (!panelHasActiveRefine(state)) {
+    return draft;
+  }
+
+  if (
+    sel &&
+    sel !== REFINE_STREAM_VERSION_ID &&
+    !sel.startsWith(`${REFINE_STREAM_VERSION_ID}:`)
+  ) {
     const v = state.versions?.find((x) => x.id === sel);
     if (v) return v.prompt;
   }
@@ -285,24 +309,32 @@ export function successEditorDisplayedText(state: PanelState): string {
 
 /** loading（重新生成/反推流式）态主编辑器：区分流式 vs 预览历史版本。 */
 export function loadingEditorDisplayedText(state: PanelState): string {
-  if (state.status !== 'loading') {
-    return state.partial ?? '';
+  if (state.status === 'loading') {
+    const sel = state.selectedVersionId;
+    if (
+      sel &&
+      sel !== EXTRACT_STREAM_VERSION_ID &&
+      !sel.startsWith(`${EXTRACT_STREAM_VERSION_ID}:`)
+    ) {
+      const v = state.versions?.find((x) => x.id === sel);
+      if (v) return v.prompt;
+    }
+    return extractStreamDisplayedBody(state);
   }
-  const sel = state.selectedVersionId;
-  if (sel && sel !== EXTRACT_STREAM_VERSION_ID) {
-    const v = state.versions?.find((x) => x.id === sel);
-    if (v) return v.prompt;
+  if (panelExtractJobs(state).length > 0) {
+    return extractStreamDisplayedBody(state);
   }
-  return extractStreamDisplayedBody(state);
+  return state.partial ?? '';
 }
 
-function extractPendingVersionRowHtml(state: PanelState): string {
-  const selected = state.selectedVersionId === EXTRACT_STREAM_VERSION_ID;
+function extractPendingVersionRowHtml(streamRequestId: string, state: PanelState): string {
+  const sentinel = extractStreamSentinelForJob(streamRequestId);
+  const selected = state.selectedVersionId === sentinel;
   return `
     <li
       class="version-item refine-pending${selected ? ' selected' : ''}"
       data-action="select-version"
-      data-version-id="${escapeAttr(EXTRACT_STREAM_VERSION_ID)}"
+      data-version-id="${escapeAttr(sentinel)}"
       role="button"
       tabindex="0"
       title="点击查看本次重新生成中的提示词"
@@ -317,23 +349,29 @@ function extractPendingVersionRowHtml(state: PanelState): string {
   `;
 }
 
-function refinePendingVersionRowHtml(state: PanelState): string {
-  const selected = state.selectedVersionId === REFINE_STREAM_VERSION_ID;
+function refinePendingVersionRowHtml(job: PanelRefineJob, state: PanelState): string {
+  const sentinel = refineStreamSentinelForJob(job.jobId);
+  const selected = state.selectedVersionId === sentinel;
+  const tagLabel = job.kind === 'rewrite' ? '随机风格' : 'AI 调整';
+  const preview =
+    job.kind === 'rewrite'
+      ? '正在生成随机风格变体，可切换到其它行预览历史正文…'
+      : '正在根据你的要求生成新版本，可切换到其它行预览历史正文…';
   return `
     <li
       class="version-item refine-pending${selected ? ' selected' : ''}"
       data-action="select-version"
-      data-version-id="${escapeAttr(REFINE_STREAM_VERSION_ID)}"
+      data-version-id="${escapeAttr(sentinel)}"
       role="button"
       tabindex="0"
-      title="点击查看 AI 调整生成中的提示词"
+      title="点击查看生成中的提示词"
     >
       <div class="version-head">
         <span class="version-ord middle">生成中</span>
-        <span class="version-tag refined">AI 调整</span>
+        <span class="version-tag refined">${escapeText(tagLabel)}</span>
         <span class="version-time">进行中</span>
       </div>
-      <div class="version-preview">正在根据你的要求生成新版本，可切换到其它行预览历史正文…</div>
+      <div class="version-preview">${escapeText(preview)}</div>
     </li>
   `;
 }
@@ -342,12 +380,16 @@ function refinePendingVersionRowHtml(state: PanelState): string {
 export function buildVersionsListInnerHtml(state: PanelState): string {
   const versions = state.versions || [];
   const editorContent = state.draft ?? state.prompt ?? '';
-  const extractRow = state.status === 'loading' && versions.length > 0;
-  const leading = state.refineLoading
-    ? refinePendingVersionRowHtml(state)
-    : extractRow
-      ? extractPendingVersionRowHtml(state)
+  const extractSlots =
+    state.status === 'success' || (state.status === 'loading' && versions.length > 0)
+      ? panelExtractJobs(state)
+          .map((j) => extractPendingVersionRowHtml(j.streamRequestId, state))
+          .join('')
       : '';
+  const refineSlots = panelRefineJobs(state)
+    .map((j) => refinePendingVersionRowHtml(j, state))
+    .join('');
+  const leading = refineSlots + extractSlots;
   return (
     leading +
     versionsListHtml(versions, editorContent, state.selectedVersionId, {
@@ -364,12 +406,16 @@ function versionsChromeForRow(
   _editorContent: string
 ): { sidebar: string; openClassSuffix: string } {
   const baseLen = versions.length;
-  const extractRow = state.status === 'loading' && baseLen > 0;
-  const showSidebar = baseLen > 0 || !!state.refineLoading;
+  const extractSlots =
+    state.status === 'success' || (state.status === 'loading' && baseLen > 0)
+      ? panelExtractJobs(state).length
+      : 0;
+  const showSidebar =
+    baseLen > 0 || panelHasActiveRefine(state) || extractSlots > 0;
   if (!showSidebar) {
     return { sidebar: '', openClassSuffix: '' };
   }
-  const displayCount = baseLen + (state.refineLoading ? 1 : 0) + (extractRow ? 1 : 0);
+  const displayCount = baseLen + panelRefineJobs(state).length + extractSlots;
   const openClassSuffix = state.versionsOpen ? ' versions-open' : '';
   const sidebar = `
         <aside class="versions-side" data-role="versions-side">
@@ -387,22 +433,26 @@ function versionsChromeForRow(
 
 export function panelHtml(state: PanelState): string {
   if (state.status === 'loading') {
-    const hasPartial = !!state.partial;
+    const versions = state.versions || [];
+    const versionCount = versions.length;
+    const extractSidebarCount =
+      versionCount > 0 ? panelExtractJobs(state).length : 0;
+    const versionsDisplayCount =
+      versionCount + extractSidebarCount + panelRefineJobs(state).length;
+    const anyExtractPartial = panelExtractJobs(state).some((j) =>
+      !!(j.partial ?? '').trim()
+    );
+    const hasPartial =
+      anyExtractPartial ||
+      !!(state.partial ?? '').trim() ||
+      !!(state.extractBaselinePrompt?.trim());
     const pct = Math.round(stageProgress(state.stage, hasPartial) * 100);
     const elapsed =
       state.startedAt != null ? formatElapsed(Date.now() - state.startedAt) : '0.0s';
     const stratLabel = strategyLabel(state.strategy);
-    // 模型 badge：用 provider · model 拼一个短标签，比如 "openai · gpt-4o"。
-    // settings 在 PENDING 之后才异步到达，所以首次渲染时 model 可能为空 ——
-    // 此时给 .hidden 占位、不撑大 header；applyLoadingPatch 会在 model 拿到
-    // 后把文本填上、移除 hidden。
     const modelLabel = state.model
       ? `${state.provider ? state.provider + ' · ' : ''}${state.model}`
       : '';
-    const versions = state.versions || [];
-    const versionCount = versions.length;
-    const extractRow = versionCount > 0;
-    const versionsDisplayCount = versionCount + (extractRow ? 1 : 0);
     const canCopyLoading = hasPartial || !!(state.extractBaselinePrompt?.trim());
     const { sidebar: versionsSidebar, openClassSuffix: versionsOpenClass } = versionsChromeForRow(
       state,
@@ -452,7 +502,6 @@ export function panelHtml(state: PanelState): string {
             dirty: false,
             disableHistory: versionCount === 0,
             disableLibrary: true,
-            disableOpenPanel: true,
           })}
           ${refineBlockHtml(state, {
             runDisabled: true,
@@ -521,8 +570,14 @@ export function panelHtml(state: PanelState): string {
 
   const versions = state.versions || [];
   const versionCount = versions.length;
-  const refining = !!state.refineLoading;
-  const versionsDisplayCount = versionCount + (refining ? 1 : 0);
+  const refining = panelHasActiveRefine(state);
+  const streamingExtract = panelExtractJobs(state).length > 0;
+  const extractStreamingUi =
+    streamingExtract &&
+    parseExtractJobSentinel(state.selectedVersionId ?? undefined) != null;
+  const editorLocked = refining || extractStreamingUi;
+  const versionsDisplayCount =
+    versionCount + panelRefineJobs(state).length + panelExtractJobs(state).length;
   const draft = state.draft ?? state.prompt ?? '';
   const dirty = refining ? false : draft !== (state.prompt ?? '');
 
@@ -568,18 +623,24 @@ export function panelHtml(state: PanelState): string {
         <div class="thumb ref-thumb-wrap">${referenceStripHtml(state, true)}</div>
         <div class="prompt-editor-wrap">
           <textarea
-            class="prompt-text${refining ? ' streaming' : ''}"
+            class="prompt-text${editorLocked ? ' streaming' : ''}"
             data-role="editor"
             spellcheck="false"
-            placeholder="${refining ? '正在接收 AI 调整后的提示词…' : '可在此修改提示词…'}"
-            ${refining ? 'readonly' : ''}
+            placeholder="${
+              refining
+                ? '正在接收 AI 调整后的提示词…'
+                : extractStreamingUi
+                  ? '正在接收模型回复…'
+                  : '可在此修改提示词…'
+            }"
+            ${editorLocked ? 'readonly' : ''}
           >${escapeText(successEditorBody)}</textarea>
           <span class="editor-char-count" data-role="editor-char-count" aria-live="polite">${[...successEditorBody].length} 字</span>
         </div>
         ${metaRowHtml(state, {
           versionCount: versionsDisplayCount,
           dirty,
-          disableHistory: versionCount === 0 && !refining,
+          disableHistory: versionCount === 0 && !refining && !streamingExtract,
         })}
         ${refineBlock}
         ${actionsHtml(dirty, {

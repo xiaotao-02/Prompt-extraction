@@ -51,8 +51,9 @@ import {
   normalizeOneClickRewriteRandomness,
 } from '@/lib/oneClickRewrite';
 import type { HistoryLibraryStats } from '@/lib/storage/historyDb';
-import type { SortKey, ViewMode, LibraryDockIntent } from './types';
+import type { SortKey, ViewMode, LibraryDockIntent, LibraryRefineJob } from './types';
 import {
+  MAX_PARALLEL_LIBRARY_REFINES,
   PROJECT_COLORS,
   SYSTEM_NODE,
   TREE_EXPANDED_KEY,
@@ -162,17 +163,18 @@ export default function PromptLibrary({
 
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [expandedId, setExpandedId] = useState<string | null>(null);
+  const expandedIdRef = useRef<string | null>(null);
+  expandedIdRef.current = expandedId;
+  const prevExpandedForDraftRef = useRef<string | null>(null);
 
   const [draft, setDraft] = useState<string>('');
   const [draftNote, setDraftNote] = useState<string>('');
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
   const [refineInput, setRefineInput] = useState('');
-  const [refineLoading, setRefineLoading] = useState(false);
-  const [refinePartial, setRefinePartial] = useState<string | undefined>(undefined);
+  const [refineJobs, setRefineJobs] = useState<LibraryRefineJob[]>([]);
   const [refineError, setRefineError] = useState<string | null>(null);
   const [rewriteRandomness, setRewriteRandomness] =
     useState<OneClickRewriteRandomness>('moderate');
-  const refiningIdRef = useRef<string | null>(null);
   const [actionTip, setActionTip] = useState<{ ok: boolean; msg: string } | null>(null);
 
   useEffect(() => {
@@ -304,11 +306,22 @@ export default function PromptLibrary({
     const onMsg = (message: unknown) => {
       if (!message || typeof message !== 'object' || !('type' in message)) return;
       if ((message as { type: string }).type !== 'REFINE_PROGRESS') return;
-      const payload = (message as { payload?: { historyId?: string; partial?: string } })
-        .payload;
+      const payload = (
+        message as {
+          payload?: { historyId?: string; refineJobId?: string; partial?: string };
+        }
+      ).payload;
       const hid = payload?.historyId;
-      if (!hid || hid !== refiningIdRef.current) return;
-      if (payload.partial !== undefined) setRefinePartial(payload.partial);
+      if (!hid || hid !== expandedIdRef.current) return;
+      const partial = payload?.partial;
+      if (partial === undefined) return;
+
+      setRefineJobs((prev) => {
+        let jid = payload?.refineJobId;
+        if (!jid && prev.length === 1) jid = prev[0]?.jobId;
+        if (!jid) return prev;
+        return prev.map((j) => (j.jobId === jid ? { ...j, partial } : j));
+      });
     };
     chrome.runtime.onMessage.addListener(onMsg);
     return () => chrome.runtime.onMessage.removeListener(onMsg);
@@ -375,29 +388,39 @@ export default function PromptLibrary({
     return () => window.clearTimeout(t);
   }, [focusId, loading, list, onConsumeFocus]);
 
-  // 当展开切换时，把编辑草稿同步到当前展开项
+  useEffect(() => {
+    setRefineJobs([]);
+    setRefineError(null);
+  }, [expandedId]);
+
+  // 当展开切换时，把编辑草稿同步到当前展开项（并行 REFINE 进行中时不要覆盖草稿）
   useEffect(() => {
     if (!expandedId) {
+      prevExpandedForDraftRef.current = null;
       setDraft('');
       setDraftNote('');
       setRefineInput('');
       setRefineError(null);
       return;
     }
-    if (refineLoading) return;
-    const item = list.find((i) => i.id === expandedId);
-    if (item) {
-      setDraft(item.prompt);
-      setDraftNote(item.note || '');
+
+    const expandedChanged = prevExpandedForDraftRef.current !== expandedId;
+    prevExpandedForDraftRef.current = expandedId;
+
+    if (!expandedChanged && refineJobs.length > 0) return;
+
+    const row = list.find((i) => i.id === expandedId);
+    if (row) {
+      setDraft(row.prompt);
+      setDraftNote(row.note || '');
       return;
     }
     void getHistoryItem(expandedId).then((one) => {
-      if (one) {
-        setDraft(one.prompt);
-        setDraftNote(one.note || '');
-      }
+      if (!one || expandedIdRef.current !== expandedId) return;
+      setDraft(one.prompt);
+      setDraftNote(one.note || '');
     });
-  }, [expandedId, list, refineLoading]);
+  }, [expandedId, list, refineJobs.length]);
 
   const showTip = (ok: boolean, msg: string) => {
     setActionTip({ ok, msg });
@@ -839,10 +862,37 @@ export default function PromptLibrary({
     void getSettings().then((s) => saveSettings({ ...s, oneClickRewriteRandomness: level }));
   };
 
-  const sendLibraryRefine = (item: HistoryItem, instruction: string) => {
-    refiningIdRef.current = item.id;
-    setRefinePartial(undefined);
-    setRefineLoading(true);
+  const sendLibraryRefine = (
+    item: HistoryItem,
+    instruction: string,
+    kind: LibraryRefineJob['kind']
+  ) => {
+    const baseline = draft || item.prompt;
+    if (!baseline.trim()) return;
+
+    let newJobId: string | null = null;
+    setRefineJobs((prev) => {
+      if (expandedIdRef.current !== item.id) return prev;
+      if (prev.length >= MAX_PARALLEL_LIBRARY_REFINES) return prev;
+      newJobId = crypto.randomUUID();
+      return [
+        {
+          jobId: newJobId,
+          kind,
+          baselinePrompt: baseline,
+          instruction,
+        },
+        ...prev,
+      ];
+    });
+
+    if (!newJobId) {
+      if (expandedIdRef.current === item.id) {
+        showTip(false, `最多同时 ${MAX_PARALLEL_LIBRARY_REFINES} 条 AI 调整任务`);
+      }
+      return;
+    }
+
     setRefineError(null);
     chrome.runtime.sendMessage(
       {
@@ -850,34 +900,29 @@ export default function PromptLibrary({
         payload: {
           historyId: item.id,
           instruction,
-          current: draft || item.prompt,
+          current: baseline,
+          refineJobId: newJobId,
         },
       },
       (resp: RefineResponse | undefined) => {
+        const dropJob = () =>
+          setRefineJobs((prev) => prev.filter((j) => j.jobId !== newJobId));
+
         if (chrome.runtime.lastError || !resp) {
-          refiningIdRef.current = null;
-          setRefinePartial(undefined);
-          setRefineLoading(false);
+          dropJob();
           setRefineError(chrome.runtime.lastError?.message || '后台未响应');
           return;
         }
         if (!resp.ok) {
-          refiningIdRef.current = null;
-          setRefinePartial(undefined);
-          setRefineLoading(false);
+          dropJob();
           setRefineError(resp.error);
           return;
         }
         setRefineInput('');
-        refiningIdRef.current = null;
-        setRefinePartial(undefined);
-        void reloadHistory()
-          .then(() => {
-            showTip(true, 'AI 已生成新版本');
-          })
-          .finally(() => {
-            setRefineLoading(false);
-          });
+        dropJob();
+        void reloadHistory().then(() => {
+          showTip(true, 'AI 已生成新版本');
+        });
       }
     );
   };
@@ -888,7 +933,7 @@ export default function PromptLibrary({
       setRefineError('请先输入修改要求');
       return;
     }
-    sendLibraryRefine(item, instruction);
+    sendLibraryRefine(item, instruction, 'refine');
   };
 
   const runOneClickRewrite = (item: HistoryItem) => {
@@ -896,7 +941,8 @@ export default function PromptLibrary({
     if (!text) return;
     sendLibraryRefine(
       item,
-      buildOneClickRewriteInstruction(rewriteRandomness, makeRewriteNonce())
+      buildOneClickRewriteInstruction(rewriteRandomness, makeRewriteNonce()),
+      'rewrite'
     );
   };
 
@@ -1116,24 +1162,69 @@ export default function PromptLibrary({
         <NoMatchState onClear={clearFilters} />
       ) : view === 'grid' ? (
         <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4 gap-3">
-          {filtered.map((item) => (
-            <ItemGridCard
-              key={item.id}
-              item={item}
-              checked={selectedIds.has(item.id)}
-              expanded={expandedId === item.id}
-              copiedKey={copiedKey}
-              folders={folders}
-              selectedIds={selectedIds}
-              onToggleSelect={() => toggleSelect(item.id)}
-              onCopy={onCopy}
-              onTogglePin={() => onTogglePin(item)}
-              onExpand={() => onExpand(item.id)}
-              onDelete={() => onDeleteItem(item)}
-              onRecallToPanel={() => onRecallToPanel(item)}
-              onMoveTo={handleMoveOne(item)}
-            />
-          ))}
+          {filtered.map((item) => {
+            const expanded = expandedId === item.id;
+            return (
+              <div
+                key={item.id}
+                className={`min-h-0 ${expanded ? 'col-span-full' : ''}`}
+              >
+                <ItemGridCard
+                  item={item}
+                  checked={selectedIds.has(item.id)}
+                  expanded={expanded}
+                  copiedKey={copiedKey}
+                  folders={folders}
+                  selectedIds={selectedIds}
+                  onToggleSelect={() => toggleSelect(item.id)}
+                  onCopy={onCopy}
+                  onTogglePin={() => onTogglePin(item)}
+                  onExpand={() => onExpand(item.id)}
+                  onDelete={() => onDeleteItem(item)}
+                  onRecallToPanel={() => onRecallToPanel(item)}
+                  onMoveTo={handleMoveOne(item)}
+                />
+                {expanded && (
+                  <div className="mt-3 card !p-0 overflow-hidden">
+                    <ExpandedPanel
+                      item={item}
+                      draft={draft}
+                      draftNote={draftNote}
+                      onChangeDraft={setDraft}
+                      onChangeNote={setDraftNote}
+                      onSaveDraft={() => onSaveDraft(item)}
+                      rewriteRandomness={rewriteRandomness}
+                      onRewriteRandomnessChange={persistRewriteRandomness}
+                      onOneClickRewrite={() => runOneClickRewrite(item)}
+                      onCopy={onCopy}
+                      copiedKey={copiedKey}
+                      onRestoreVersion={(v) => onRestoreVersion(item, v)}
+                      onDeleteVersion={(v) => onDeleteVersion(item, v)}
+                      refineInput={refineInput}
+                      refineJobs={refineJobs}
+                      refineError={refineError}
+                      onChangeRefine={(v) => {
+                        setRefineInput(v);
+                        if (refineError) setRefineError(null);
+                      }}
+                      onRunRefine={() => runRefine(item)}
+                      onPickRefineSuggestion={(s) => {
+                        setRefineInput((prev) => {
+                          const t = prev.trim();
+                          return t ? `${t}；${s}` : s;
+                        });
+                        if (refineError) setRefineError(null);
+                      }}
+                      initialDock={
+                        dockIntent && expandedId === item.id ? dockIntent : null
+                      }
+                      onInitialDockConsumed={onConsumeDockIntent}
+                    />
+                  </div>
+                )}
+              </div>
+            );
+          })}
         </div>
       ) : (
         <ul className="space-y-2.5">
@@ -1184,8 +1275,7 @@ export default function PromptLibrary({
                     onRestoreVersion={(v) => onRestoreVersion(item, v)}
                     onDeleteVersion={(v) => onDeleteVersion(item, v)}
                     refineInput={refineInput}
-                    refineLoading={refineLoading}
-                    refinePartial={refinePartial}
+                    refineJobs={refineJobs}
                     refineError={refineError}
                     onChangeRefine={(v) => {
                       setRefineInput(v);

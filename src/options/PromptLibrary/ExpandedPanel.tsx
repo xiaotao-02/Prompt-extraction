@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { createPortal } from 'react-dom';
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import {
   History as HistoryIcon,
   Wand2,
@@ -12,11 +12,16 @@ import {
   StickyNote,
 } from 'lucide-react';
 import type { HistoryItem, OneClickRewriteRandomness, PromptVersion } from '@/lib/types';
-import { REFINE_STREAM_VERSION_ID, refineStreamDisplayedBody } from '@/lib/refineStreamVersion';
+import {
+  parseRefineJobSentinel,
+  refineStreamDisplayedBody,
+  refineStreamSentinelForJob,
+} from '@/lib/refineStreamVersion';
 import { VersionsSidebar } from './tabs/VersionsTab';
 import { MetaTab } from './tabs/MetaTab';
 import { RefineInline } from './tabs/RefineInline';
-import type { LibraryDockIntent } from './types';
+import type { LibraryDockIntent, LibraryRefineJob } from './types';
+import { MAX_PARALLEL_LIBRARY_REFINES } from './types';
 
 type InlineSection = 'refine' | 'meta';
 
@@ -40,8 +45,7 @@ export function ExpandedPanel({
   onRestoreVersion,
   onDeleteVersion,
   refineInput,
-  refineLoading,
-  refinePartial,
+  refineJobs,
   refineError,
   onChangeRefine,
   onRunRefine,
@@ -63,9 +67,7 @@ export function ExpandedPanel({
   onRestoreVersion: (v: PromptVersion) => void;
   onDeleteVersion: (v: PromptVersion) => void;
   refineInput: string;
-  refineLoading: boolean;
-  /** 流式累计正文；有内容时主编辑器展示此字段以与浮动面板一致 */
-  refinePartial?: string;
+  refineJobs: LibraryRefineJob[];
   refineError: string | null;
   onChangeRefine: (v: string) => void;
   onRunRefine: () => void;
@@ -83,19 +85,38 @@ export function ExpandedPanel({
 
   const toggleInline = (s: InlineSection) => setOpenInline((cur) => (cur === s ? null : s));
 
+  const refineLoading = refineJobs.length > 0;
+
+  const refineJobIdsKey = useMemo(
+    () => refineJobs.map((j) => j.jobId).join('|'),
+    [refineJobs]
+  );
+  const versionIdsKey = useMemo(
+    () => item.versions.map((v) => v.id).join('|'),
+    [item.versions]
+  );
+
   useLayoutEffect(() => {
-    if (refineLoading) {
-      setSelectedVersionId(REFINE_STREAM_VERSION_ID);
-    } else {
+    if (refineJobs.length === 0) {
       setSelectedVersionId((sel) =>
-        sel === REFINE_STREAM_VERSION_ID ? null : sel
+        parseRefineJobSentinel(sel ?? undefined) ? null : sel
       );
+      return;
     }
-  }, [refineLoading]);
+    setSelectedVersionId((sel) => {
+      const jid = parseRefineJobSentinel(sel ?? undefined);
+      if (jid && refineJobs.some((j) => j.jobId === jid)) return sel;
+      if (sel && !jid && item.versions.some((v) => v.id === sel)) return sel;
+      const latest = refineJobs[0];
+      return latest ? refineStreamSentinelForJob(latest.jobId) : null;
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- 仅以 refineJobIdsKey / versionIdsKey 追踪集合变更，避免 partial 刷新重置选中
+  }, [refineJobIdsKey, versionIdsKey]);
 
   useEffect(() => {
-    if (refineLoading) setOpenInline('refine');
-  }, [refineLoading]);
+    if (!refineJobIdsKey) return;
+    setOpenInline('refine');
+  }, [refineJobIdsKey]);
 
   /** Popup / hash deep-link：一次性打开 AI 调整或历史侧栏，并通知父组件清掉 dockIntent */
   useLayoutEffect(() => {
@@ -109,7 +130,7 @@ export function ExpandedPanel({
 
   const versionCount = item.versions?.length || 0;
   const versionsSidebarVisible = versionCount > 0 || refineLoading;
-  const versionsDisplayCount = versionCount + (refineLoading ? 1 : 0);
+  const versionsDisplayCount = versionCount + refineJobs.length;
   const versionsListScrollable = versionsDisplayCount >= VERSIONS_SCROLL_THRESHOLD;
 
   const updateSidebarLeft = useCallback(() => {
@@ -156,12 +177,17 @@ export function ExpandedPanel({
   const editorValue = (() => {
     if (!refineLoading) return draft;
     const sel = selectedVersionId;
-    if (sel && sel !== REFINE_STREAM_VERSION_ID) {
+    if (sel && !parseRefineJobSentinel(sel ?? undefined)) {
       const v = item.versions.find((x) => x.id === sel);
       if (v) return v.prompt;
     }
     return refineStreamDisplayedBody({
-      refinePartial,
+      refineJobs: refineJobs.map((j) => ({
+        jobId: j.jobId,
+        partial: j.partial,
+        refineBaselinePrompt: j.baselinePrompt,
+      })),
+      selectedVersionId,
       draft,
       prompt: item.prompt,
     });
@@ -171,7 +197,9 @@ export function ExpandedPanel({
     refineLoading ? false : draft.trim() !== item.prompt.trim();
   const dirtyNote = (draftNote || '') !== (item.note || '');
   const dirty = dirtyPrompt || dirtyNote;
-  const rewriteBusy = refineLoading || !(draft || item.prompt).trim();
+  const rewriteBusy =
+    refineJobs.length >= MAX_PARALLEL_LIBRARY_REFINES ||
+    !(draft || item.prompt).trim();
 
   const handleSelectVersion = (v: PromptVersion) => {
     if (refineLoading) {
@@ -230,10 +258,10 @@ export function ExpandedPanel({
                     item={item}
                     editorContent={editorValue}
                     selectedVersionId={selectedVersionId}
-                    refineLoading={refineLoading}
+                    refineJobs={refineJobs}
                     scrollList={versionsListScrollable}
-                    onSelectGeneratingRow={() =>
-                      setSelectedVersionId(REFINE_STREAM_VERSION_ID)
+                    onSelectGeneratingJob={(jobId) =>
+                      setSelectedVersionId(refineStreamSentinelForJob(jobId))
                     }
                     onCopy={onCopy}
                     copiedKey={copiedKey}
@@ -330,28 +358,30 @@ export function ExpandedPanel({
 
         {/* 操作按钮行 */}
         <div className="flex items-center gap-1.5 flex-wrap">
-          <select
-            value={rewriteRandomness}
-            disabled={rewriteBusy}
-            aria-label="一键洗稿随机强度"
-            title="随机强度"
-            onChange={(e) =>
-              onRewriteRandomnessChange(e.target.value as OneClickRewriteRandomness)
-            }
-            className="text-[11px] px-2 py-1 rounded-md border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 text-zinc-700 dark:text-zinc-200 disabled:opacity-40 max-w-[76px]"
-          >
-            <option value="subtle">轻度</option>
-            <option value="moderate">中度</option>
-            <option value="bold">强烈</option>
-          </select>
-          <button
-            type="button"
-            onClick={onOneClickRewrite}
-            disabled={rewriteBusy}
-            className="inline-flex items-center gap-1 text-[11px] px-2.5 py-1 rounded-md border border-zinc-200 dark:border-zinc-700 hover:bg-zinc-100 dark:hover:bg-zinc-800 disabled:opacity-40 text-zinc-600 dark:text-zinc-300 transition"
-          >
-            <Shuffle className="w-3.5 h-3.5" /> 一键洗稿
-          </button>
+          <div className="inline-flex items-stretch rounded-md">
+            <select
+              value={rewriteRandomness}
+              disabled={rewriteBusy}
+              aria-label="随机风格强度"
+              title="随机风格强度"
+              onChange={(e) =>
+                onRewriteRandomnessChange(e.target.value as OneClickRewriteRandomness)
+              }
+              className="text-[11px] px-2 py-1 rounded-l-md rounded-r-none border border-r-0 border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 text-zinc-700 dark:text-zinc-200 disabled:opacity-40 max-w-[76px]"
+            >
+              <option value="subtle">轻度</option>
+              <option value="moderate">中度</option>
+              <option value="bold">强烈</option>
+            </select>
+            <button
+              type="button"
+              onClick={onOneClickRewrite}
+              disabled={rewriteBusy}
+              className="inline-flex items-center gap-1 -ml-px text-[11px] px-2.5 py-1 rounded-r-md rounded-l-none border border-zinc-200 dark:border-zinc-700 hover:bg-zinc-100 dark:hover:bg-zinc-800 disabled:opacity-40 text-zinc-600 dark:text-zinc-300 transition"
+            >
+              <Shuffle className="w-3.5 h-3.5" /> 随机风格
+            </button>
+          </div>
           <button
             onClick={onSaveDraft}
             disabled={!dirty}

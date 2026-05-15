@@ -51,28 +51,30 @@ export function EditorTab({
           >
             <Save className="w-3.5 h-3.5" /> 保存为新版本
           </button>
-          <select
-            value={rewriteRandomness}
-            disabled={rewriteBusy}
-            aria-label="一键洗稿随机强度"
-            title="随机强度"
-            onChange={(e) =>
-              onRewriteRandomnessChange(e.target.value as OneClickRewriteRandomness)
-            }
-            className="text-[11px] px-2 py-1 rounded-md border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 text-zinc-700 dark:text-zinc-200 disabled:opacity-50 max-w-[76px]"
-          >
-            <option value="subtle">轻度</option>
-            <option value="moderate">中度</option>
-            <option value="bold">强烈</option>
-          </select>
-          <button
-            type="button"
-            onClick={onOneClickRewrite}
-            disabled={rewriteBusy}
-            className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md border border-zinc-200 dark:border-zinc-700 hover:bg-zinc-100 dark:hover:bg-zinc-800 disabled:opacity-50 text-zinc-600 dark:text-zinc-300 transition"
-          >
-            <Shuffle className="w-3.5 h-3.5" /> 一键洗稿
-          </button>
+          <div className="inline-flex items-stretch rounded-md">
+            <select
+              value={rewriteRandomness}
+              disabled={rewriteBusy}
+              aria-label="随机风格强度"
+              title="随机风格强度"
+              onChange={(e) =>
+                onRewriteRandomnessChange(e.target.value as OneClickRewriteRandomness)
+              }
+              className="text-[11px] px-2 py-1 rounded-l-md rounded-r-none border border-r-0 border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 text-zinc-700 dark:text-zinc-200 disabled:opacity-50 max-w-[76px]"
+            >
+              <option value="subtle">轻度</option>
+              <option value="moderate">中度</option>
+              <option value="bold">强烈</option>
+            </select>
+            <button
+              type="button"
+              onClick={onOneClickRewrite}
+              disabled={rewriteBusy}
+              className="inline-flex items-center gap-1 -ml-px px-2.5 py-1 rounded-r-md rounded-l-none border border-zinc-200 dark:border-zinc-700 hover:bg-zinc-100 dark:hover:bg-zinc-800 disabled:opacity-50 text-zinc-600 dark:text-zinc-300 transition text-[11px]"
+            >
+              <Shuffle className="w-3.5 h-3.5" /> 随机风格
+            </button>
+          </div>
           <button
             onClick={() => onCopy(draft, `draft:${item.id}`)}
             className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md hover:bg-zinc-100 dark:hover:bg-zinc-800 text-zinc-600 dark:text-zinc-300 transition"

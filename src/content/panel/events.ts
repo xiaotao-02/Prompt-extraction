@@ -21,7 +21,15 @@ import {
   panelActions,
   panelGeometry,
   type PanelState,
+  type PanelRefineJob,
   panelReferenceUrls,
+  libraryStorageId,
+  panelHasActiveRefine,
+  panelRefineJobs,
+  panelExtractJobs,
+  matchesExtractStreamRequest,
+  MAX_PARALLEL_PANEL_REFINES,
+  MAX_PARALLEL_PANEL_EXTRACTS,
 } from './state';
 import { normalizeReferenceList, appendReferenceUrl, MAX_REFERENCE_IMAGES } from '@/lib/referenceImages';
 import {
@@ -34,13 +42,15 @@ import {
   VIEWPORT_MARGIN,
 } from './geometry';
 import { buildVersionsListInnerHtml, loadingEditorDisplayedText, successEditorDisplayedText } from './templates';
-import { EXTRACT_STREAM_VERSION_ID, REFINE_STREAM_VERSION_ID } from '@/lib/refineStreamVersion';
-import { openInPanelMessage, openOptionsMessage } from '@/lib/messaging/openSurfaces';
-
-/** 访问提示词库时使用的真实记录 id（预取命中后 requestId 仍为会话 UUID）。 */
-export function libraryStorageId(state: { requestId: string; linkedHistoryId?: string }): string {
-  return state.linkedHistoryId ?? state.requestId;
-}
+import {
+  EXTRACT_STREAM_VERSION_ID,
+  REFINE_STREAM_VERSION_ID,
+  extractStreamSentinelForJob,
+  refineStreamSentinelForJob,
+  parseExtractJobSentinel,
+  parseRefineJobSentinel,
+} from '@/lib/refineStreamVersion';
+import { openOptionsMessage } from '@/lib/messaging/openSurfaces';
 
 function renderPanel(...args: Parameters<typeof panelActions.renderPanel>) {
   return panelActions.renderPanel(...args);
@@ -50,8 +60,6 @@ function closePanel() {
 }
 
 let dirtyVersionHighlightRaf = 0;
-/** 防止连点「在来源页打开」重复建 tab / 重复发消息。 */
-let openInPanelBusy = false;
 
 /** `.panel` 根上 resize/mousedown/click/input 只绑一次；panel-surface 内 HTML 替换不重绑。 */
 const panelShellBound = new WeakSet<HTMLElement>();
@@ -74,7 +82,8 @@ function syncDirtyHintsImmediate(): void {
   if (!panel || !currentState) return;
   const root = panel;
   const draft = currentState.draft ?? '';
-  const dirty = currentState.refineLoading ? false : draft !== (currentState.prompt ?? '');
+  const dirty =
+    panelHasActiveRefine(currentState) ? false : draft !== (currentState.prompt ?? '');
   const hint = root.querySelector<HTMLElement>('.dirty-hint');
   if (hint) hint.classList.toggle('show', dirty);
   const taEditor = root.querySelector<HTMLTextAreaElement>('[data-role="editor"]');
@@ -83,7 +92,8 @@ function syncDirtyHintsImmediate(): void {
       ? taEditor.value
       : draft || (currentState.prompt ?? '');
   const baselineEmpty = baselineRaw.trim().length === 0;
-  const spinDisabled = !!currentState.refineLoading || baselineEmpty;
+  const spinDisabled =
+    panelRefineJobs(currentState).length >= MAX_PARALLEL_PANEL_REFINES || baselineEmpty;
   const setDisabled = (sel: string, disabled: boolean) => {
     const btn = root.querySelector<HTMLButtonElement>(sel);
     if (!btn) return;
@@ -117,7 +127,12 @@ function syncVersionHighlightFromState(): void {
   const versions = currentState.versions || [];
   const sel = currentState.selectedVersionId;
   let matchedId: string | undefined;
-  if (sel === REFINE_STREAM_VERSION_ID || sel === EXTRACT_STREAM_VERSION_ID) {
+  if (
+    sel === REFINE_STREAM_VERSION_ID ||
+    sel === EXTRACT_STREAM_VERSION_ID ||
+    sel?.startsWith(`${REFINE_STREAM_VERSION_ID}:`) ||
+    sel?.startsWith(`${EXTRACT_STREAM_VERSION_ID}:`)
+  ) {
     matchedId = sel;
   } else if (sel) {
     const byId = versions.find((v) => v.id === sel);
@@ -154,28 +169,34 @@ export function updateDirtyChromeImmediate(): void {
   syncVersionHighlightFromState();
 }
 
-export async function syncVersions(sessionRequestId: string): Promise<void> {
+export async function syncVersions(): Promise<void> {
   try {
     const st = currentState;
-    if (!st || st.requestId !== sessionRequestId) return;
+    if (!st) return;
     const storageId = libraryStorageId(st);
     const item = await getHistoryItemFromExtension(storageId);
     if (!item) return;
     const stNow = currentState;
-    if (!stNow || stNow.requestId !== sessionRequestId) return;
+    if (!stNow) return;
     let nextSel = stNow.selectedVersionId;
     if (
       nextSel &&
       nextSel !== REFINE_STREAM_VERSION_ID &&
       nextSel !== EXTRACT_STREAM_VERSION_ID &&
+      !nextSel.startsWith(`${REFINE_STREAM_VERSION_ID}:`) &&
+      !nextSel.startsWith(`${EXTRACT_STREAM_VERSION_ID}:`) &&
       !item.versions.some((v) => v.id === nextSel)
     ) {
       nextSel = undefined;
     }
     const preserveRefine =
-      !!stNow.refineLoading && nextSel === REFINE_STREAM_VERSION_ID;
+      panelHasActiveRefine(stNow) &&
+      !!nextSel &&
+      (nextSel === REFINE_STREAM_VERSION_ID || nextSel.startsWith(`${REFINE_STREAM_VERSION_ID}:`));
     const preserveExtract =
-      stNow.status === 'loading' && nextSel === EXTRACT_STREAM_VERSION_ID;
+      panelExtractJobs(stNow).length > 0 &&
+      !!nextSel &&
+      (nextSel === EXTRACT_STREAM_VERSION_ID || nextSel.startsWith(`${EXTRACT_STREAM_VERSION_ID}:`));
     const nextDraft = stNow.draft ?? item.prompt;
     if (!preserveRefine && !preserveExtract && !nextSel) {
       nextSel =
@@ -205,7 +226,11 @@ export function patchVersionList(): void {
   if (!st || !panel) return;
 
   const versions = st.versions || [];
-  if (versions.length === 0 && !st.refineLoading) {
+  if (
+    versions.length === 0 &&
+    !panelHasActiveRefine(st) &&
+    panelExtractJobs(st).length === 0
+  ) {
     renderPanel(st);
     return;
   }
@@ -218,10 +243,11 @@ export function patchVersionList(): void {
 
   const headSpan = panel.querySelector<HTMLElement>('.versions-head > span');
   if (headSpan) {
-    const n =
-      versions.length +
-      (st.refineLoading ? 1 : 0) +
-      (st.status === 'loading' && versions.length > 0 ? 1 : 0);
+    const extractRows =
+      st.status === 'success' || (st.status === 'loading' && versions.length > 0)
+        ? panelExtractJobs(st).length
+        : 0;
+    const n = versions.length + panelRefineJobs(st).length + extractRows;
     headSpan.textContent = `历史版本 · ${n}`;
   }
 
@@ -440,6 +466,11 @@ function bindEdgeResize(root: HTMLElement): void {
   });
 }
 
+function removeRefineJobById(state: PanelState, jobId: string): PanelState {
+  const jobs = panelRefineJobs(state).filter((j) => j.jobId !== jobId);
+  return { ...state, refineJobs: jobs.length ? jobs : undefined };
+}
+
 function beginPanelRefineSession(
   sessionState: PanelState,
   baseline: string,
@@ -447,27 +478,37 @@ function beginPanelRefineSession(
   refineInstructionSnapshot: string
 ): void {
   const requestIdSnapshot = sessionState.requestId;
+  if (panelRefineJobs(sessionState).length >= MAX_PARALLEL_PANEL_REFINES) return;
+
+  const jobId = crypto.randomUUID();
+  const kind: PanelRefineJob['kind'] = refineInstructionSnapshot.trim() ? 'refine' : 'rewrite';
+  const jobs: PanelRefineJob[] = [
+    ...panelRefineJobs(sessionState),
+    {
+      jobId,
+      kind,
+      stage: 'calling',
+      partial: undefined,
+      startedAt: Date.now(),
+      refineBaselinePrompt: baseline,
+      refineInstructionSnapshot: refineInstructionSnapshot || undefined,
+    },
+  ];
+
   setCurrentState({
     ...sessionState,
-    refineLoading: true,
+    refineJobs: jobs,
     refineError: undefined,
     refineInstruction: refineInstructionSnapshot,
-    refineStage: 'calling',
-    refinePartial: undefined,
-    refineStartedAt: Date.now(),
-    refineBaselinePrompt: baseline,
-    selectedVersionId: REFINE_STREAM_VERSION_ID,
+    selectedVersionId: refineStreamSentinelForJob(jobId),
+    versionsOpen: true,
   });
   renderPanel(currentState!);
   if (!isExtensionContextValid()) {
+    const cleared = removeRefineJobById(currentState!, jobId);
     setCurrentState({
-      ...currentState!,
-      refineLoading: false,
+      ...cleared,
       refineError: '扩展已更新，请刷新页面',
-      refineStage: undefined,
-      refinePartial: undefined,
-      refineStartedAt: undefined,
-      refineBaselinePrompt: undefined,
     });
     renderPanel(currentState!);
     return;
@@ -480,67 +521,62 @@ function beginPanelRefineSession(
           historyId: libraryStorageId(sessionState),
           instruction,
           current: baseline,
+          refineJobId: jobId,
         },
       },
       (resp: RefineResponse | undefined) => {
         if (!currentState || currentState.requestId !== requestIdSnapshot) return;
+        const rid = resp?.ok ? resp.refineJobId ?? jobId : jobId;
         if (chrome.runtime.lastError || !resp) {
-          setCurrentState({
-            ...currentState,
-            refineLoading: false,
-            refineError:
-              chrome.runtime.lastError?.message || '后台未响应，请稍后再试',
-            refineStage: undefined,
-            refinePartial: undefined,
-            refineStartedAt: undefined,
-            refineBaselinePrompt: undefined,
-          });
-          renderPanel(currentState);
+          let next = removeRefineJobById(currentState, rid);
+          next = {
+            ...next,
+            refineError: chrome.runtime.lastError?.message || '后台未响应，请稍后再试',
+          };
+          setCurrentState(next);
+          renderPanel(next);
           return;
         }
         if (!resp.ok) {
-          setCurrentState({
-            ...currentState,
-            refineLoading: false,
-            refineError: resp.error,
-            refineStage: undefined,
-            refinePartial: undefined,
-            refineStartedAt: undefined,
-            refineBaselinePrompt: undefined,
-          });
-          renderPanel(currentState);
+          let next = removeRefineJobById(currentState, rid);
+          next = { ...next, refineError: resp.error };
+          setCurrentState(next);
+          renderPanel(next);
           return;
         }
-        const wasOpen = currentState.versionsOpen;
-        setCurrentState({
-          ...currentState,
-          refineLoading: false,
+        let next = removeRefineJobById(currentState, rid);
+        const stillRefining = panelRefineJobs(next).length > 0;
+        const wasOpen = next.versionsOpen;
+        const prevSel = currentState.selectedVersionId;
+        const viewingCompleted =
+          prevSel === refineStreamSentinelForJob(rid) ||
+          prevSel === REFINE_STREAM_VERSION_ID ||
+          parseRefineJobSentinel(prevSel ?? undefined) === rid;
+        let nextSel = prevSel;
+        if (!stillRefining || viewingCompleted || parseRefineJobSentinel(prevSel ?? undefined) === rid) {
+          nextSel = resp.versionId;
+        }
+        next = {
+          ...next,
           refineError: undefined,
-          refineInstruction: '',
-          refineOpen: false,
-          refineStage: undefined,
-          refinePartial: undefined,
-          refineStartedAt: undefined,
-          refineBaselinePrompt: undefined,
+          refineInstruction: stillRefining ? next.refineInstruction : '',
+          refineOpen: stillRefining ? next.refineOpen : false,
           prompt: resp.prompt,
           draft: resp.prompt,
           versionsOpen: true,
-          selectedVersionId: resp.versionId,
-        });
+          selectedVersionId: nextSel,
+        };
+        setCurrentState(next);
         if (!wasOpen) expandPanelForSidebar();
-        void syncVersions(requestIdSnapshot);
-        renderPanel(currentState);
+        void syncVersions();
+        renderPanel(currentState!);
       }
     );
   } catch {
+    const cleared = removeRefineJobById(currentState!, jobId);
     setCurrentState({
-      ...currentState!,
-      refineLoading: false,
+      ...cleared,
       refineError: '扩展已更新，请刷新页面',
-      refineStage: undefined,
-      refinePartial: undefined,
-      refineStartedAt: undefined,
-      refineBaselinePrompt: undefined,
     });
     renderPanel(currentState!);
   }
@@ -563,6 +599,7 @@ function handleDataAction(root: HTMLElement, el: HTMLElement, event: MouseEvent)
     renderPanel({
       ...state,
       requestId: newReq,
+      extractJobs: [{ streamRequestId: newReq, startedAt: Date.now() }],
       status: 'loading',
       stage: 'calling',
       startedAt: Date.now(),
@@ -576,7 +613,8 @@ function handleDataAction(root: HTMLElement, el: HTMLElement, event: MouseEvent)
       versions: undefined,
       versionsOpen: false,
       refineOpen: false,
-      refineLoading: false,
+      refineJobs: undefined,
+      refineError: undefined,
     });
     safeSendMessage({
       type: 'EXTRACT_PROMPT',
@@ -627,7 +665,9 @@ function handleDataAction(root: HTMLElement, el: HTMLElement, event: MouseEvent)
     const text =
       state.status === 'loading'
         ? loadingEditorDisplayedText(state)
-        : state.draft ?? state.prompt ?? state.partial ?? '';
+        : state.status === 'success'
+          ? successEditorDisplayedText(state)
+          : state.draft ?? state.prompt ?? state.partial ?? '';
     navigator.clipboard
       .writeText(text)
       .then(() => flashCopied(el))
@@ -641,17 +681,75 @@ function handleDataAction(root: HTMLElement, el: HTMLElement, event: MouseEvent)
     const hasHistory = versions.length > 0;
     const urls = normalizeReferenceList(panelReferenceUrls(state));
     if (!urls.length) return;
+    if (panelExtractJobs(state).length >= MAX_PARALLEL_PANEL_EXTRACTS) return;
+
+    const streamId = crypto.randomUUID();
+
+    if (hasHistory && state.status === 'success') {
+      const ej = [...panelExtractJobs(state), { streamRequestId: streamId, startedAt: Date.now() }];
+      const wasOpen = state.versionsOpen;
+      renderPanel({
+        ...state,
+        extractJobs: ej,
+        selectedVersionId: extractStreamSentinelForJob(streamId),
+        versionsOpen: true,
+        linkedHistoryId: undefined,
+      });
+      if (!wasOpen) expandPanelForSidebar();
+      safeSendMessage({
+        type: 'EXTRACT_PROMPT',
+        payload: {
+          imageUrl: urls[0]!,
+          imageUrls: urls,
+          pageUrl: location.href,
+          pageTitle: document.title,
+          requestId: streamId,
+          ...(state.strategy !== undefined ? { strategyOverride: state.strategy } : {}),
+        },
+      });
+      return;
+    }
+
+    if (state.status === 'loading') {
+      const ej = [...panelExtractJobs(state), { streamRequestId: streamId, startedAt: Date.now() }];
+      renderPanel({
+        ...state,
+        extractJobs: ej,
+        selectedVersionId:
+          versions.length > 0 ? extractStreamSentinelForJob(streamId) : state.selectedVersionId,
+        versionsOpen: versions.length > 0 ? true : state.versionsOpen,
+      });
+      safeSendMessage({
+        type: 'EXTRACT_PROMPT',
+        payload: {
+          imageUrl: urls[0]!,
+          imageUrls: urls,
+          pageUrl: location.href,
+          pageTitle: document.title,
+          requestId: streamId,
+          ...(state.strategy !== undefined ? { strategyOverride: state.strategy } : {}),
+        },
+      });
+      return;
+    }
+
     renderPanel({
       ...state,
+      requestId: streamId,
+      extractJobs: [{ streamRequestId: streamId, startedAt: Date.now() }],
       status: 'loading',
       prompt: undefined,
       error: undefined,
       draft: undefined,
-      selectedVersionId: hasHistory ? EXTRACT_STREAM_VERSION_ID : undefined,
+      selectedVersionId: hasHistory ? extractStreamSentinelForJob(streamId) : undefined,
       extractBaselinePrompt: undefined,
       stage: 'calling',
       partial: undefined,
       startedAt: Date.now(),
+      linkedHistoryId: undefined,
+      refineJobs: undefined,
+      refineError: undefined,
+      refineOpen: false,
     });
     safeSendMessage({
       type: 'EXTRACT_PROMPT',
@@ -660,7 +758,7 @@ function handleDataAction(root: HTMLElement, el: HTMLElement, event: MouseEvent)
         imageUrls: urls,
         pageUrl: location.href,
         pageTitle: document.title,
-        requestId: state.requestId,
+        requestId: streamId,
         ...(state.strategy !== undefined ? { strategyOverride: state.strategy } : {}),
       },
     });
@@ -669,34 +767,6 @@ function handleDataAction(root: HTMLElement, el: HTMLElement, event: MouseEvent)
   if (action === 'open-options') {
     if (!isExtensionContextValid()) return;
     safeSendMessage(openOptionsMessage());
-    return;
-  }
-  if (action === 'open-in-panel') {
-    if (!isExtensionContextValid()) return;
-    if (openInPanelBusy) return;
-    const btn =
-      el instanceof HTMLButtonElement ? el : el.closest<HTMLButtonElement>('button');
-    if (!btn || btn.disabled) return;
-    openInPanelBusy = true;
-    btn.disabled = true;
-    const msg = openInPanelMessage(libraryStorageId(state));
-    safeSendMessage(msg, (raw) => {
-      openInPanelBusy = false;
-      if (btn.isConnected) btn.disabled = false;
-      if (!isExtensionContextValid()) return;
-      const lastErr = chrome.runtime.lastError?.message;
-      const resp = raw as { ok?: boolean; error?: string } | undefined;
-      if (lastErr) {
-        flashCopied(btn, lastErr.length > 40 ? `${lastErr.slice(0, 37)}…` : lastErr);
-        return;
-      }
-      if (!resp?.ok) {
-        const err = resp?.error || '打开失败';
-        flashCopied(btn, err.length > 40 ? `${err.slice(0, 37)}…` : err);
-        return;
-      }
-      flashCopied(btn, '已打开来源页 ✔');
-    });
     return;
   }
   if (action === 'open-in-library') {
@@ -735,7 +805,8 @@ function handleDataAction(root: HTMLElement, el: HTMLElement, event: MouseEvent)
     return;
   }
   if (action === 'rewrite-spin') {
-    if (state.status !== 'success' || state.refineLoading) return;
+    if (state.status !== 'success') return;
+    if (panelRefineJobs(state).length >= MAX_PARALLEL_PANEL_REFINES) return;
     const actionRoot = root.isConnected ? root : panel ?? root;
     const ta = actionRoot.querySelector<HTMLTextAreaElement>('[data-role="editor"]');
     const baseline = (ta?.value ?? state.draft ?? state.prompt ?? '').trim();
@@ -785,8 +856,9 @@ function handleDataAction(root: HTMLElement, el: HTMLElement, event: MouseEvent)
     const vid = el.dataset.versionId;
     if (!currentState || !vid) return;
 
-    if (vid === REFINE_STREAM_VERSION_ID) {
-      const next = { ...currentState, selectedVersionId: REFINE_STREAM_VERSION_ID };
+    const refineJid = parseRefineJobSentinel(vid);
+    if (refineJid && panelRefineJobs(state).some((j) => j.jobId === refineJid)) {
+      const next = { ...currentState, selectedVersionId: vid };
       setCurrentState(next);
       const actionRoot = root.isConnected ? root : panel ?? root;
       const ta = actionRoot.querySelector<HTMLTextAreaElement>('[data-role="editor"]');
@@ -795,12 +867,47 @@ function handleDataAction(root: HTMLElement, el: HTMLElement, event: MouseEvent)
       return;
     }
 
-    if (vid === EXTRACT_STREAM_VERSION_ID) {
-      const next = { ...currentState, selectedVersionId: EXTRACT_STREAM_VERSION_ID };
+    const extractSid = parseExtractJobSentinel(vid);
+    if (extractSid && matchesExtractStreamRequest(state, extractSid)) {
+      const next = { ...currentState, selectedVersionId: vid };
       setCurrentState(next);
       const actionRoot = root.isConnected ? root : panel ?? root;
       const ta = actionRoot.querySelector<HTMLTextAreaElement>('[data-role="editor"]');
-      if (ta) ta.value = loadingEditorDisplayedText(next);
+      if (ta) {
+        ta.value =
+          state.status === 'success'
+            ? successEditorDisplayedText(next)
+            : loadingEditorDisplayedText(next);
+      }
+      updateDirtyChromeImmediate();
+      return;
+    }
+
+    if (vid === REFINE_STREAM_VERSION_ID && panelHasActiveRefine(state)) {
+      const first = panelRefineJobs(state)[0]?.jobId;
+      const selId = first ? refineStreamSentinelForJob(first) : vid;
+      const next = { ...currentState, selectedVersionId: selId };
+      setCurrentState(next);
+      const actionRoot = root.isConnected ? root : panel ?? root;
+      const ta = actionRoot.querySelector<HTMLTextAreaElement>('[data-role="editor"]');
+      if (ta) ta.value = successEditorDisplayedText(next);
+      updateDirtyChromeImmediate();
+      return;
+    }
+
+    if (vid === EXTRACT_STREAM_VERSION_ID && panelExtractJobs(state).length > 0) {
+      const first = panelExtractJobs(state)[0]?.streamRequestId;
+      const selId = first ? extractStreamSentinelForJob(first) : vid;
+      const next = { ...currentState, selectedVersionId: selId };
+      setCurrentState(next);
+      const actionRoot = root.isConnected ? root : panel ?? root;
+      const ta = actionRoot.querySelector<HTMLTextAreaElement>('[data-role="editor"]');
+      if (ta) {
+        ta.value =
+          state.status === 'success'
+            ? successEditorDisplayedText(next)
+            : loadingEditorDisplayedText(next);
+      }
       updateDirtyChromeImmediate();
       return;
     }
@@ -808,7 +915,7 @@ function handleDataAction(root: HTMLElement, el: HTMLElement, event: MouseEvent)
     const v = state.versions?.find((x) => x.id === vid);
     if (!v) return;
 
-    if (state.refineLoading) {
+    if (panelHasActiveRefine(state)) {
       const next = { ...currentState, selectedVersionId: vid };
       setCurrentState(next);
       const actionRoot = root.isConnected ? root : panel ?? root;
@@ -883,7 +990,7 @@ function handleDataAction(root: HTMLElement, el: HTMLElement, event: MouseEvent)
         flashCopied(el, '已切换到下一版本 ✔');
         return;
       }
-      void syncVersions(state.requestId);
+      void syncVersions();
     });
     return;
   }
@@ -895,11 +1002,6 @@ function handleDataAction(root: HTMLElement, el: HTMLElement, event: MouseEvent)
       refineOpen: opening,
       refineError: undefined,
       refineInstruction: nextInstruction,
-      refineStage: opening ? state.refineStage : undefined,
-      refinePartial: opening ? state.refinePartial : undefined,
-      refineStartedAt: opening ? state.refineStartedAt : undefined,
-      refineBaselinePrompt:
-        !opening && !state.refineLoading ? undefined : state.refineBaselinePrompt,
     });
 
     const slot = root.querySelector<HTMLElement>('[data-role="refine-slot"]');
@@ -1007,7 +1109,8 @@ function bindPanelRewriteRandomnessChange(root: HTMLElement): void {
   root.addEventListener('change', (e: Event) => {
     const t = e.target as HTMLElement;
     if (!t.matches('[data-role="rewrite-randomness"]') || !root.contains(t)) return;
-    if (!currentState || currentState.status !== 'success' || currentState.refineLoading) return;
+    if (!currentState || currentState.status !== 'success' || panelHasActiveRefine(currentState))
+      return;
     const sel = t as HTMLSelectElement;
     const level = sel.value as OneClickRewriteRandomness;
     if (level !== 'subtle' && level !== 'moderate' && level !== 'bold') return;

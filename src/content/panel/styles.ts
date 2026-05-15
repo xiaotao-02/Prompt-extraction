@@ -786,6 +786,32 @@ export const STYLE = `
 
 .actions { display: flex; gap: 6px; justify-content: flex-end; flex-wrap: wrap; align-items: center; }
 
+.rewrite-control-group {
+  display: inline-flex;
+  align-items: stretch;
+}
+.rewrite-control-group .rewrite-randomness {
+  border-radius: 8px 0 0 8px;
+  border-right: none;
+  padding-top: 6px;
+  padding-bottom: 6px;
+  min-height: 34px;
+  box-sizing: border-box;
+}
+.rewrite-control-group .rewrite-spin-btn {
+  border-radius: 0 8px 8px 0;
+  margin-left: -1px;
+  position: relative;
+  z-index: 0;
+}
+.rewrite-control-group .rewrite-spin-btn:focus-visible,
+.rewrite-control-group .rewrite-randomness:focus-visible {
+  z-index: 1;
+}
+.rewrite-spin-btn {
+  border-radius: 8px;
+}
+
 .rewrite-randomness {
   font-size: 11px;
   padding: 5px 8px;

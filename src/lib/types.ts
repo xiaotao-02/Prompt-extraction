@@ -404,6 +404,8 @@ export type RuntimeMessage =
         historyId: string;
         instruction: string;
         current: string;
+        /** 并行 refine 时区分流式进度归属；省略则兼容旧客户端单路行为 */
+        refineJobId?: string;
       };
     }
   | {
@@ -416,6 +418,8 @@ export type RuntimeMessage =
       payload: {
         /** 对应 panel 的 requestId / 历史记录 id（与 REFINE_PROMPT 的 historyId 一致） */
         historyId: string;
+        /** 与 REFINE_PROMPT 对应；省略则兼容旧版单路 refine */
+        refineJobId?: string;
         /** 当前 refine 阶段；和 partial 至少有一个会带上 */
         stage?: RefineStage;
         /** 已收到的累计部分文本（每次都是全文，不是 delta） */
@@ -438,12 +442,14 @@ export type RuntimeMessage =
     }
   | {
       /**
-       * 内容脚本在用户按下右键时探测到鼠标位置的图片（含 <img> / <canvas> /
-       * 内联 <svg> / CSS background-image），用于在原生 'image' 上下文菜单
-       * 不出现时通过 fallback 菜单兜底。imageUrl 为空表示当前位置不是图片。
+       * 内容脚本在 contextmenu（捕获阶段）探测到的「本轮首选提取 URL」与是否点亮兜底菜单。
+       * extractionUrl：可为 http(s)/blob、`data:image/...`，含视频抓拍 JPEG、`poster` URL 等；
+       * 为空时后台清除该 tab 的 tab 级缓存。
+       * showFallback：仅在需要原生 image 上下文以外的兜底入口时为 true；
+       * 直接右键 `<video>` 时可为 false，但仍写入 extractionUrl 供原生菜单点击优先于 `srcUrl`。
        */
       type: 'CTX_MENU_PREP';
-      payload: { imageUrl: string };
+      payload: { extractionUrl: string; showFallback: boolean };
     }
   | {
       /**
@@ -539,6 +545,7 @@ export interface RefineResponseOk {
   provider: ProviderId;
   model: string;
   versionId: string;
+  refineJobId?: string;
 }
 export interface RefineResponseErr {
   ok: false;
