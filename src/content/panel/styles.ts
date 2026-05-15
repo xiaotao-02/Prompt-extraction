@@ -201,6 +201,27 @@ export const STYLE = `
 }
 .thumb img { width: 100%; height: 100%; object-fit: contain; }
 
+.prompt-editor-wrap {
+  position: relative;
+  width: 100%;
+  flex: none;
+  min-width: 0;
+}
+.editor-char-count {
+  position: absolute;
+  right: 12px;
+  bottom: 10px;
+  font-size: 11px;
+  line-height: 1;
+  color: rgba(0,0,0,0.45);
+  pointer-events: none;
+  user-select: none;
+  -webkit-user-select: none;
+}
+@media (prefers-color-scheme: dark) {
+  .editor-char-count { color: rgba(255,255,255,0.45); }
+}
+
 .prompt-text {
   width: 100%; min-height: 240px; max-height: 480px; resize: vertical;
   padding: 12px 14px; border-radius: 10px;
@@ -210,6 +231,9 @@ export const STYLE = `
   font-family: inherit;
   outline: none;
   transition: border-color .15s, box-shadow .15s;
+}
+.prompt-editor-wrap .prompt-text {
+  padding-bottom: 32px;
 }
 .prompt-text:focus {
   border-color: rgba(99,102,241,0.55);

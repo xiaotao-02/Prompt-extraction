@@ -35,6 +35,7 @@ import {
   cancelPendingDirtyChromeDeferred,
   updateDirtyChromeImmediate,
   patchVersionList,
+  syncEditorCharCount,
 } from './events';
 
 export { applyStoredPromptStrategy } from './events';
@@ -114,6 +115,9 @@ export function renderPanel(state: PanelState): void {
       setPanelSurfaceHtml(panel, state);
       applyGeometryToPanel(panel, ensureGeometry());
       bindEvents(panel);
+      if (state.status === 'loading') {
+        syncEditorCharCount();
+      }
       if (state.status === 'success') {
         updateDirtyChromeImmediate();
       }
@@ -158,6 +162,9 @@ export function renderPanel(state: PanelState): void {
     setTimeout(markMounted, 260);
   }
   bindEvents(next);
+  if (state.status === 'loading') {
+    syncEditorCharCount();
+  }
   if (state.status === 'success') {
     updateDirtyChromeImmediate();
   }
@@ -179,8 +186,6 @@ export function renderPanelForExtractPending(payload: {
   if (prev != null && prev.requestId === payload.requestId) {
     const versions = prev.versions || [];
     const hasHistory = versions.length > 0;
-    const extractBaseline =
-      prev.prompt ?? prev.draft ?? versions[0]?.prompt ?? '';
     renderPanel({
       ...prev,
       requestId: payload.requestId,
@@ -193,7 +198,7 @@ export function renderPanelForExtractPending(payload: {
       error: undefined,
       draft: undefined,
       selectedVersionId: hasHistory ? EXTRACT_STREAM_VERSION_ID : undefined,
-      extractBaselinePrompt: hasHistory ? extractBaseline : undefined,
+      extractBaselinePrompt: undefined,
       partial: undefined,
       refineLoading: false,
       refineError: undefined,

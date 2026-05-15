@@ -66,8 +66,8 @@ export interface PanelState {
   /** 流式阶段累积到的提示词文本（loading 时实时显示）。 */
   partial?: string;
   /**
-   * 点击「重新生成」进入 loading 时，保留上一份提示词作基线（首 token 前主编辑区回落）。
-   * success/error 后清空。
+   * 历史上用于「重新生成」loading 时在首段 partial 到达前回填主编辑器；现产品改为先清空主框，
+   * 通常不再写入本字段。success/error 后仍会清空。
    */
   extractBaselinePrompt?: string;
   /** loading 开始时间戳，用于 UI 上显示 "已用时 xx s"。 */

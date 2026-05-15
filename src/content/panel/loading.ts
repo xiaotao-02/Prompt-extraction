@@ -11,6 +11,7 @@ import {
   panelActions,
 } from './state';
 import type { PanelState } from './state';
+import { syncEditorCharCount } from './events';
 
 /**
  * 策略 id → loading 面板上显示的简短中文 label。
@@ -193,6 +194,7 @@ export function applyLoadingPatch(state: PanelState): void {
       state.extractBaselinePrompt ??
       (state.prompt ?? state.draft ?? '');
     if (atBottom) editor.scrollTop = editor.scrollHeight;
+    syncEditorCharCount();
   }
 
   // 兼容旧 DOM：如果页面上仍有 stream-preview，则继续按旧逻辑刷新。
@@ -303,6 +305,7 @@ export function applyRefinePatch(state: PanelState): void {
         Math.abs(editor.scrollHeight - editor.clientHeight - editor.scrollTop) < 8;
       editor.value = streamText;
       if (atBottom) editor.scrollTop = editor.scrollHeight;
+      syncEditorCharCount();
     }
   }
 }

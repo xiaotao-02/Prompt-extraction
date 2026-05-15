@@ -369,6 +369,7 @@ export function panelHtml(state: PanelState): string {
       versions,
       ''
     );
+    const loadingEditorBody = loadingEditorDisplayedText(state);
     return `
       <div class="header">
         <div class="title">
@@ -396,13 +397,16 @@ export function panelHtml(state: PanelState): string {
               <span class="elapsed" data-role="elapsed">${escapeText(elapsed)}</span>
             </div>
           </div>
-          <textarea
-            class="prompt-text streaming"
-            data-role="editor"
-            readonly
-            spellcheck="false"
-            placeholder="正在接收模型回复…"
-          >${escapeText(loadingEditorDisplayedText(state))}</textarea>
+          <div class="prompt-editor-wrap">
+            <textarea
+              class="prompt-text streaming"
+              data-role="editor"
+              readonly
+              spellcheck="false"
+              placeholder="正在接收模型回复…"
+            >${escapeText(loadingEditorBody)}</textarea>
+            <span class="editor-char-count" data-role="editor-char-count" aria-live="polite">${[...loadingEditorBody].length} 字</span>
+          </div>
           ${metaRowHtml(state, {
             versionCount: versionsDisplayCount,
             dirty: false,
@@ -469,6 +473,7 @@ export function panelHtml(state: PanelState): string {
   // 隐藏、按钮换 spinner 等）仍然走 renderPanel，因为那是用户主动确认操作
   // 后的"语义变化"，重渲一次是符合预期的。
   const refineBlock = refineBlockHtml(state);
+  const successEditorBody = successEditorDisplayedText(state);
 
   return `
     <div class="header">
@@ -485,13 +490,16 @@ export function panelHtml(state: PanelState): string {
       ${versionsSidebar}
       <div class="body">
         <div class="thumb"><img src="${safeImg}" alt="" /></div>
-        <textarea
-          class="prompt-text${refining ? ' streaming' : ''}"
-          data-role="editor"
-          spellcheck="false"
-          placeholder="${refining ? '正在接收 AI 调整后的提示词…' : '可在此修改提示词…'}"
-          ${refining ? 'readonly' : ''}
-        >${escapeText(successEditorDisplayedText(state))}</textarea>
+        <div class="prompt-editor-wrap">
+          <textarea
+            class="prompt-text${refining ? ' streaming' : ''}"
+            data-role="editor"
+            spellcheck="false"
+            placeholder="${refining ? '正在接收 AI 调整后的提示词…' : '可在此修改提示词…'}"
+            ${refining ? 'readonly' : ''}
+          >${escapeText(successEditorBody)}</textarea>
+          <span class="editor-char-count" data-role="editor-char-count" aria-live="polite">${[...successEditorBody].length} 字</span>
+        </div>
         ${metaRowHtml(state, {
           versionCount: versionsDisplayCount,
           dirty,

@@ -80,6 +80,17 @@ function syncDirtyHintsImmediate(): void {
   };
   setDisabled('[data-action="reset"]', !dirty);
   setDisabled('[data-action="save"]', !dirty);
+  syncEditorCharCount();
+}
+
+/** 主编辑器字数（与 templates 首帧一致：按 Unicode 码位计数）。 */
+export function syncEditorCharCount(): void {
+  if (!panel) return;
+  const editor = panel.querySelector<HTMLTextAreaElement>('[data-role="editor"]');
+  const label = panel.querySelector<HTMLElement>('[data-role="editor-char-count"]');
+  if (!editor || !label) return;
+  const n = [...editor.value].length;
+  label.textContent = `${n} 字`;
 }
 
 function syncVersionHighlightFromState(): void {
@@ -424,8 +435,6 @@ function handleDataAction(root: HTMLElement, el: HTMLElement, event: MouseEvent)
     safeSendMessage({ type: 'PING' });
     const versions = state.versions || [];
     const hasHistory = versions.length > 0;
-    const extractBaseline =
-      state.prompt ?? state.draft ?? versions[0]?.prompt ?? '';
     renderPanel({
       ...state,
       status: 'loading',
@@ -433,7 +442,7 @@ function handleDataAction(root: HTMLElement, el: HTMLElement, event: MouseEvent)
       error: undefined,
       draft: undefined,
       selectedVersionId: hasHistory ? EXTRACT_STREAM_VERSION_ID : undefined,
-      extractBaselinePrompt: hasHistory ? extractBaseline : undefined,
+      extractBaselinePrompt: undefined,
       stage: 'calling',
       partial: undefined,
       startedAt: Date.now(),
