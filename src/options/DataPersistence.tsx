@@ -348,11 +348,6 @@ export default function DataPersistence({ onDataRestored }: DataPersistenceProps
     setBusy('import');
     try {
       const text = await file.text();
-      const payload = JSON.parse(text) as BackupPayload;
-      if (!payload || (payload.version !== 1 && payload.version !== 2 && payload.version !== 3)) {
-        showTip(false, '不是合法的备份文件');
-        return;
-      }
       const mode = confirm(
         '从备份恢复方式：\n\n' +
           '· 点【确定】= 完全替换（适合刚重装后导入旧备份）\n' +
@@ -360,7 +355,7 @@ export default function DataPersistence({ onDataRestored }: DataPersistenceProps
       )
         ? 'replace'
         : 'merge';
-      const r = await restoreBackup(payload, mode);
+      const r = await restoreBackup(JSON.parse(text), mode);
       showTip(true, `已${mode === 'replace' ? '替换' : '合并'} · 历史 ${r.historyTotal} 条`);
       onDataRestored?.();
     } catch (err) {

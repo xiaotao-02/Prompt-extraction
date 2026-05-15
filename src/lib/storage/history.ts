@@ -53,8 +53,26 @@ export {
   exportAllHistoryPublic,
 };
 
+/**
+ * 存储层规范形态：`extracted` / `refined` 版本缺少 meta 时用条目顶层字段回填，
+ * 再镜像当前版本（与 {@link addHistory} 合并路径一致）。
+ */
+export function normalizeHistoryItemStorageShape(item: HistoryItem): HistoryItem {
+  const fallbackMeta = metaFromHistoryItem(item);
+  const versions = (item.versions || []).map((v) => {
+    if (!v) return v;
+    if ((v.source === 'extracted' || v.source === 'refined') && !v.meta) {
+      return { ...v, meta: fallbackMeta };
+    }
+    return v;
+  });
+  return mirrorCurrentVersion({ ...item, versions });
+}
+
 export function migrateItem(raw: HistoryItem): HistoryItem {
-  if (raw.versions && raw.versions.length > 0) return mirrorCurrentVersion(raw);
+  if (raw.versions && raw.versions.length > 0) {
+    return normalizeHistoryItemStorageShape(raw);
+  }
   const seedVersion: PromptVersion = {
     id: raw.id + ':v0',
     prompt: raw.prompt,
@@ -62,7 +80,7 @@ export function migrateItem(raw: HistoryItem): HistoryItem {
     createdAt: raw.createdAt || Date.now(),
     source: 'extracted',
   };
-  return mirrorCurrentVersion({
+  return normalizeHistoryItemStorageShape({
     ...raw,
     updatedAt: raw.updatedAt ?? raw.createdAt,
     versions: [seedVersion],
@@ -111,7 +129,7 @@ function dedupHistoryByImage(list: HistoryItem[]): HistoryItem[] {
     }
     const normalizedVersions = normalizePromptVersions(allVersions);
     const top = normalizedVersions[0] || head.versions?.[0];
-    return mirrorCurrentVersion({
+    return normalizeHistoryItemStorageShape({
       ...head,
       prompt: top?.prompt ?? head.prompt,
       updatedAt: top?.createdAt ?? head.updatedAt,
@@ -223,7 +241,7 @@ export async function addHistory(item: HistoryItem): Promise<HistoryItem> {
               meta: metaFromHistoryItem(existing),
             }
       );
-      const merged: HistoryItem = mirrorCurrentVersion({
+      const merged: HistoryItem = normalizeHistoryItemStorageShape({
         ...existing,
         prompt: incoming.prompt,
         provider: incoming.provider,
@@ -254,7 +272,7 @@ export async function addHistory(item: HistoryItem): Promise<HistoryItem> {
       },
     };
   }
-  const inserted = mirrorCurrentVersion(incoming);
+  const inserted = normalizeHistoryItemStorageShape(incoming);
   await putHistoryRecord(toStoredRecord(inserted));
   await trimOldestToMax(HISTORY_LIMIT);
   await finalizeHistoryMutation();

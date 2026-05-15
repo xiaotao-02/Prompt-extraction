@@ -15,7 +15,7 @@
  * - 文件名固定为 `prompt-extracto-data.json`，用户能在文件夹里直接看到内容。
  */
 import { clearDirectoryHandle, loadDirectoryHandle, saveDirectoryHandle } from './idb';
-import { buildBackup, restoreBackup, type BackupPayload } from './storage';
+import { buildBackup, parseBackupPayload, restoreBackup, type BackupPayload } from './storage';
 
 export const BACKUP_FILE_NAME = 'prompt-extracto-data.json';
 
@@ -139,10 +139,7 @@ export async function pickDataDirectory(): Promise<{
     const fileHandle = await handle.getFileHandle(BACKUP_FILE_NAME, { create: false });
     const file = await fileHandle.getFile();
     const text = await file.text();
-    const parsed = JSON.parse(text) as BackupPayload;
-    if (parsed && (parsed.version === 1 || parsed.version === 2 || parsed.version === 3)) {
-      existing = parsed;
-    }
+    existing = parseBackupPayload(JSON.parse(text));
   } catch (err) {
     if (err instanceof Error && err.name !== 'NotFoundError') {
       console.warn('[PromptExtracto] read existing backup failed', err);
@@ -196,7 +193,7 @@ async function isShrinkOverwrite(
 
   // 任何已填的 apiKey / 任何历史条目 / 任何文件夹 → 现有备份比即将写入的更"重"
   try {
-    const prev = JSON.parse(existingText) as BackupPayload;
+    const prev = parseBackupPayload(JSON.parse(existingText));
     const hadAnyKey = Object.values(prev.settings?.providers || {}).some(
       (cfg) => cfg?.apiKey && cfg.apiKey.trim().length > 0
     );
@@ -206,7 +203,7 @@ async function isShrinkOverwrite(
       Array.isArray(prev.strategyPresets) && prev.strategyPresets.length > 0;
     if (hadAnyKey || hadHistory || hadFolders || hadPresets) return true;
   } catch {
-    // JSON 解析失败 → 用纯字节数兜底
+    // JSON 无效或结构不符 → 用纯字节数兜底
   }
   // 兜底规则：现有文件比即将写入的至少大 50%，且现有文件 > 1 KB → 视为"萎缩覆盖"
   return existingText.length > 1024 && existingText.length > nextBytes * 1.5;
@@ -296,8 +293,7 @@ export async function loadFromDirectory(
     const fileHandle = await handle.getFileHandle(BACKUP_FILE_NAME, { create: false });
     const file = await fileHandle.getFile();
     const text = await file.text();
-    const payload = JSON.parse(text) as BackupPayload;
-    const result = await restoreBackup(payload, mode);
+    const result = await restoreBackup(JSON.parse(text), mode);
     return { ok: true, result };
   } catch (err) {
     if (err instanceof Error && err.name === 'NotFoundError') {

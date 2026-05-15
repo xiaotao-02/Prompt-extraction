@@ -7,7 +7,8 @@
  * - v2：在 v1 基础上新增 folders（提示词库的项目 / 文件夹）
  * - v3：在 v2 基础上新增 strategyPresets（用户命名的自定义策略预设）
  *
- * 恢复时 v1 备份会被静默接受（folders 视为空数组），不会丢失老用户的数据。
+ * 恢复：`merge` 时若备份缺 folders / strategyPresets 则不改动本地对应数据；
+ * `replace` 时缺失章节视为空数组并清空本地。
  */
 import type { AppSettings, HistoryItem, LibraryFolder, UserStrategyPreset } from '../types';
 import { getSettings, saveSettings } from './settings';
@@ -28,7 +29,7 @@ import {
   trimOldestToMax,
 } from './historyDb';
 import { getFolders, mergeFolders, replaceFolders } from './folders';
-import { mirrorCurrentVersion, normalizePromptVersions } from './versionState';
+import { normalizePromptVersions } from './versionState';
 import {
   getUserStrategyPresets,
   mergeUserStrategyPresets,
@@ -44,10 +45,52 @@ export interface BackupPayload {
   appVersion?: string;
   settings: AppSettings;
   history: HistoryItem[];
-  /** 提示词库项目 / 文件夹列表，v2 起新增；v1 备份恢复时按空数组处理。 */
+  /** 提示词库项目 / 文件夹列表，v2 起新增。 */
   folders?: LibraryFolder[];
-  /** 用户自定义策略预设，v3 起新增；v1/v2 恢复时保留本地已有预设。 */
+  /** 用户自定义策略预设，v3 起新增。 */
   strategyPresets?: UserStrategyPreset[];
+}
+
+function coerceBackupVersion(o: Record<string, unknown>): 1 | 2 | 3 {
+  const v = o.version;
+  const n = typeof v === 'number' ? v : typeof v === 'string' ? Number(v) : NaN;
+  if (n === 1 || n === 2 || n === 3) return n;
+  if (Array.isArray(o.strategyPresets)) return 3;
+  if (Array.isArray(o.folders)) return 2;
+  return 1;
+}
+
+/**
+ * 校验并将任意解析后的 JSON 规范为 {@link BackupPayload}。
+ * `version` 缺失或非法时按载荷字段推断（strategyPresets → v3，folders → v2，否则 v1）。
+ */
+export function parseBackupPayload(raw: unknown): BackupPayload {
+  if (!raw || typeof raw !== 'object') {
+    throw new Error('备份内容不是有效的 JSON 对象');
+  }
+  const o = raw as Record<string, unknown>;
+  if (!o.settings || typeof o.settings !== 'object' || Array.isArray(o.settings)) {
+    throw new Error('备份缺少有效的 settings 字段');
+  }
+  if (!Array.isArray(o.history)) {
+    throw new Error('备份缺少有效的 history 数组');
+  }
+  const version = coerceBackupVersion(o);
+  const exportedAt =
+    typeof o.exportedAt === 'string' && o.exportedAt.trim().length > 0
+      ? o.exportedAt
+      : new Date().toISOString();
+  return {
+    version,
+    exportedAt,
+    ...(typeof o.appVersion === 'string' ? { appVersion: o.appVersion } : {}),
+    settings: o.settings as AppSettings,
+    history: o.history as HistoryItem[],
+    ...(Array.isArray(o.folders) ? { folders: o.folders as LibraryFolder[] } : {}),
+    ...(Array.isArray(o.strategyPresets)
+      ? { strategyPresets: o.strategyPresets as UserStrategyPreset[] }
+      : {}),
+  };
 }
 
 export async function buildBackup(appVersion?: string): Promise<BackupPayload> {
@@ -72,55 +115,45 @@ export async function buildBackup(appVersion?: string): Promise<BackupPayload> {
 /**
  * 从备份载荷恢复。
  *
- * @param payload 备份内容
+ * @param payload 备份内容（可先经 JSON.parse；会与 {@link parseBackupPayload} 等价校验）
  * @param mode    'replace' 直接覆盖；'merge' 与现有数据合并（按 id 去重，保留较新的 updatedAt）
  */
 export async function restoreBackup(
-  payload: BackupPayload,
+  payload: unknown,
   mode: 'replace' | 'merge' = 'merge'
 ): Promise<{ settingsRestored: boolean; historyAdded: number; historyTotal: number }> {
-  if (!payload || (payload.version !== 1 && payload.version !== 2 && payload.version !== 3)) {
-    throw new Error('不支持的备份格式');
-  }
+  const data = parseBackupPayload(payload);
   let settingsRestored = false;
-  if (payload.settings) {
-    await saveSettings(payload.settings);
+  if (data.settings) {
+    await saveSettings(data.settings);
     settingsRestored = true;
   }
 
-  // folders 是 v2 才有的字段，v1 备份缺失时按空数组处理（不会清空已有 folders）
-  if (Array.isArray(payload.folders)) {
-    if (mode === 'replace') {
-      await replaceFolders(payload.folders);
-    } else {
-      await mergeFolders(payload.folders);
-    }
+  if (mode === 'replace') {
+    await replaceFolders(Array.isArray(data.folders) ? data.folders : []);
+  } else if (Array.isArray(data.folders)) {
+    await mergeFolders(data.folders);
   }
 
-  // strategyPresets：仅当备份里显式带了数组时才恢复（v1/v2 无此字段 → 不动本地预设）
-  if (Array.isArray(payload.strategyPresets)) {
-    if (mode === 'replace') {
-      await setUserStrategyPresets(payload.strategyPresets);
-    } else {
-      const merged = mergeUserStrategyPresets(
-        await getUserStrategyPresets(),
-        payload.strategyPresets
-      );
-      await setUserStrategyPresets(merged);
-    }
+  if (mode === 'replace') {
+    await setUserStrategyPresets(Array.isArray(data.strategyPresets) ? data.strategyPresets : []);
+  } else if (Array.isArray(data.strategyPresets)) {
+    const merged = mergeUserStrategyPresets(
+      await getUserStrategyPresets(),
+      data.strategyPresets
+    );
+    await setUserStrategyPresets(merged);
   }
 
   let added = 0;
-  if (Array.isArray(payload.history)) {
+  if (Array.isArray(data.history)) {
     await ensureLibraryReady();
     if (mode === 'replace') {
-      const next = payload.history
-        .slice(0, HISTORY_LIMIT)
-        .map((item) => mirrorCurrentVersion(migrateItem(item)));
+      const next = data.history.slice(0, HISTORY_LIMIT).map((item) => migrateItem(item));
       await writeHistory(next);
       added = next.length;
     } else {
-      for (const incoming of payload.history) {
+      for (const incoming of data.history) {
         const item = migrateItem(incoming);
         const row = await getHistoryRecord(item.id);
         const exist = row ? toPublicHistory(row) : null;
@@ -140,7 +173,7 @@ export async function restoreBackup(
           }
           await putHistoryRecord(
             toStoredRecord(
-              mirrorCurrentVersion({
+              migrateItem({
                 ...newer,
                 versions: normalizePromptVersions(mergedVersions),
               })

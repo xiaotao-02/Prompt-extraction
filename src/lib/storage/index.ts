@@ -37,7 +37,12 @@ export {
   type CreateFolderInput,
 } from './folders';
 export { onLocalDataChange } from './events';
-export { buildBackup, restoreBackup, type BackupPayload } from './backup';
+export {
+  buildBackup,
+  restoreBackup,
+  parseBackupPayload,
+  type BackupPayload,
+} from './backup';
 export {
   MAX_USER_STRATEGY_PRESETS,
   MAX_PRESET_NAME_LEN,
