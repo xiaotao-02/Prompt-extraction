@@ -182,7 +182,7 @@ export default function SetupGuide({ settings, applyConfig }: Props) {
             <div className="flex items-center justify-between gap-2">
               <h3 className="text-xs font-semibold text-zinc-700 dark:text-zinc-200 flex items-center gap-1.5">
                 <Sparkles className="w-3.5 h-3.5 text-violet-500" />
-                一键配置（粘贴 curl 命令 / JSON 导入 / 复制当前配置）
+                一键配置（API Key / curl / JSON / 复制当前配置）
               </h3>
               <button
                 type="button"
@@ -205,9 +205,11 @@ export default function SetupGuide({ settings, applyConfig }: Props) {
 
             <textarea
               className="input min-h-[120px] font-mono text-[12px] resize-y leading-[1.6]"
-              placeholder={`支持粘贴 curl 命令或 JSON 配置，自动识别厂商和 API Key。
-示例：curl https://api.openai.com/v1/... -H "Authorization: Bearer sk-..."
-或：{ "provider": "deepseek", "apiKey": "sk-...", "model": "deepseek-chat" }`}
+              placeholder={`可直接粘贴控制台复制的 API Key（自动识别 Anthropic / Gemini / OpenRouter 等格式）；
+未识别出专属前缀时，将写入当前在下方选中的供应商（请先看准厂商再粘贴）。
+也支持 curl 与 JSON，例如：
+curl https://api.openai.com/v1/... -H "Authorization: Bearer sk-..."
+{ "provider": "deepseek", "apiKey": "sk-...", "model": "deepseek-chat" }`}
               value={importText}
               onChange={(e) => {
                 setImportText(e.target.value);
@@ -248,6 +250,7 @@ export default function SetupGuide({ settings, applyConfig }: Props) {
 
             <p className="text-[10px] text-zinc-400 leading-snug">
               · 导入后会立即保存并切换到该 provider；其它 provider 的配置保持不变。<br />
+              · 仅粘贴 Key 时：能辨认前缀则自动切到对应厂商；否则写入当前选中的供应商（「自定义」且 baseUrl 为占位时请改用 JSON/curl 或先选具体厂商）。<br />
               · 粘 curl 时支持 Bearer / x-api-key / X-goog-api-key 等鉴权方式，会自动识别厂商并截取 baseUrl。<br />
               · 复制出的 JSON 包含 API Key，请谨慎分享。
             </p>
