@@ -71,6 +71,8 @@ export function ExpandedPanel({
   onInitialDockConsumed?: () => void;
 }) {
   const anchorRef = useRef<HTMLDivElement>(null);
+  /** 本次展开若处理过 initialDock（如仅打开 AI 调整），则不再自动打开历史侧栏 */
+  const skipAutoOpenVersionsRef = useRef(false);
   const [versionsOpen, setVersionsOpen] = useState(false);
   const [sidebarLeft, setSidebarLeft] = useState<number>(VERSIONS_PANEL_MIN_LEFT);
 
@@ -96,8 +98,11 @@ export function ExpandedPanel({
   /** Popup / hash deep-link：挂载时打开 AI 调整或版本侧栏一次并通知父组件清掉意图 */
   useLayoutEffect(() => {
     if (!initialDock) return;
-    if (initialDock === 'refine') setOpenInline('refine');
-    else if (initialDock === 'versions') setVersionsOpen(true);
+    skipAutoOpenVersionsRef.current = true;
+    if (initialDock === 'refine') {
+      setOpenInline('refine');
+      setVersionsOpen(false);
+    } else if (initialDock === 'versions') setVersionsOpen(true);
     onInitialDockConsumed?.();
   }, [initialDock, item.id, onInitialDockConsumed]);
 
@@ -105,6 +110,12 @@ export function ExpandedPanel({
   const versionsSidebarVisible = versionCount > 0 || refineLoading;
   const versionsDisplayCount = versionCount + (refineLoading ? 1 : 0);
   const versionsListScrollable = versionsDisplayCount >= VERSIONS_SCROLL_THRESHOLD;
+
+  /** 普通展开：有可展示的历史侧栏时默认打开（深链仅为 refine 时由 skip 跳过） */
+  useLayoutEffect(() => {
+    if (skipAutoOpenVersionsRef.current) return;
+    if (versionsSidebarVisible) setVersionsOpen(true);
+  }, [item.id, versionsSidebarVisible]);
 
   const updateSidebarLeft = useCallback(() => {
     const el = anchorRef.current;
@@ -193,38 +204,49 @@ export function ExpandedPanel({
       {versionsSidebarVisible
         ? createPortal(
             <div
-              className="fixed z-[20] bottom-4 w-[300px] h-[calc(100vh-2rem)] max-h-[calc(100vh-2rem)] flex flex-col justify-end pointer-events-none overflow-visible"
+              className={`fixed z-50 top-4 bottom-4 w-[300px] flex flex-col pointer-events-none overflow-visible ${
+                versionsListScrollable ? '' : 'justify-center'
+              }`}
               style={{ left: sidebarLeft }}
             >
               <div
-                className={`flex flex-col rounded-2xl border border-zinc-700/70 bg-zinc-950 text-zinc-100 overflow-hidden shadow-2xl shadow-black/40 transition-transform duration-300 ease-out ${
-                  versionsListScrollable
-                    ? 'h-full min-h-0 max-h-full'
-                    : 'h-auto max-h-full'
-                } ${versionsOpen ? 'pointer-events-auto' : 'pointer-events-none'}`}
-                style={{
-                  transform: versionsOpen
-                    ? 'translateY(0)'
-                    : `translateY(calc(100% + ${VERSIONS_PANEL_GAP}px))`,
-                }}
+                className={`flex flex-col
+                  duration-[240ms] ease-[cubic-bezier(0.22,1,0.36,1)] transition-transform
+                  motion-reduce:translate-x-0 motion-reduce:transition-none
+                  ${
+                    versionsListScrollable
+                      ? 'h-full min-h-0 max-h-full flex-1'
+                      : 'h-auto max-h-full'
+                  }
+                  ${versionsOpen ? 'pointer-events-auto translate-x-0 scale-100' : 'pointer-events-none translate-x-[10px] scale-100'}
+                `}
                 aria-hidden={!versionsOpen}
               >
-                <VersionsSidebar
-                  item={item}
-                  editorContent={editorValue}
-                  selectedVersionId={selectedVersionId}
-                  refineLoading={refineLoading}
-                  scrollList={versionsListScrollable}
-                  onSelectGeneratingRow={() =>
-                    setSelectedVersionId(REFINE_STREAM_VERSION_ID)
-                  }
-                  onCopy={onCopy}
-                  copiedKey={copiedKey}
-                  onSelectVersion={handleSelectVersion}
-                  onRestoreVersion={handleRestoreVersion}
-                  onDeleteVersion={handleDeleteVersion}
-                  onClose={() => setVersionsOpen(false)}
-                />
+                <div
+                  className={`flex flex-col min-h-0 overflow-hidden rounded-2xl border border-zinc-700/70 bg-zinc-950 text-zinc-100 shadow-2xl shadow-black/40 transition-opacity duration-150 ease-out motion-reduce:duration-150 motion-reduce:ease-out ${
+                    versionsListScrollable
+                      ? 'flex-1 min-h-0 h-full max-h-full'
+                      : 'h-auto max-h-full'
+                  }`}
+                  style={{ opacity: versionsOpen ? 1 : 0 }}
+                >
+                  <VersionsSidebar
+                    item={item}
+                    editorContent={editorValue}
+                    selectedVersionId={selectedVersionId}
+                    refineLoading={refineLoading}
+                    scrollList={versionsListScrollable}
+                    onSelectGeneratingRow={() =>
+                      setSelectedVersionId(REFINE_STREAM_VERSION_ID)
+                    }
+                    onCopy={onCopy}
+                    copiedKey={copiedKey}
+                    onSelectVersion={handleSelectVersion}
+                    onRestoreVersion={handleRestoreVersion}
+                    onDeleteVersion={handleDeleteVersion}
+                    onClose={() => setVersionsOpen(false)}
+                  />
+                </div>
               </div>
             </div>,
             document.body
