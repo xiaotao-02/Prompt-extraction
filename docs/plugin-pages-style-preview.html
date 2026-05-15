@@ -62,9 +62,12 @@
       保存并在浏览器里刷新聚合页即可看到 HMR 效果。
     </p>
     <ol>
-      <li>在项目根目录运行 <code>npm run dev</code>（端口见终端，默认 <code>5173</code>）。</li>
       <li>
-        在浏览器打开：
+        在项目根目录运行 <code>npm run dev</code>（端口见终端，默认 <code>5173</code>）；就绪后会自动打开聚合预览页。若不想自动弹窗，设置环境变量
+        <code>DEV_PREVIEW_NO_OPEN=1</code>（PowerShell：<code>$env:DEV_PREVIEW_NO_OPEN='1'; npm run dev</code>）。
+      </li>
+      <li>
+        聚合地址（也可手动打开）：
         <strong><a href="http://localhost:5173/__dev__/ui-preview">http://localhost:5173/__dev__/ui-preview</a></strong>
       （可加 <code>#popup</code> / <code>#options</code> / <code>#panel</code> 选中对应预览）
       </li>

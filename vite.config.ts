@@ -42,6 +42,10 @@ export default defineConfig({
   server: {
     port: 5173,
     strictPort: true,
+    open:
+      process.env.DEV_PREVIEW_NO_OPEN === '1'
+        ? false
+        : '/__dev__/ui-preview',
     hmr: {
       port: 5174,
     },

@@ -67,7 +67,7 @@ flowchart LR
 
 ## 开发时 UI 预览（与源码 / HMR 同步）
 
-1. 根目录执行 `npm run dev`（默认 `http://localhost:5173`）。
-2. 浏览器打开 **`http://localhost:5173/__dev__/ui-preview`**（聚合页以标签在三壳之间切换）：可选 **`#popup`** / **`#options`** / **`#panel`**；iframe 内为真实 `PopupApp` / `OptionsApp` 与 `panelHtml` + 面板 `STYLE`。源码见 [`src/dev/preview/`](../src/dev/preview/) 与垫片 [`chromeShim.ts`](../src/dev/preview/chromeShim.ts）。
+1. 根目录执行 `npm run dev`（默认 `http://localhost:5173`）。就绪后 Vite 会**自动用系统默认浏览器**打开 **`http://localhost:5173/__dev__/ui-preview`**。若只希望起本地服务、不自动弹窗，可设置环境变量 `DEV_PREVIEW_NO_OPEN=1`（Windows PowerShell：`$env:DEV_PREVIEW_NO_OPEN='1'; npm run dev`）。
+2. **`http://localhost:5173/__dev__/ui-preview`**（聚合页以标签在三壳之间切换）：可选 **`#popup`** / **`#options`** / **`#panel`**；iframe 内为真实 `PopupApp` / `OptionsApp` 与 `panelHtml` + 面板 `STYLE`。源码见 [`src/dev/preview/`](../src/dev/preview/) 与垫片 [`chromeShim.ts`](../src/dev/preview/chromeShim.ts）。
 
 离线说明与直连子页链接见 [`plugin-pages-style-preview.html`](plugin-pages-style-preview.html)。
