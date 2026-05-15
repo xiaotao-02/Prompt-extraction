@@ -264,6 +264,15 @@ export interface LibraryFolder {
   color?: string;
 }
 
+export type RegionCaptureConfirmPayload = {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  innerWidth: number;
+  innerHeight: number;
+};
+
 // === 消息协议 ===
 export type RuntimeMessage =
   | {
@@ -475,6 +484,29 @@ export type RuntimeMessage =
         focusId?: string;
         dock?: 'refine' | 'versions';
       };
+    }
+  | {
+      /**
+       * Popup / 快捷键 /页面右键菜单发起：在当前窗口活动标签页进入「拖拽截取区域 → 添加到参考」。
+       * Background 会向该 tab 的 content script 下发 {@link START_REGION_CAPTURE}。
+       */
+      type: 'REQUEST_REGION_CAPTURE';
+      payload?: Record<string, never>;
+    }
+  | {
+      /**
+       * Background → content：拉起全屏半透明选区 UI（仅在顶层窗口处理）。
+       */
+      type: 'START_REGION_CAPTURE';
+      payload?: Record<string, never>;
+    }
+  | {
+      /**
+       * Content → background：用户对齐到视口的选区矩形（CSS 像素，`getBoundingClientRect` 语义），
+       * 附带 `innerWidth` / `innerHeight` 便于与 captureVisibleTab 按宽高比例映射裁剪。
+       */
+      type: 'REGION_CAPTURE_CONFIRM';
+      payload: RegionCaptureConfirmPayload;
     }
   | {
       /**

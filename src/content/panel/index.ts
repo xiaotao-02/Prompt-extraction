@@ -193,7 +193,7 @@ export function appendReferenceFromBackground(imageUrl: string): void {
   const url = (imageUrl || '').trim();
   if (!url) return;
   const cur = currentState;
-  if (!cur || cur.status === 'loading' || panelExtractJobs(cur).length > 0) {
+  if (cur && (cur.status === 'loading' || panelExtractJobs(cur).length > 0)) {
     console.debug('[PromptExtracto] skip PANEL_APPEND_REFERENCE during loading');
     return;
   }

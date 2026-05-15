@@ -11,6 +11,7 @@ import {
   Wand2,
   PanelTopOpen,
   ChevronRight,
+  Crop,
 } from 'lucide-react';
 import {
   LIBRARY_REV_KEY,
@@ -66,6 +67,8 @@ export default function PopupApp() {
   const [list, setList] = useState<HistoryItem[]>([]);
   const [toolbarPromptTarget, setToolbarPromptTarget] = useState<'library' | 'panel'>('library');
   const [recallTip, setRecallTip] = useState<string | null>(null);
+  /** 区域截图入口错误提示（成功时直接关 popup） */
+  const [regionSnipTip, setRegionSnipTip] = useState<string | null>(null);
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
 
   const load = useCallback(() => listRecentHistory(80).then(setList), []);
@@ -132,6 +135,24 @@ export default function PopupApp() {
 
   const recallToPanel = (item: HistoryItem) => sendRecallToPanel(item, setRecallTip);
 
+  const requestRegionCapture = () => {
+    setRegionSnipTip(null);
+    chrome.runtime.sendMessage(
+      { type: 'REQUEST_REGION_CAPTURE' as const, payload: {} },
+      (resp?: { ok?: boolean; error?: string }) => {
+        if (chrome.runtime.lastError) {
+          setRegionSnipTip(chrome.runtime.lastError.message || '后台错误');
+          return;
+        }
+        if (!resp?.ok) {
+          setRegionSnipTip(resp?.error || '无法在当前页面启动截取');
+          return;
+        }
+        setTimeout(() => window.close(), 40);
+      }
+    );
+  };
+
   return (
     <div className="flex flex-col">
       <header className="flex items-center justify-between gap-2 px-4 py-3 border-b border-zinc-200/90 dark:border-zinc-800 bg-white/70 dark:bg-zinc-950/40 backdrop-blur-sm">
@@ -145,7 +166,17 @@ export default function PopupApp() {
             Prompt Extracto
           </div>
         </div>
-        <div className="flex items-center gap-1.5 flex-none">
+        <div className="flex items-center gap-1.5 flex-none flex-wrap justify-end">
+          <button
+            type="button"
+            onClick={requestRegionCapture}
+            title="在网页上框选矩形区域后加入参考列表（右键被站点接管时使用）· 快捷键 Ctrl+Shift+E"
+            aria-label="截取区域添加到参考"
+            className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-[11px] font-medium border border-zinc-200 dark:border-zinc-600 bg-white/90 dark:bg-zinc-900/60 text-zinc-700 dark:text-zinc-200 hover:bg-zinc-50 dark:hover:bg-zinc-800 shadow-sm"
+          >
+            <Crop className="w-3.5 h-3.5 opacity-90" aria-hidden />
+            截取区域
+          </button>
           <button
             type="button"
             onClick={openExtensionPanel}
@@ -166,6 +197,20 @@ export default function PopupApp() {
           <button
             onClick={() => setRecallTip(null)}
             className="p-0.5 rounded hover:bg-rose-100 dark:hover:bg-rose-500/20"
+          >
+            <X className="w-3 h-3" />
+          </button>
+        </div>
+      )}
+
+      {regionSnipTip && (
+        <div className="px-4 py-2 text-[11px] leading-snug bg-amber-50 dark:bg-amber-500/12 text-amber-900 dark:text-amber-200 border-b border-amber-200/70 dark:border-amber-500/25 flex items-start gap-2">
+          <X className="w-3 h-3 mt-0.5 flex-none opacity-70" aria-hidden />
+          <span className="flex-1">{regionSnipTip}</span>
+          <button
+            type="button"
+            onClick={() => setRegionSnipTip(null)}
+            className="p-0.5 rounded hover:bg-amber-100 dark:hover:bg-amber-500/20"
           >
             <X className="w-3 h-3" />
           </button>

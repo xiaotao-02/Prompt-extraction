@@ -682,6 +682,15 @@ export const STYLE = `
   display: inline-flex;
   max-width: 160px;
 }
+.rewrite-randomness-dropdown {
+  max-width: 92px;
+}
+.rewrite-randomness-dropdown.is-disabled {
+  opacity: 0.45;
+}
+.sd-trigger:disabled {
+  cursor: not-allowed;
+}
 .sd-trigger {
   display: inline-flex; align-items: center; gap: 4px;
   border: 1px solid rgba(99,102,241,0.25);
@@ -704,7 +713,7 @@ export const STYLE = `
   transition: transform .18s ease;
 }
 .strategy-dropdown.open .sd-arrow { transform: rotate(180deg); }
-.sd-trigger:hover {
+.sd-trigger:hover:not(:disabled) {
   background: rgba(99,102,241,0.12);
   border-color: rgba(99,102,241,0.4);
 }
@@ -760,7 +769,7 @@ export const STYLE = `
     border-color: rgba(139,92,246,0.35);
     color: #c4b5fd;
   }
-  .sd-trigger:hover {
+  .sd-trigger:hover:not(:disabled) {
     background: rgba(139,92,246,0.20);
     border-color: rgba(139,92,246,0.5);
   }
@@ -790,13 +799,23 @@ export const STYLE = `
   display: inline-flex;
   align-items: stretch;
 }
-.rewrite-control-group .rewrite-randomness {
+.rewrite-control-group > .strategy-dropdown {
+  align-self: stretch;
+}
+.rewrite-control-group > .strategy-dropdown .sd-trigger {
+  box-sizing: border-box;
+  min-height: 34px;
   border-radius: 8px 0 0 8px;
   border-right: none;
   padding-top: 6px;
   padding-bottom: 6px;
-  min-height: 34px;
-  box-sizing: border-box;
+}
+.rewrite-control-group > .strategy-dropdown {
+  position: relative;
+  z-index: 0;
+}
+.rewrite-control-group > .strategy-dropdown:focus-within {
+  z-index: 1;
 }
 .rewrite-control-group .rewrite-spin-btn {
   border-radius: 0 8px 8px 0;
@@ -804,34 +823,11 @@ export const STYLE = `
   position: relative;
   z-index: 0;
 }
-.rewrite-control-group .rewrite-spin-btn:focus-visible,
-.rewrite-control-group .rewrite-randomness:focus-visible {
+.rewrite-control-group .rewrite-spin-btn:focus-visible {
   z-index: 1;
 }
 .rewrite-spin-btn {
   border-radius: 8px;
-}
-
-.rewrite-randomness {
-  font-size: 11px;
-  padding: 5px 8px;
-  border-radius: 8px;
-  border: 1px solid rgba(0,0,0,0.12);
-  background: rgba(255,255,255,0.85);
-  color: inherit;
-  cursor: pointer;
-  font-family: inherit;
-  max-width: 76px;
-}
-.rewrite-randomness:disabled {
-  opacity: 0.45;
-  cursor: not-allowed;
-}
-@media (prefers-color-scheme: dark) {
-  .rewrite-randomness {
-    border-color: rgba(255,255,255,0.14);
-    background: rgba(30,30,34,0.92);
-  }
 }
 .btn {
   display: inline-flex; align-items: center; gap: 6px;

@@ -12,7 +12,12 @@ import type {
   RuntimeMessage,
   StrategyId,
 } from '@/lib/types';
-import { buildOneClickRewriteInstruction, makeRewriteNonce, normalizeOneClickRewriteRandomness } from '@/lib/oneClickRewrite';
+import {
+  buildOneClickRewriteInstruction,
+  makeRewriteNonce,
+  normalizeOneClickRewriteRandomness,
+  REWRITE_RANDOMNESS_LABELS,
+} from '@/lib/oneClickRewrite';
 import { STRATEGY_LABELS } from '@/lib/strategies-meta';
 import {
   currentState,
@@ -105,8 +110,10 @@ function syncDirtyHintsImmediate(): void {
     }
   };
   setDisabled('[data-action="rewrite-spin"]', spinDisabled);
-  const rrSel = root.querySelector<HTMLSelectElement>('[data-role="rewrite-randomness"]');
-  if (rrSel) rrSel.disabled = spinDisabled;
+  const rrDd = root.querySelector<HTMLElement>('[data-role="rewrite-randomness-dropdown"]');
+  const rrTrigger = rrDd?.querySelector<HTMLButtonElement>('.sd-trigger');
+  if (rrTrigger) rrTrigger.disabled = spinDisabled;
+  if (rrDd) rrDd.classList.toggle('is-disabled', spinDisabled);
   setDisabled('[data-action="save"]', !dirty);
   syncEditorCharCount();
 }
@@ -265,6 +272,19 @@ function patchStrategyDropdownSelection(root: HTMLElement, strategy: StrategyId)
   });
 }
 
+function patchRewriteRandomnessDropdownSelection(
+  root: HTMLElement,
+  level: OneClickRewriteRandomness
+): void {
+  const dropdown = root.querySelector<HTMLElement>('[data-role="rewrite-randomness-dropdown"]');
+  if (!dropdown) return;
+  const labelEl = dropdown.querySelector<HTMLElement>('.sd-label');
+  if (labelEl) labelEl.textContent = REWRITE_RANDOMNESS_LABELS[level] ?? level;
+  dropdown.querySelectorAll<HTMLElement>('.sd-item').forEach((li) => {
+    li.classList.toggle('active', li.dataset.randomness === level);
+  });
+}
+
 /** storage / 其它上下文更新 `promptStrategy` 后，在 success 态面板上同步下拉与历史 chip，不重渲整板。 */
 export function applyStoredPromptStrategy(strategy: StrategyId): void {
   const st = currentState;
@@ -282,8 +302,7 @@ export function applyStoredRewriteRandomness(level: OneClickRewriteRandomness): 
   const next = normalizeOneClickRewriteRandomness(level);
   if (st.rewriteRandomness === next) return;
   setCurrentState({ ...st, rewriteRandomness: next });
-  const sel = panel.querySelector<HTMLSelectElement>('[data-role="rewrite-randomness"]');
-  if (sel) sel.value = next;
+  patchRewriteRandomnessDropdownSelection(panel, next);
 }
 
 /**
@@ -1060,68 +1079,91 @@ function handleDataAction(root: HTMLElement, el: HTMLElement, event: MouseEvent)
 function bindPanelDelegatedClicks(root: HTMLElement): void {
   root.addEventListener('click', (event: MouseEvent) => {
     const t = event.target as HTMLElement;
-    const dropdown = root.querySelector<HTMLElement>('[data-role="strategy-dropdown"]');
 
     const sdItem = t.closest<HTMLElement>('.sd-item');
-    if (sdItem && dropdown?.contains(sdItem)) {
-      event.stopPropagation();
-      dropdown.classList.remove('open');
-      if (!currentState) return;
-      const prevStatus = currentState.status;
-      const newStrategy = sdItem.dataset.strategy as StrategyId;
-      if (!newStrategy || newStrategy === currentState.strategy) return;
-      if (
-        (prevStatus !== 'success' && prevStatus !== 'compose') ||
-        !isExtensionContextValid()
-      )
-        return;
-
-      setCurrentState({ ...currentState, strategy: newStrategy });
-      patchStrategyDropdownSelection(root, newStrategy);
-      if (prevStatus === 'success') {
-        patchVersionList();
-      }
-      safeSendMessage(
-        { type: 'SET_PROMPT_STRATEGY', payload: { strategy: newStrategy } } satisfies RuntimeMessage,
-        () => void chrome.runtime.lastError
+    if (sdItem) {
+      const parentDd = sdItem.closest<HTMLElement>(
+        '[data-role="strategy-dropdown"], [data-role="rewrite-randomness-dropdown"]'
       );
-      return;
+      if (parentDd && root.contains(parentDd)) {
+        event.stopPropagation();
+        parentDd.classList.remove('open');
+
+        if (parentDd.matches('[data-role="strategy-dropdown"]')) {
+          if (!currentState) return;
+          const prevStatus = currentState.status;
+          const newStrategy = sdItem.dataset.strategy as StrategyId;
+          if (!newStrategy || newStrategy === currentState.strategy) return;
+          if (
+            (prevStatus !== 'success' && prevStatus !== 'compose') ||
+            !isExtensionContextValid()
+          )
+            return;
+
+          setCurrentState({ ...currentState, strategy: newStrategy });
+          patchStrategyDropdownSelection(root, newStrategy);
+          if (prevStatus === 'success') {
+            patchVersionList();
+          }
+          safeSendMessage(
+            {
+              type: 'SET_PROMPT_STRATEGY',
+              payload: { strategy: newStrategy },
+            } satisfies RuntimeMessage,
+            () => void chrome.runtime.lastError
+          );
+          return;
+        }
+
+        if (!currentState || currentState.status !== 'success' || panelHasActiveRefine(currentState))
+          return;
+        const level = sdItem.dataset.randomness as OneClickRewriteRandomness;
+        if (level !== 'subtle' && level !== 'moderate' && level !== 'bold') return;
+        if (level === currentState.rewriteRandomness) return;
+        setCurrentState({ ...currentState, rewriteRandomness: level });
+        patchRewriteRandomnessDropdownSelection(root, level);
+        safeSendMessage(
+          {
+            type: 'SET_ONE_CLICK_REWRITE_RANDOMNESS',
+            payload: { level },
+          } satisfies RuntimeMessage,
+          () => void chrome.runtime.lastError
+        );
+        return;
+      }
     }
 
     const sdTrigger = t.closest<HTMLElement>('.sd-trigger');
-    if (sdTrigger && dropdown?.contains(sdTrigger)) {
-      event.stopPropagation();
-      dropdown.classList.toggle('open');
-      return;
+    if (sdTrigger) {
+      const parentDd = sdTrigger.closest<HTMLElement>(
+        '[data-role="strategy-dropdown"], [data-role="rewrite-randomness-dropdown"]'
+      );
+      if (parentDd && root.contains(parentDd)) {
+        if ((sdTrigger as HTMLButtonElement).disabled) return;
+        event.stopPropagation();
+        root
+          .querySelectorAll<HTMLElement>(
+            '[data-role="strategy-dropdown"], [data-role="rewrite-randomness-dropdown"]'
+          )
+          .forEach((dd) => {
+            if (dd !== parentDd) dd.classList.remove('open');
+          });
+        parentDd.classList.toggle('open');
+        return;
+      }
     }
 
-    if (dropdown && !dropdown.contains(t)) {
-      dropdown.classList.remove('open');
-    }
+    root
+      .querySelectorAll<HTMLElement>(
+        '[data-role="strategy-dropdown"], [data-role="rewrite-randomness-dropdown"]'
+      )
+      .forEach((dd) => {
+        if (!dd.contains(t)) dd.classList.remove('open');
+      });
 
     const actionEl = t.closest<HTMLElement>('[data-action]');
     if (!actionEl || !root.contains(actionEl)) return;
     handleDataAction(root, actionEl, event);
-  });
-}
-
-function bindPanelRewriteRandomnessChange(root: HTMLElement): void {
-  root.addEventListener('change', (e: Event) => {
-    const t = e.target as HTMLElement;
-    if (!t.matches('[data-role="rewrite-randomness"]') || !root.contains(t)) return;
-    if (!currentState || currentState.status !== 'success' || panelHasActiveRefine(currentState))
-      return;
-    const sel = t as HTMLSelectElement;
-    const level = sel.value as OneClickRewriteRandomness;
-    if (level !== 'subtle' && level !== 'moderate' && level !== 'bold') return;
-    setCurrentState({ ...currentState, rewriteRandomness: level });
-    safeSendMessage(
-      {
-        type: 'SET_ONE_CLICK_REWRITE_RANDOMNESS',
-        payload: { level },
-      } satisfies RuntimeMessage,
-      () => void chrome.runtime.lastError
-    );
   });
 }
 
@@ -1189,7 +1231,6 @@ export function bindEvents(root: HTMLElement): void {
   bindEdgeResize(root);
   bindPanelDelegatedClicks(root);
   bindPanelDelegatedInput(root);
-  bindPanelRewriteRandomnessChange(root);
 }
 
 export function flashCopied(btn: HTMLElement, text = '已复制 ✔'): void {

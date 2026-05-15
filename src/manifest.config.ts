@@ -53,6 +53,16 @@ export default defineManifest({
     'clipboardWrite',
   ],
   host_permissions: ['<all_urls>'],
+  commands: {
+    'region-capture-add-ref': {
+      suggested_key: {
+        default: 'Ctrl+Shift+E',
+        mac: 'Command+Shift+E',
+      },
+      description:
+        '在当前网页拖拽截取矩形区域截图，添加到浮动面板参考列表（适配自定义右键页面的识图前置步骤）',
+    },
+  },
   web_accessible_resources: [
     {
       resources: ['assets/*', 'icons/*'],

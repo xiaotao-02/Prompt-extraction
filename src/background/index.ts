@@ -12,8 +12,9 @@ import {
 } from '@/lib/storage';
 import { ensureLibraryReady } from '@/lib/storage/history';
 import { getByDedupeKey, naturalDedupeKey, toPublicHistory } from '@/lib/storage/historyDb';
-import type { HistoryItem, RefineResponse, RuntimeMessage, StrategyId, UpdateCheckResult } from '@/lib/types';
+import type { HistoryItem, RefineResponse, RegionCaptureConfirmPayload, RuntimeMessage, StrategyId, UpdateCheckResult } from '@/lib/types';
 import { normalizeReferenceList } from '@/lib/referenceImages';
+import { cropTabCaptureToJpeg, parseRegionCaptureConfirmPayload } from '@/lib/regionCaptureCrop';
 import {
   type CtxMenuPrepPayload,
   KEEPALIVE_PORT_PREP_KIND,
@@ -21,14 +22,16 @@ import {
 } from '@/lib/keepalivePort';
 import { DEFAULT_FEED_URL, getCurrentVersion, performUpdateCheck } from '@/lib/updater';
 
-/** 原生 image/video 上下文：立刻按当前图反推 */
-const MENU_ID_DIRECT = 'extract-image-prompt-direct';
-/** 原生 image/video 上下文：仅加入浮动面板参考列表，不立即反推 */
+/**
+ * 仅注册「添加到参考」：Chrome 在同一次右键下若本扩展有多个可见项，会折叠到「Prompt Extracto」子菜单。
+ * 反推在面板 compose 中点「生成提示词」。
+ */
+/** 原生 image/video 上下文：加入浮动面板参考列表 */
 const MENU_ID_ADD_REF = 'extract-image-prompt-add-ref';
-/** 兜底：非原生上下文下的「直接生成」 */
-const MENU_FALLBACK_DIRECT = 'extract-image-prompt-fb-direct';
-/** 兜底：非原生上下文下的「添加到参考」 */
+/** 兜底：非原生上下文（遮罩图等）下的「添加到参考」 */
 const MENU_FALLBACK_ADD = 'extract-image-prompt-fb-add';
+/** page/frame 等上下文：拖拽截取可视区域后加入参考（站点自定义右键时仍可用此项） */
+const MENU_REGION_SNIP = 'extract-region-snip-add-ref';
 
 /**
  * 内容脚本 contextmenu 写入的「本轮首选提取 URL」（含视频 JPEG、遮罩图 URL 等）。
@@ -50,9 +53,6 @@ function applyCtxMenuPrep(tabId: number, payload: CtxMenuPrepPayload): void {
     pendingTabExtract.delete(tabId);
   }
   const showItems = showFallback && !!extractionUrl;
-  chrome.contextMenus.update(MENU_FALLBACK_DIRECT, { visible: showItems }, () => {
-    void chrome.runtime.lastError;
-  });
   chrome.contextMenus.update(MENU_FALLBACK_ADD, { visible: showItems }, () => {
     void chrome.runtime.lastError;
   });
@@ -141,26 +141,9 @@ function ensureContextMenus(): void {
     void chrome.runtime.lastError;
     chrome.contextMenus.create(
       {
-        id: MENU_ID_DIRECT,
-        title: '直接生成提示词',
-        contexts: ['image', 'video'],
-      },
-      () => void chrome.runtime.lastError
-    );
-    chrome.contextMenus.create(
-      {
         id: MENU_ID_ADD_REF,
         title: '添加到参考',
         contexts: ['image', 'video'],
-      },
-      () => void chrome.runtime.lastError
-    );
-    chrome.contextMenus.create(
-      {
-        id: MENU_FALLBACK_DIRECT,
-        title: '直接生成提示词',
-        contexts: ['page', 'frame', 'link', 'selection', 'editable'],
-        visible: false,
       },
       () => void chrome.runtime.lastError
     );
@@ -170,6 +153,14 @@ function ensureContextMenus(): void {
         title: '添加到参考',
         contexts: ['page', 'frame', 'link', 'selection', 'editable'],
         visible: false,
+      },
+      () => void chrome.runtime.lastError
+    );
+    chrome.contextMenus.create(
+      {
+        id: MENU_REGION_SNIP,
+        title: '截取区域添加到参考',
+        contexts: ['page', 'frame', 'link', 'selection', 'editable'],
       },
       () => void chrome.runtime.lastError
     );
@@ -194,34 +185,26 @@ chrome.runtime.onStartup.addListener(() => {
   ensureContextMenus();
 });
 
+chrome.commands.onCommand.addListener((cmd) => {
+  if (cmd !== 'region-capture-add-ref') return;
+  void relayRegionCaptureToFocusedWebTab().then((r) => {
+    if (!r.ok) console.warn('[PromptExtracto] region capture shortcut:', r.error);
+  });
+});
+
 // 标签关闭时清理待处理的 fallback 图片缓存
 chrome.tabs?.onRemoved.addListener((tabId) => {
   pendingTabExtract.delete(tabId);
 });
 
 function hideFallbackContextMenus(): void {
-  chrome.contextMenus.update(MENU_FALLBACK_DIRECT, { visible: false }, () => {
-    void chrome.runtime.lastError;
-  });
   chrome.contextMenus.update(MENU_FALLBACK_ADD, { visible: false }, () => {
     void chrome.runtime.lastError;
   });
 }
 
-chrome.contextMenus.onClicked.addListener(async (info, tab) => {
+chrome.contextMenus.onClicked.addListener((info, tab) => {
   if (!tab?.id) return;
-
-  if (info.menuItemId === MENU_ID_DIRECT) {
-    const imageUrl = resolveUrlForNativeContextMenu(tab.id, info.srcUrl);
-    if (!imageUrl) return;
-    await runExtraction({
-      tabId: tab.id,
-      imageUrls: [imageUrl],
-      pageUrl: tab.url || '',
-      pageTitle: tab.title || '',
-    });
-    return;
-  }
 
   if (info.menuItemId === MENU_ID_ADD_REF) {
     const imageUrl = resolveUrlForNativeContextMenu(tab.id, info.srcUrl);
@@ -230,25 +213,63 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
     return;
   }
 
-  if (info.menuItemId === MENU_FALLBACK_DIRECT || info.menuItemId === MENU_FALLBACK_ADD) {
+  if (info.menuItemId === MENU_FALLBACK_ADD) {
     const cached = pendingTabExtract.get(tab.id);
     pendingTabExtract.delete(tab.id);
     hideFallbackContextMenus();
     const imageUrl = cached?.imageUrl || info.srcUrl || info.linkUrl || '';
     if (!imageUrl) return;
-    if (info.menuItemId === MENU_FALLBACK_DIRECT) {
-      await runExtraction({
-        tabId: tab.id,
-        imageUrls: [imageUrl],
-        pageUrl: tab.url || '',
-        pageTitle: tab.title || '',
-      });
-    } else {
-      postToTab(tab.id, { type: 'PANEL_APPEND_REFERENCE', payload: { imageUrl } });
-    }
+    postToTab(tab.id, { type: 'PANEL_APPEND_REFERENCE', payload: { imageUrl } });
     return;
   }
+
+  if (info.menuItemId === MENU_REGION_SNIP) {
+    postToTab(tab.id, { type: 'START_REGION_CAPTURE', payload: {} });
+  }
 });
+
+async function relayRegionCaptureToFocusedWebTab(): Promise<
+  | { ok: true }
+  | { ok: false; error: string }
+> {
+  try {
+    const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
+    const tab = tabs[0];
+    if (!tab?.id || !tab.url) {
+      return { ok: false, error: '当前没有可用的网页标签页' };
+    }
+    if (!/^(https?:|file:|ftp:)/.test(tab.url)) {
+      return { ok: false, error: '仅支持网页或本地文件页面使用区域截图' };
+    }
+    postToTab(tab.id, { type: 'START_REGION_CAPTURE', payload: {} });
+    return { ok: true };
+  } catch (e) {
+    return {
+      ok: false,
+      error: e instanceof Error ? e.message : String(e),
+    };
+  }
+}
+
+async function handleRegionCaptureConfirm(tabId: number, p: RegionCaptureConfirmPayload): Promise<void> {
+  let tabObj: chrome.tabs.Tab;
+  try {
+    tabObj = await chrome.tabs.get(tabId);
+  } catch {
+    return;
+  }
+  if (tabObj.windowId == null) return;
+  let png: string;
+  try {
+    png = await chrome.tabs.captureVisibleTab(tabObj.windowId, { format: 'png' });
+  } catch (err) {
+    console.warn('[PromptExtracto] captureVisibleTab failed', err);
+    return;
+  }
+  const jpeg = await cropTabCaptureToJpeg(png, p);
+  if (!jpeg) return;
+  postToTab(tabId, { type: 'PANEL_APPEND_REFERENCE', payload: { imageUrl: jpeg } });
+}
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message?.type === 'OPEN_OPTIONS') {
@@ -290,6 +311,23 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     });
     sendResponse({ ok: true });
     return true;
+  }
+  if (message?.type === 'REQUEST_REGION_CAPTURE') {
+    void relayRegionCaptureToFocusedWebTab().then(sendResponse);
+    return true;
+  }
+  if (message?.type === 'REGION_CAPTURE_CONFIRM') {
+    const p = parseRegionCaptureConfirmPayload((message as { payload?: unknown }).payload);
+    const tabId = sender.tab?.id;
+    if (tabId == null || !p) {
+      sendResponse({ ok: false, error: 'invalid' });
+      return false;
+    }
+    void handleRegionCaptureConfirm(tabId, p).catch((err) =>
+      console.warn('[PromptExtracto] handleRegionCaptureConfirm', err),
+    );
+    sendResponse({ ok: true });
+    return false;
   }
   if (message?.type === 'SET_PROMPT_STRATEGY') {
     const strategy = message.payload?.strategy as StrategyId | undefined;

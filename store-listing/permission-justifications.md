@@ -9,10 +9,10 @@
 ## 1. `contextMenus`
 
 **EN**
-The extension adds a single right-click menu item ("Extract Image Prompt") that appears only on `<img>`, `<video>`, `<canvas>`, inline `<svg>` and CSS background images. This is the sole entry point users have to trigger the extension. Without this permission the extension has no UI surface and is unusable.
+The extension adds a single visible right-click item ("Add to reference") on `<img>`, `<video>`, and — via a fallback path — masked images, `<canvas>`, inline `<svg>`, and CSS background images. Separately it adds ("Capture region to reference") on page-like contexts when the site's own menu blocks the usual image flow. Users then compose references in the in-page panel and run extraction.
 
 **ZH**
-扩展只新增一项右键菜单「提取图片提示词」，仅在 `<img>` / `<video>` / `<canvas>` / 内联 `<svg>` / CSS 背景图上显示。这是用户调用本扩展的**唯一入口**。没有此权限扩展将完全无法使用。
+扩展在 `<img>` / `<video>` 上提供**一级**右键项「添加到参考」，并在遮罩图等场景通过兜底菜单提供同一入口。**另在网页/帧等上下文提供「截取区域添加到参考」，用于站点劫持原生右键、扩展图片菜单无法出现的情形。**随后在页内面板中收集参考并生成提示词。无此权限将无法在网页上完成主要工作流。
 
 ---
 
@@ -40,17 +40,17 @@ No data is transmitted off-device by virtue of this permission. `chrome.storage.
 Required for `chrome.scripting.executeScript` when the service worker must programmatically inject the same bundled content script into the active tab (for example if the tab predates the install/update, or if declarative injection did not attach). Separately, a lightweight declarative content script runs at `document_idle` on matched pages so the extension can listen for right-click preparation and handle panel messages — **this does not display the visible result UI by itself**. The Shadow-DOM floating panel is created only after the user initiates extraction (context menu or recall flow), not on every page load.
 
 **ZH**
-用于在后台需要时通过 `chrome.scripting.executeScript` 向当前标签页**程序化注入**与 manifest 相同的内容脚本（例如页面在扩展安装/更新前就打开、或声明式注入未附着等兜底场景）。与此同时，匹配站点在 `document_idle` 会加载**轻量**声明式内容脚本，用于右键探测与面板消息 —— **仅凭脚本加载不会在页面上展示结果界面**。半透明结果浮动面板仅在用户发起「提取提示词」或从库中召回到页面等操作后才创建，而非每次打开网页就自动出现。
+用于在后台需要时通过 `chrome.scripting.executeScript` 向当前标签页**程序化注入**与 manifest 相同的内容脚本（例如页面在扩展安装/更新前就打开、或声明式注入未附着等兜底场景）。与此同时，匹配站点在 `document_idle` 会加载**轻量**声明式内容脚本，用于右键探测与面板消息 —— **仅凭脚本加载不会在页面上展示结果界面**。半透明结果浮动面板仅在用户发起「添加到参考」、面板内反推或从库中召回到页面等操作后才创建，而非每次打开网页就自动出现。
 
 ---
 
 ## 4. `activeTab`
 
 **EN**
-Works with `scripting` so programmatic injection and tab-scoped work follow Chrome’s recommended pattern for acting on the tab the user is using when they invoke the extension, rather than arbitrary background tab access.
+Works with `scripting` so tab-scoped work follows Chrome's pattern for responding to explicit user gestures. It also gates `chrome.tabs.captureVisibleTab`: when you start rectangle capture from the toolbar popup / shortcut / extension context menu item, the service worker snaps the visible area of **that tab only**, crops your selection locally, forwards it as JPEG to the floating panel pipeline, then discards the full snapshot (`activeTab`-aligned behavior).
 
 **ZH**
-与 `scripting` 配合，使程序化注入与标签页侧行为符合 Chrome 推荐的「在用户操作所及的当前标签页上工作」模式，而非在后台任意访问未参与交互的标签页。
+与 `scripting` 配合，使程序化注入等行为符合 Chrome 所要求的「在用户显式手势所及的标签页上工作」模式。**同时，`activeTab` 也用于授权 `chrome.tabs.captureVisibleTab`**：当你从扩展工具栏弹窗、快捷键或页面右键扩展菜单触发「截取区域」时，后台仅对当前活动网页标签页截取可见区画面、在用户框选的矩形本地裁剪为小尺寸 JPEG、`PANEL_APPEND_REFERENCE` 后立即丢弃整张快照大图，不向无关标签页或未参与交互的标签页偷拍。
 
 ---
 

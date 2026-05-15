@@ -1,6 +1,6 @@
 # Prompt Extracto
 
-一个 Chrome 扩展：在任意网页 **右键点击图片 / 动图 / 视频 → 提取提示词**，调用视觉大模型反推出可用于 AI 绘画的高质量提示词（支持中文段落 / 英文段落 / Stable Diffusion 标签 / Midjourney 风格）。
+一个 Chrome 扩展：在任意网页 **右键图片 / 动图 / 视频 → 添加到参考**，于浮动面板中 **生成提示词**，调用视觉大模型反推出可用于 AI 绘画的高质量提示词（支持中文段落 / 英文段落 / Stable Diffusion 标签 / Midjourney 风格）。
 
 ## 特性
 

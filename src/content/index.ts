@@ -17,12 +17,22 @@ import {
   appendReferenceFromBackground,
 } from './panel';
 import { expandPanelForSidebar } from './panel/geometry';
+import { startRegionCaptureFromExtension, abortRegionCaptureIfActive } from '@/content/regionCapture';
 import { isExtensionContextValid, safeSendMessage } from '@/content/extensionBridge';
 
 export { safeSendMessage } from '@/content/extensionBridge';
 
 try {
   chrome.runtime.onMessage.addListener((message: RuntimeMessage, _sender, sendResponse) => {
+    if (message.type === 'START_REGION_CAPTURE') {
+      if (window.top !== window) {
+        sendResponse({ ok: false, skipped: true });
+        return false;
+      }
+      startRegionCaptureFromExtension();
+      sendResponse({ ok: true });
+      return false;
+    }
     if (message.type === 'PING') {
       sendResponse({ ok: true });
       return true;
@@ -152,7 +162,10 @@ try {
 }
 
 document.addEventListener('keydown', (e) => {
-  if (e.key === 'Escape') closePanel();
+  if (e.key === 'Escape') {
+    if (abortRegionCaptureIfActive()) return;
+    closePanel();
+  }
 });
 
 // ===================================================================
@@ -265,6 +278,14 @@ function extractVideoBestUrl(video: HTMLVideoElement): string {
   return video.currentSrc || video.src || '';
 }
 
+/** Chrome 会认为属于原生 image 上下文的右键 target；这类情况不写 fallback 兜底菜单以免重复入口。 */
+function isNativeMediaContextSurface(target: Element | null): boolean {
+  if (!target) return false;
+  if (target instanceof HTMLImageElement) return true;
+  const tag = target.tagName;
+  return tag === 'SOURCE' || tag === 'PICTURE';
+}
+
 /** 右键位置综合探测：返回值同时驱动 tab 缓存与兜底菜单 visibility。 */
 function computeCtxMenuPrep(ev: MouseEvent): CtxMenuPrepResult {
   const x = ev.clientX;
@@ -272,7 +293,7 @@ function computeCtxMenuPrep(ev: MouseEvent): CtxMenuPrepResult {
   const stack = hitStack(ev, x, y);
   const target = ev.target instanceof Element ? ev.target : null;
 
-  // 直接点到 <video>：原生 video 上下文 + MENU_ID；不写 showFallback；仍缓存抓拍 JPEG 供菜单点击优于 srcUrl。
+  // 直接点到 <video>：原生 video 上下文 + 「添加到参考」菜单项；不写 showFallback；仍缓存抓拍 JPEG 供菜单点击优于 srcUrl。
   if (target instanceof HTMLVideoElement) {
     return {
       extractionUrl: extractVideoBestUrl(target),
@@ -303,9 +324,9 @@ function computeCtxMenuPrep(ev: MouseEvent): CtxMenuPrepResult {
   //      所以这里主动把被覆盖的 <img> 的 currentSrc 抛给后台，让 fallback 菜单
   //      显示。currentSrc 比 src 更准确——能拿到 srcset 实际选中的那张分辨率。
   //      栈里多张图时取包围盒面积较小者，减轻瀑布流重叠时的误选。
-  const targetIsImage =
-    target instanceof HTMLImageElement || (target instanceof Element && target.tagName === 'SOURCE');
-  if (targetIsImage) return { extractionUrl: '', showFallback: false };
+  //      点到 `<picture>` 外层等价于结构化图片上下文，亦不写兜底。
+  //
+  if (isNativeMediaContextSurface(target)) return { extractionUrl: '', showFallback: false };
 
   const imgsInStack: HTMLImageElement[] = [];
   for (const el of stack) {
@@ -378,15 +399,14 @@ function isRoughlyInViewport(r: DOMRectReadOnly): boolean {
 }
 
 /**
- * 在视口内、包含点击点的 video/img 中，取包围盒面积最小者（通常更接近「用户点中的那张」）。
+ * 在视口内、包含点击点的 video/img 中，取包围盒面积最小者；含一层 open ShadowRoot。
  */
 function pickMediaUrlByRectHit(x: number, y: number): string {
-  let best: HTMLVideoElement | HTMLImageElement | null = null;
+  const candidates = collectVideoImgRoots(document);
+  let bestEl: HTMLVideoElement | HTMLImageElement | undefined;
   let bestArea = Infinity;
-  let seen = 0;
-  for (const el of document.querySelectorAll('video, img')) {
-    if (++seen > RECT_HIT_MAX_NODES) break;
-    if (!(el instanceof HTMLVideoElement || el instanceof HTMLImageElement)) continue;
+
+  for (const el of candidates) {
     const r = el.getBoundingClientRect();
     if (r.width < RECT_HIT_MIN_EDGE || r.height < RECT_HIT_MIN_EDGE) continue;
     if (!isRoughlyInViewport(r)) continue;
@@ -394,14 +414,44 @@ function pickMediaUrlByRectHit(x: number, y: number): string {
     const area = rectArea(r);
     if (area < bestArea) {
       bestArea = area;
-      best = el;
+      bestEl = el;
     }
   }
-  if (!best) return '';
-  if (best instanceof HTMLVideoElement) {
-    return extractVideoBestUrl(best);
+
+  if (!bestEl) return '';
+  if (bestEl instanceof HTMLVideoElement) {
+    return extractVideoBestUrl(bestEl);
   }
-  return best.currentSrc || best.src || '';
+  return bestEl.currentSrc || bestEl.src || '';
+}
+
+function collectVideoImgRoots(top: Document | ShadowRoot): (HTMLVideoElement | HTMLImageElement)[] {
+  const out: (HTMLVideoElement | HTMLImageElement)[] = [];
+  let seenMedia = 0;
+  let hostScan = 0;
+  const MAX_HOST_SCAN = 4000;
+
+  const visitRoot = (root: Document | ShadowRoot): void => {
+    root.querySelectorAll('video, img').forEach((el) => {
+      if (!(el instanceof HTMLVideoElement || el instanceof HTMLImageElement)) return;
+      if (seenMedia >= RECT_HIT_MAX_NODES) return;
+      seenMedia += 1;
+      out.push(el);
+    });
+
+    if (seenMedia >= RECT_HIT_MAX_NODES) return;
+
+    for (const host of root.querySelectorAll('*')) {
+      if (hostScan >= MAX_HOST_SCAN || seenMedia >= RECT_HIT_MAX_NODES) return;
+      hostScan += 1;
+      const sr = host.shadowRoot;
+      if (sr?.mode !== 'open') continue;
+      visitRoot(sr);
+    }
+  };
+
+  visitRoot(top);
+  return out;
 }
 
 /**

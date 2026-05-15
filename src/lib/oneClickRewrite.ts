@@ -2,6 +2,13 @@ import type { OneClickRewriteRandomness } from '@/lib/types';
 
 export const DEFAULT_ONE_CLICK_REWRITE_RANDOMNESS: OneClickRewriteRandomness = 'moderate';
 
+/** UI 档位文案（浮动面板下拉与选项页共用）。 */
+export const REWRITE_RANDOMNESS_LABELS: Record<OneClickRewriteRandomness, string> = {
+  subtle: '轻度',
+  moderate: '中度',
+  bold: '强烈',
+};
+
 export function normalizeOneClickRewriteRandomness(v: unknown): OneClickRewriteRandomness {
   if (v === 'subtle' || v === 'moderate' || v === 'bold') return v;
   return DEFAULT_ONE_CLICK_REWRITE_RANDOMNESS;

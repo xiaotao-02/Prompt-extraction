@@ -1165,10 +1165,7 @@ export default function PromptLibrary({
           {filtered.map((item) => {
             const expanded = expandedId === item.id;
             return (
-              <div
-                key={item.id}
-                className={`min-h-0 ${expanded ? 'col-span-full' : ''}`}
-              >
+              <div key={item.id} className="min-h-0">
                 <ItemGridCard
                   item={item}
                   checked={selectedIds.has(item.id)}

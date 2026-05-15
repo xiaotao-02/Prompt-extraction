@@ -1,5 +1,8 @@
 import type { OneClickRewriteRandomness, PromptVersion } from '@/lib/types';
-import { normalizeOneClickRewriteRandomness } from '@/lib/oneClickRewrite';
+import {
+  normalizeOneClickRewriteRandomness,
+  REWRITE_RANDOMNESS_LABELS,
+} from '@/lib/oneClickRewrite';
 import {
   REFINE_STREAM_VERSION_ID,
   EXTRACT_STREAM_VERSION_ID,
@@ -98,6 +101,31 @@ function strategySelectHtml(currentStrategy: StrategyId | undefined): string {
   return `
     <div class="strategy-dropdown" data-role="strategy-dropdown" title="切换策略后需点击重新生成生效">
       <button class="sd-trigger" type="button">
+        <span class="sd-label">${escapeText(currentLabel)}</span>
+        <svg class="sd-arrow" width="10" height="6" viewBox="0 0 10 6" fill="none"><path d="M1 1l4 4 4-4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      </button>
+      <ul class="sd-menu">${items}</ul>
+    </div>`;
+}
+
+/**
+ * 「随机风格强度」下拉：结构与 {@link strategySelectHtml} 一致，便于复用 `.strategy-dropdown` / `.sd-*` 样式。
+ */
+function rewriteRandomnessSelectHtml(rr: OneClickRewriteRandomness, disabled: boolean): string {
+  const keys = ['subtle', 'moderate', 'bold'] as const satisfies readonly OneClickRewriteRandomness[];
+  const currentLabel = REWRITE_RANDOMNESS_LABELS[rr];
+  const items = keys
+    .map((id) => {
+      const active = id === rr ? ' active' : '';
+      return `<li class="sd-item${active}" data-randomness="${escapeAttr(id)}">${escapeText(
+        REWRITE_RANDOMNESS_LABELS[id]
+      )}</li>`;
+    })
+    .join('');
+  const wrapDisabled = disabled ? ' is-disabled' : '';
+  return `
+    <div class="strategy-dropdown rewrite-randomness-dropdown${wrapDisabled}" data-role="rewrite-randomness-dropdown" aria-label="随机风格强度" title="随机风格强度">
+      <button class="sd-trigger" type="button" ${disabled ? 'disabled' : ''}>
         <span class="sd-label">${escapeText(currentLabel)}</span>
         <svg class="sd-arrow" width="10" height="6" viewBox="0 0 10 6" fill="none"><path d="M1 1l4 4 4-4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
       </button>
@@ -248,17 +276,11 @@ function actionsHtml(
     rewriteDisabled ? 'disabled' : ''
   }><span>随机风格</span></button>`;
 
-  const rewriteSelect = `<select class="rewrite-randomness" data-role="rewrite-randomness" aria-label="随机风格强度" title="随机风格强度" ${
-    rewriteDisabled ? 'disabled' : ''
-  }>
-          <option value="subtle"${rr === 'subtle' ? ' selected' : ''}>轻度</option>
-          <option value="moderate"${rr === 'moderate' ? ' selected' : ''}>中度</option>
-          <option value="bold"${rr === 'bold' ? ' selected' : ''}>强烈</option>
-        </select>`;
+  const rewriteDropdown = rewriteRandomnessSelectHtml(rr, rewriteDisabled);
 
   const rewriteControlHtml = loading
     ? rewriteSpinBtn
-    : `<div class="rewrite-control-group">${rewriteSelect}${rewriteSpinBtn}</div>`;
+    : `<div class="rewrite-control-group">${rewriteDropdown}${rewriteSpinBtn}</div>`;
 
   return `
         <div class="actions">
@@ -557,7 +579,7 @@ export function panelHtml(state: PanelState): string {
           }>本地图片</button>
           <input type="file" class="ref-file-input-hidden" data-role="ref-file-input" accept="image/*" />
         </div>
-        <p class="compose-hint">可在网页中继续右键「添加到参考」。当前 ${urls.length} / ${MAX_REFERENCE_IMAGES} 张。</p>
+        <p class="compose-hint">图片 / 视频上右键一级「添加到参考」可继续收集；在下方点「生成提示词」完成反推。当前 ${urls.length} / ${MAX_REFERENCE_IMAGES} 张。</p>
         <div class="compose-meta">${strategySelectHtml(state.strategy)}</div>
         <div class="actions compose-actions">
           <button type="button" class="btn primary" data-action="run-extract" ${

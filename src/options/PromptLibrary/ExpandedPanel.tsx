@@ -22,6 +22,7 @@ import { MetaTab } from './tabs/MetaTab';
 import { RefineInline } from './tabs/RefineInline';
 import type { LibraryDockIntent, LibraryRefineJob } from './types';
 import { MAX_PARALLEL_LIBRARY_REFINES } from './types';
+import { RewriteRandomnessDropdown } from './parts/RewriteRandomnessDropdown';
 
 type InlineSection = 'refine' | 'meta';
 
@@ -359,20 +360,12 @@ export function ExpandedPanel({
         {/* 操作按钮行 */}
         <div className="flex items-center gap-1.5 flex-wrap">
           <div className="inline-flex items-stretch rounded-md">
-            <select
+            <RewriteRandomnessDropdown
               value={rewriteRandomness}
               disabled={rewriteBusy}
-              aria-label="随机风格强度"
-              title="随机风格强度"
-              onChange={(e) =>
-                onRewriteRandomnessChange(e.target.value as OneClickRewriteRandomness)
-              }
-              className="text-[11px] px-2 py-1 rounded-l-md rounded-r-none border border-r-0 border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 text-zinc-700 dark:text-zinc-200 disabled:opacity-40 max-w-[76px]"
-            >
-              <option value="subtle">轻度</option>
-              <option value="moderate">中度</option>
-              <option value="bold">强烈</option>
-            </select>
+              segmented
+              onChange={onRewriteRandomnessChange}
+            />
             <button
               type="button"
               onClick={onOneClickRewrite}
