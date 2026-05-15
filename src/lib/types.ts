@@ -141,6 +141,23 @@ export interface AppSettings {
 }
 
 /**
+ * 用户在「自定义组合」下保存的命名策略快照（存 chrome.storage.local）。
+ * 应用时写回 {@link AppSettings} 并令 `promptStrategy === 'custom'`。
+ */
+export interface UserStrategyPreset {
+  id: string;
+  name: string;
+  createdAt: number;
+  updatedAt: number;
+  customComponents: StrategyComponents;
+  customInstruction?: string;
+  customTemperature?: number;
+  customMaxTokens?: number;
+  /** 与内置档位共用的「额外提示词」模板，随策略拼接方式合并 */
+  customPromptTemplate: string;
+}
+
+/**
  * 反推流程的阶段。面板会根据这个值切换 loading 文案：
  *   fetching   → 正在下载/解码图片（含动图扁平化、视频抓帧）
  *   calling    → 已把图片发给大模型，等待首 token
@@ -498,4 +515,6 @@ export interface ProviderMeta {
   defaultModel: string;
   docsUrl: string;
   description: string;
+  /** 设置页「模型供应商」：`featured` 默认展示，`extended` 折叠在「更多」 */
+  uiTier?: 'featured' | 'extended';
 }

@@ -92,6 +92,7 @@ export const PROVIDERS: Record<ProviderId, ProviderMeta> = {
   stepfun: {
     id: 'stepfun',
     label: '阶跃星辰 Step',
+    uiTier: 'extended',
     defaultBaseUrl: 'https://api.stepfun.com/v1',
     defaultModel: 'step-1v-32k',
     docsUrl: 'https://platform.stepfun.com/interface-key',
@@ -100,6 +101,7 @@ export const PROVIDERS: Record<ProviderId, ProviderMeta> = {
   minimax: {
     id: 'minimax',
     label: 'MiniMax',
+    uiTier: 'extended',
     defaultBaseUrl: 'https://api.minimax.chat/v1',
     defaultModel: 'MiniMax-VL-01',
     docsUrl: 'https://platform.minimaxi.com/user-center/basic-information/interface-key',
@@ -108,6 +110,7 @@ export const PROVIDERS: Record<ProviderId, ProviderMeta> = {
   yi: {
     id: 'yi',
     label: '零一万物 Yi',
+    uiTier: 'extended',
     defaultBaseUrl: 'https://api.lingyiwanwu.com/v1',
     defaultModel: 'yi-vision-v2',
     docsUrl: 'https://platform.lingyiwanwu.com/apikeys',
@@ -134,6 +137,7 @@ export const PROVIDERS: Record<ProviderId, ProviderMeta> = {
   xai: {
     id: 'xai',
     label: 'xAI Grok',
+    uiTier: 'extended',
     defaultBaseUrl: 'https://api.x.ai/v1',
     defaultModel: 'grok-2-vision-latest',
     docsUrl: 'https://console.x.ai',
@@ -142,6 +146,7 @@ export const PROVIDERS: Record<ProviderId, ProviderMeta> = {
   mistral: {
     id: 'mistral',
     label: 'Mistral',
+    uiTier: 'extended',
     defaultBaseUrl: 'https://api.mistral.ai/v1',
     defaultModel: 'pixtral-large-latest',
     docsUrl: 'https://console.mistral.ai/api-keys',
@@ -150,6 +155,7 @@ export const PROVIDERS: Record<ProviderId, ProviderMeta> = {
   groq: {
     id: 'groq',
     label: 'Groq',
+    uiTier: 'extended',
     defaultBaseUrl: 'https://api.groq.com/openai/v1',
     defaultModel: 'llama-3.2-90b-vision-preview',
     docsUrl: 'https://console.groq.com/keys',
@@ -158,6 +164,7 @@ export const PROVIDERS: Record<ProviderId, ProviderMeta> = {
   together: {
     id: 'together',
     label: 'Together AI',
+    uiTier: 'extended',
     defaultBaseUrl: 'https://api.together.xyz/v1',
     defaultModel: 'meta-llama/Llama-3.2-90B-Vision-Instruct-Turbo',
     docsUrl: 'https://api.together.xyz/settings/api-keys',
@@ -166,6 +173,7 @@ export const PROVIDERS: Record<ProviderId, ProviderMeta> = {
   fireworks: {
     id: 'fireworks',
     label: 'Fireworks AI',
+    uiTier: 'extended',
     defaultBaseUrl: 'https://api.fireworks.ai/inference/v1',
     defaultModel: 'accounts/fireworks/models/llama-v3p2-90b-vision-instruct',
     docsUrl: 'https://fireworks.ai/account/api-keys',
@@ -176,6 +184,7 @@ export const PROVIDERS: Record<ProviderId, ProviderMeta> = {
   shukelongda: {
     id: 'shukelongda',
     label: '数科隆达 中转',
+    uiTier: 'extended',
     defaultBaseUrl: 'https://ai.shukelongda.cn/v1',
     defaultModel: 'gpt-4o-mini',
     docsUrl: 'https://ai.shukelongda.cn',
@@ -194,3 +203,13 @@ export const PROVIDERS: Record<ProviderId, ProviderMeta> = {
 };
 
 export const PROVIDER_LIST: ProviderMeta[] = Object.values(PROVIDERS);
+
+/** 设置页默认展示的供应商（未标 `uiTier: 'extended'` 的条目） */
+export const PROVIDER_LIST_FEATURED: ProviderMeta[] = PROVIDER_LIST.filter(
+  (p) => p.uiTier !== 'extended'
+);
+
+/** 设置页折叠在「更多供应商」中的条目，顺序与 PROVIDERS 定义一致 */
+export const PROVIDER_LIST_EXTENDED: ProviderMeta[] = PROVIDER_LIST.filter(
+  (p) => p.uiTier === 'extended'
+);

@@ -33,8 +33,9 @@
         margin: 0 0 0.35rem;
       }
       .hint {
-        margin: 0 0 0.85rem;
+        margin: 0 0 0.5rem;
         font-size: 0.88rem;
+        line-height: 1.45;
         opacity: 0.78;
         max-width: 92ch;
       }
@@ -122,25 +123,15 @@
   <body>
     <h1>Prompt Extracto · 开发 UI 实时预览</h1>
     <p class="hint">
-      先在本仓库根目录执行 <code>npm run dev</code>（默认 <code>http://localhost:5173</code>）。
-      以下为真实 React / 真实 <code>STYLE</code> + <code>panelHtml</code>，随源码与 HMR 更新；与
-      <code>chrome-extension://</code> 里仍会存在行为差异（预览使用内存 <code>chrome.storage</code>
-      与占位 <code>runtime.sendMessage</code>）。顶部标签切换预览；链接可加
-      <code>#popup</code>、<code>#options</code>、<code>#panel</code>；快捷键 <kbd>1</kbd>
-      / <kbd>2</kbd> / <kbd>3</kbd>（本页焦点时）。
-    </p>
-    <p class="hint">
-      占位库条目（同源 IndexedDB，见 <code>src/dev/preview/seedPreviewLibrary.ts</code>）：
-      <code>PREVIEW_DEMO_PRIMARY_ID</code> · <code>preview-demo-1</code>（双版本）、
-      <code>PREVIEW_DEMO_SD_TAGS_ID</code> · <code>preview-demo-2</code>、
-      <code>PREVIEW_DEMO_REFINED_PAIR_ID</code> · <code>preview-demo-3</code>、
-      <code>PREVIEW_DEMO_TEN_VERSIONS_ID</code> · <code>preview-demo-10v</code>（10 条版本链；Popup 上徽章为
-      <code>v10</code> 表示共 10 个版本）。
-      若本地库非空，预览页每次启动仍会<strong>补写缺失</strong>的上述占位 id（无需为看 10 版本而清空整库）。
-      浮动面板预览 iframe 默认加载 <code>preview-demo-10v</code>。本聚合页内的 Panel iframe URL 不带 hash，
-      需在单独 Tab 打开
-      <code>/src/dev/preview/panel-preview.html#focus=preview-demo-1</code>
-      （或 <code>item=</code> 别名）可切换占位记录。
+      根目录 <code>npm run dev</code>（<code>http://localhost:5173</code>）→ 真实 React +
+      <code>STYLE</code>/<code>panelHtml</code> + HMR；预览为内存 <code>chrome.storage</code> 与占位
+      <code>runtime.sendMessage</code>，与 <code>chrome-extension://</code> 不完全一致。顶栏或
+      <code>#popup</code>/<code>#options</code>/<code>#panel</code>，快捷键 <kbd>1</kbd>/<kbd>2</kbd>/<kbd>3</kbd>
+      （本页焦点）。同源 IndexedDB 占位见 <code>src/dev/preview/seedPreviewLibrary.ts</code>：
+      <code>preview-demo-1</code>（双版本）、<code>preview-demo-2</code>、<code>preview-demo-3</code>、
+      <code>preview-demo-10v</code>（10 版本链，Popup <code>v10</code>）；启动补缺失 id。Panel iframe 默认
+      <code>preview-demo-10v</code>；另开
+      <code>/src/dev/preview/panel-preview.html#focus=preview-demo-1</code>（或 <code>item=</code> 别名）切记录。
     </p>
 
     <div class="tabs" role="tablist" aria-label="预览界面切换">

@@ -5,17 +5,33 @@ import {
   Eye,
   EyeOff,
   ExternalLink,
-  Image as ImageIcon,
-  AlertCircle,
   RefreshCw,
   Search,
   X,
 } from 'lucide-react';
-import { PROVIDER_LIST, PROVIDERS } from '@/lib/providers';
-import { getSettings, saveSettings } from '@/lib/storage';
-import { SETTINGS_KEY } from '@/lib/storage/keys';
+import {
+  PROVIDER_LIST_EXTENDED,
+  PROVIDER_LIST_FEATURED,
+  PROVIDERS,
+} from '@/lib/providers';
+import {
+  getSettings,
+  saveSettings,
+  addUserStrategyPreset,
+  applyUserStrategyPresetToSettings,
+  briefUserPresetFingerprint,
+  buildUserStrategyPresetFromSettings,
+  getUserStrategyPresets,
+  isSettingsMatchingUserPreset,
+  MAX_USER_STRATEGY_PRESETS,
+  MAX_PRESET_NAME_LEN,
+  removeUserStrategyPreset,
+  updateUserStrategyPresetName,
+} from '@/lib/storage';
+import { SETTINGS_KEY, USER_STRATEGY_PRESETS_KEY } from '@/lib/storage/keys';
 import {
   getStrategyList,
+  resolveCustomStrategy,
   STYLE_PROMPT_SETS,
   SAMPLING_PROFILES,
   CUSTOM_JOINS,
@@ -26,8 +42,15 @@ import type {
   CustomJoinVersion,
   StrategyComponents,
 } from '@/lib/strategies-meta';
-import type { AppSettings, OutputStyle, ProviderConfig, ProviderId } from '@/lib/types';
-import { extractPrompt, listModels } from '@/lib/api';
+import type {
+  AppSettings,
+  OutputStyle,
+  ProviderConfig,
+  ProviderId,
+  ProviderMeta,
+  UserStrategyPreset,
+} from '@/lib/types';
+import { listModels } from '@/lib/api';
 import UpdateSection from './UpdateSection';
 import SetupGuide from './SetupGuide';
 import DataPersistence from './DataPersistence';
@@ -50,7 +73,7 @@ interface Props {
 }
 
 /**
- * 设置面板：模型供应商 / 输出风格 / 其他 / 联通性测试 / 自动更新。
+ * 设置面板：模型供应商 / 输出风格 / 其他 / 自动更新。
  *
  * 这是从原 OptionsApp.tsx 抽离出来的完整设置 UI，
  * 让 OptionsApp 可以并列展示「提示词库」管理后台。
@@ -67,20 +90,34 @@ export default function SettingsView({ registerSaveHandler, onDirtyChange }: Pro
    */
   const [lastSavedSig, setLastSavedSig] = useState<string | null>(null);
   const [showKey, setShowKey] = useState(false);
-  const [testing, setTesting] = useState(false);
-  const [testResult, setTestResult] = useState<{ ok: boolean; msg: string } | null>(null);
-  const [testImage, setTestImage] = useState(
-    'https://images.unsplash.com/photo-1500530855697-b586d89ba3ee?w=600'
-  );
   const [fetchingModels, setFetchingModels] = useState(false);
   const [fetchModelsError, setFetchModelsError] = useState<string | null>(null);
   const [modelFilter, setModelFilter] = useState('');
+  /** 「更多供应商」折叠区：选中小众厂商时会在 effect 里自动展开 */
+  const [showExtendedProviders, setShowExtendedProviders] = useState(false);
+  const [userPresets, setUserPresets] = useState<UserStrategyPreset[]>([]);
   /**
    * 策略选择器的渲染数据。`getStrategyList()` 内部会逐档解析组件版本（读
    * STYLE_PROMPT_SETS 等大对象），整页只算一次就够了，所以用 useMemo 钉死 ——
    * useMemo 的零依赖 deps 数组保证它只在组件挂载时跑一次。
    */
   const strategyList = useMemo(() => getStrategyList(), []);
+
+  const extendedProviderIds = useMemo(
+    () => new Set(PROVIDER_LIST_EXTENDED.map((p) => p.id)),
+    []
+  );
+
+  /**
+   * 当前激活若是「更多」分组里的厂商，自动展开网格，避免看不到选中卡片。
+   */
+  useEffect(() => {
+    const ap = settings?.activeProvider;
+    if (ap == null) return;
+    if (extendedProviderIds.has(ap)) {
+      setShowExtendedProviders(true);
+    }
+  }, [settings?.activeProvider, extendedProviderIds]);
 
   /**
    * 记录每个 provider 在「当前会话」里已经自动拉取过的签名（apiKey|baseUrl）。
@@ -219,6 +256,28 @@ export default function SettingsView({ registerSaveHandler, onDirtyChange }: Pro
     return cfg?.discoveredModels ?? [];
   }, [settings]);
 
+  useEffect(() => {
+    void getUserStrategyPresets().then(setUserPresets);
+  }, []);
+
+  useEffect(() => {
+    const handler = (
+      changes: { [key: string]: chrome.storage.StorageChange },
+      area: chrome.storage.AreaName
+    ) => {
+      if (area !== 'local') return;
+      if (!(USER_STRATEGY_PRESETS_KEY in changes)) return;
+      void getUserStrategyPresets().then(setUserPresets);
+    };
+    chrome.storage.onChanged.addListener(handler);
+    return () => chrome.storage.onChanged.removeListener(handler);
+  }, []);
+
+  const matchesAnySavedPreset = useMemo(() => {
+    if (!settings) return false;
+    return userPresets.some((p) => isSettingsMatchingUserPreset(settings, p));
+  }, [settings, userPresets]);
+
   if (!settings || !activeMeta) {
     return <div className="p-8 text-sm text-zinc-500">加载中…</div>;
   }
@@ -233,20 +292,6 @@ export default function SettingsView({ registerSaveHandler, onDirtyChange }: Pro
         [settings.activeProvider]: { ...activeCfg, ...patch },
       },
     });
-  };
-
-  const onTest = async () => {
-    setTesting(true);
-    setTestResult(null);
-    try {
-      await persistAndMark(settings);
-      const r = await extractPrompt({ imageUrl: testImage, settings });
-      setTestResult({ ok: true, msg: r.prompt });
-    } catch (e) {
-      setTestResult({ ok: false, msg: e instanceof Error ? e.message : String(e) });
-    } finally {
-      setTesting(false);
-    }
   };
 
   /**
@@ -326,6 +371,32 @@ export default function SettingsView({ registerSaveHandler, onDirtyChange }: Pro
     setTimeout(() => setSavedAt(null), 2000);
   };
 
+  const moreCount = PROVIDER_LIST_EXTENDED.length;
+
+  const renderProviderCard = (p: ProviderMeta) => {
+    const active = settings.activeProvider === p.id;
+    return (
+      <button
+        key={p.id}
+        type="button"
+        onClick={() => setSettings({ ...settings, activeProvider: p.id as ProviderId })}
+        className={`text-left px-2.5 py-2 rounded-xl border transition relative ${
+          active
+            ? 'border-violet-500 bg-violet-50 dark:bg-violet-500/10 ring-2 ring-violet-500/20'
+            : 'border-zinc-200 dark:border-zinc-800 hover:border-zinc-300 dark:hover:border-zinc-700'
+        }`}
+        title={p.description}
+      >
+        <div className="text-sm font-medium pr-5">{p.label}</div>
+        {active && (
+          <div className="absolute top-2 right-2 w-4 h-4 rounded-full bg-violet-500 flex items-center justify-center">
+            <Check className="w-2.5 h-2.5 text-white" />
+          </div>
+        )}
+      </button>
+    );
+  };
+
   return (
     <div className="space-y-4">
       {savedAt && (
@@ -346,34 +417,32 @@ export default function SettingsView({ registerSaveHandler, onDirtyChange }: Pro
           </div>
         </div>
 
-        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-2 mb-5">
-          {PROVIDER_LIST.map((p) => {
-            const active = settings.activeProvider === p.id;
-            return (
-              <button
-                key={p.id}
-                onClick={() =>
-                  setSettings({ ...settings, activeProvider: p.id as ProviderId })
-                }
-                className={`text-left px-2.5 py-2 rounded-xl border transition relative ${
-                  active
-                    ? 'border-violet-500 bg-violet-50 dark:bg-violet-500/10 ring-2 ring-violet-500/20'
-                    : 'border-zinc-200 dark:border-zinc-800 hover:border-zinc-300 dark:hover:border-zinc-700'
-                }`}
-                title={p.description}
-              >
-                <div className="text-sm font-medium pr-5">{p.label}</div>
-                {active && (
-                  <div className="absolute top-2 right-2 w-4 h-4 rounded-full bg-violet-500 flex items-center justify-center">
-                    <Check className="w-2.5 h-2.5 text-white" />
-                  </div>
-                )}
-              </button>
-            );
-          })}
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-2">
+          {PROVIDER_LIST_FEATURED.map(renderProviderCard)}
         </div>
 
-        <div className="space-y-3">
+        {moreCount > 0 && (
+          <div className="mt-2">
+            <button
+              type="button"
+              aria-expanded={showExtendedProviders}
+              onClick={() => setShowExtendedProviders((v) => !v)}
+              className="text-xs text-violet-500 hover:underline inline-flex items-center gap-1 py-1"
+            >
+              <ChevronDown
+                className={`w-3.5 h-3.5 transition-transform ${showExtendedProviders ? 'rotate-180' : ''}`}
+              />
+              {showExtendedProviders ? '收起更多供应商' : `显示更多供应商（${moreCount}）`}
+            </button>
+            {showExtendedProviders && (
+              <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-2 mt-2">
+                {PROVIDER_LIST_EXTENDED.map(renderProviderCard)}
+              </div>
+            )}
+          </div>
+        )}
+
+        <div className="mt-5 space-y-3">
           <div>
             <label className="label flex items-center justify-between">
               <span>API Key</span>
@@ -672,86 +741,134 @@ export default function SettingsView({ registerSaveHandler, onDirtyChange }: Pro
           一档策略 = <b>指令集 / 采样 / 拼接</b> 三个组件各自挑一个版本号的组合。切档其实是同时换这 3 个组件，对比效果时可以随时切回旧版本。
         </p>
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-          {strategyList.map((s) => {
-            const active = settings.promptStrategy === s.id;
-            const isCustom = s.id === 'custom';
-            return (
-              <div key={s.id} className={isCustom ? 'sm:col-span-2' : ''}>
-                <button
-                  type="button"
-                  onClick={() => setSettings({ ...settings, promptStrategy: s.id })}
-                  className={`w-full text-left p-3 rounded-xl border transition ${
-                    active
-                      ? 'border-violet-500 bg-violet-50 dark:bg-violet-500/10'
-                      : 'border-zinc-200 dark:border-zinc-800 hover:border-zinc-300'
-                  } ${isCustom && active ? 'rounded-b-none' : ''}`}
-                >
-                  <div className="text-sm font-medium flex items-center gap-2">
-                    {s.label}
-                    {active && (
-                      <span className="text-[10px] px-1.5 py-0.5 rounded bg-violet-500 text-white">
-                        生效中
-                      </span>
-                    )}
-                  </div>
-                  <div className="text-[11px] text-zinc-500 mt-1 leading-relaxed">
-                    {s.description}
-                  </div>
-                  {!isCustom && (
+          {strategyList
+            .filter((s) => s.id !== 'custom')
+            .map((s) => {
+              const active = settings.promptStrategy === s.id;
+              return (
+                <div key={s.id}>
+                  <button
+                    type="button"
+                    onClick={() => setSettings({ ...settings, promptStrategy: s.id })}
+                    className={`w-full text-left p-3 rounded-xl border transition ${
+                      active
+                        ? 'border-violet-500 bg-violet-50 dark:bg-violet-500/10'
+                        : 'border-zinc-200 dark:border-zinc-800 hover:border-zinc-300'
+                    }`}
+                  >
+                    <div className="text-sm font-medium flex items-center gap-2">
+                      {s.label}
+                      {active && (
+                        <span className="text-[10px] px-1.5 py-0.5 rounded bg-violet-500 text-white">
+                          生效中
+                        </span>
+                      )}
+                    </div>
+                    <div className="text-[11px] text-zinc-500 mt-1 leading-relaxed">
+                      {s.description}
+                    </div>
                     <div className="text-[10px] text-zinc-400 mt-1.5 font-mono">
                       temperature {s.temperature} · max_tokens {s.maxTokens} ·{' '}
                       {s.customPosition === 'prepend' ? '自定义前置' : '自定义追加'}
                     </div>
+                  </button>
+                </div>
+              );
+            })}
+
+          {userPresets.map((preset) => {
+            const active = isSettingsMatchingUserPreset(settings, preset);
+            let resolved: ReturnType<typeof resolveCustomStrategy> | null = null;
+            try {
+              resolved = resolveCustomStrategy(preset.customComponents, {
+                instruction: preset.customInstruction,
+                temperature: preset.customTemperature,
+                maxTokens: preset.customMaxTokens,
+              });
+            } catch {
+              resolved = null;
+            }
+            return (
+              <div key={`user-preset-${preset.id}`}>
+                <button
+                  type="button"
+                  onClick={() =>
+                    setSettings(applyUserStrategyPresetToSettings(settings, preset))
+                  }
+                  className={`w-full text-left p-3 rounded-xl border transition ${
+                    active
+                      ? 'border-violet-500 bg-violet-50 dark:bg-violet-500/10'
+                      : 'border-zinc-200 dark:border-zinc-800 hover:border-zinc-300'
+                  }`}
+                >
+                  <div className="text-sm font-medium flex items-center gap-2 flex-wrap">
+                    <span className="min-w-0 truncate">{preset.name}</span>
+                    <span className="text-[9px] px-1.5 py-0.5 rounded bg-zinc-200/90 dark:bg-zinc-700 text-zinc-600 dark:text-zinc-300 shrink-0">
+                      我的预设
+                    </span>
+                    {active && (
+                      <span className="text-[10px] px-1.5 py-0.5 rounded bg-violet-500 text-white shrink-0">
+                        生效中
+                      </span>
+                    )}
+                  </div>
+                  <div className="text-[11px] text-zinc-500 mt-1 leading-relaxed line-clamp-2">
+                    {briefUserPresetFingerprint(preset)}
+                  </div>
+                  {resolved && (
+                    <div className="text-[10px] text-zinc-400 mt-1.5 font-mono">
+                      temperature {resolved.temperature} · max_tokens {resolved.maxTokens} ·{' '}
+                      {resolved.customPosition === 'prepend' ? '自定义前置' : '自定义追加'}
+                    </div>
                   )}
                 </button>
-                {isCustom && active && (
-                  <CustomStrategyPanel settings={settings} setSettings={setSettings} />
-                )}
               </div>
             );
           })}
-        </div>
-      </section>
 
-      {/* 联通性测试：所有配置完成后一键验证 */}
-      <section className="card">
-        <h2 className="text-sm font-semibold mb-1 flex items-center gap-2">
-          <ImageIcon className="w-4 h-4 text-violet-500" /> 联通性测试
-        </h2>
-        <p className="text-xs text-zinc-500 mb-3">用一张图片快速验证当前配置是否可用</p>
-        <input
-          className="input"
-          value={testImage}
-          onChange={(e) => setTestImage(e.target.value)}
-          placeholder="测试图片 URL"
-        />
-        <div className="mt-3 flex items-center gap-2">
-          <button className="btn-primary" disabled={testing} onClick={onTest}>
-            {testing ? '测试中…' : '运行测试'}
-          </button>
-          {testResult && (
-            <span
-              className={`text-xs flex items-center gap-1 ${
-                testResult.ok ? 'text-emerald-500' : 'text-rose-500'
-              }`}
-            >
-              {testResult.ok ? <Check className="w-4 h-4" /> : <AlertCircle className="w-4 h-4" />}
-              {testResult.ok ? '调用成功' : '失败'}
-            </span>
-          )}
+          {strategyList
+            .filter((s) => s.id === 'custom')
+            .map((s) => {
+              const customActive = settings.promptStrategy === 'custom';
+              const showGenericCustomBadge = customActive && !matchesAnySavedPreset;
+              return (
+                <div key={s.id} className="sm:col-span-2">
+                  <button
+                    type="button"
+                    onClick={() => setSettings({ ...settings, promptStrategy: s.id })}
+                    className={`w-full text-left p-3 rounded-xl border transition ${
+                      customActive
+                        ? 'border-violet-500 bg-violet-50 dark:bg-violet-500/10'
+                        : 'border-zinc-200 dark:border-zinc-800 hover:border-zinc-300'
+                    } ${customActive ? 'rounded-b-none' : ''}`}
+                  >
+                    <div className="text-sm font-medium flex items-center gap-2">
+                      {s.label}
+                      {showGenericCustomBadge && (
+                        <span className="text-[10px] px-1.5 py-0.5 rounded bg-violet-500 text-white">
+                          生效中
+                        </span>
+                      )}
+                    </div>
+                    <div className="text-[11px] text-zinc-500 mt-1 leading-relaxed">
+                      {s.description}
+                    </div>
+                  </button>
+                  {customActive && (
+                    <CustomStrategyPanel settings={settings} setSettings={setSettings} />
+                  )}
+                </div>
+              );
+            })}
         </div>
-        {testResult && (
-          <pre className="mt-3 text-xs whitespace-pre-wrap p-4 rounded-lg bg-zinc-50 dark:bg-zinc-800/50 max-h-[200px] overflow-auto leading-relaxed">
-            {testResult.msg}
-          </pre>
-        )}
       </section>
 
       {/* 数据持久化：维护操作下沉到底部 */}
       <DataPersistence
         onDataRestored={async () => {
-          const next = await getSettings();
+          const [next, presets] = await Promise.all([getSettings(), getUserStrategyPresets()]);
           setSettings(next);
+          setUserPresets(presets);
         }}
       />
 
@@ -768,6 +885,7 @@ const STYLE_PROMPT_SET_LABELS: Record<StylePromptSetVersion, string> = {
   'v0.1.0': 'v0.1.0 — 基线指令，7 个抽象方面自由组织',
   'v0.2.2': 'v0.2.2 — 10 维度显式清单 + 三禁 + 空槽位跳过',
   'v0.3.0': 'v0.3.0 — 8 维度分句 / 具名风格锚定 / 摄影参数',
+  'v0.3.5': 'v0.3.5 — 按图结构 3–8 段 / 中文自然语言+参数 / 只出正文',
 };
 const SAMPLING_LABELS: Record<SamplingVersion, string> = {
   'v0.1.0': 'v0.1.0 — temperature 0.4 · max_tokens 1024',
@@ -787,9 +905,23 @@ function CustomStrategyPanel({
   settings: AppSettings;
   setSettings: (s: AppSettings) => void;
 }) {
-  const [advancedOpen, setAdvancedOpen] = useState(
-    !!(settings.customInstruction || settings.customTemperature != null || settings.customMaxTokens != null)
-  );
+  const [presets, setPresets] = useState<UserStrategyPreset[]>([]);
+  const [newPresetName, setNewPresetName] = useState('');
+  const [presetTip, setPresetTip] = useState<string | null>(null);
+
+  const refreshPresets = useCallback(async () => {
+    setPresets(await getUserStrategyPresets());
+  }, []);
+
+  useEffect(() => {
+    void refreshPresets();
+  }, [refreshPresets]);
+
+  const showPresetTip = useCallback((msg: string, ms = 2400) => {
+    setPresetTip(msg);
+    window.setTimeout(() => setPresetTip(null), ms);
+  }, []);
+
   const comp = settings.customComponents ?? {
     stylePromptSet: 'v0.3.0' as StylePromptSetVersion,
     sampling: 'v0.3.0' as SamplingVersion,
@@ -807,6 +939,52 @@ function CustomStrategyPanel({
   const cj = CUSTOM_JOINS[comp.customJoin];
   const effectiveTemp = settings.customTemperature ?? sm.temperature;
   const effectiveMaxTokens = settings.customMaxTokens ?? sm.maxTokens;
+
+  const onSaveUserPreset = async () => {
+    const name = newPresetName.trim();
+    if (!name) return;
+    const preset = buildUserStrategyPresetFromSettings(name, settings);
+    const r = await addUserStrategyPreset(preset);
+    if (!r.ok) {
+      showPresetTip(`最多保存 ${MAX_USER_STRATEGY_PRESETS} 条预设`, 3200);
+      return;
+    }
+    setNewPresetName('');
+    await refreshPresets();
+    showPresetTip('已保存到本地');
+  };
+
+  const onApplyUserPreset = (p: UserStrategyPreset) => {
+    try {
+      resolveCustomStrategy(p.customComponents, {
+        instruction: p.customInstruction,
+        temperature: p.customTemperature,
+        maxTokens: p.customMaxTokens,
+      });
+    } catch {
+      showPresetTip('该预设引用的组件版本已失效，请在自定义组合中修正后重新保存');
+      return;
+    }
+    setSettings(applyUserStrategyPresetToSettings(settings, p));
+    showPresetTip('已应用到当前编辑区，请点击右上角「保存设置」同步', 4000);
+  };
+
+  const onRenameUserPreset = async (p: UserStrategyPreset) => {
+    const next = window.prompt('预设名称', p.name);
+    if (next === null) return;
+    const t = next.trim().slice(0, MAX_PRESET_NAME_LEN);
+    if (!t) return;
+    await updateUserStrategyPresetName(p.id, t);
+    await refreshPresets();
+    showPresetTip('已重命名');
+  };
+
+  const onRemoveUserPreset = async (p: UserStrategyPreset) => {
+    if (!window.confirm(`删除预设「${p.name}」？`)) return;
+    await removeUserStrategyPreset(p.id);
+    await refreshPresets();
+    showPresetTip('已删除');
+  };
 
   return (
     <div className="border border-t-0 border-violet-500 rounded-b-xl bg-violet-50/50 dark:bg-violet-500/5 p-4 space-y-4">
@@ -875,21 +1053,10 @@ function CustomStrategyPanel({
         {cj === 'prepend' ? '自定义前置' : '自定义追加'}
       </div>
 
-      {/* 高级覆盖折叠区 */}
-      <div className="border-t border-violet-200 dark:border-violet-500/20 pt-3">
-        <button
-          type="button"
-          onClick={() => setAdvancedOpen(!advancedOpen)}
-          className="flex items-center gap-1.5 text-[11px] font-medium text-zinc-600 dark:text-zinc-300 hover:text-violet-600 dark:hover:text-violet-400 transition"
-        >
-          <ChevronDown
-            className={`w-3.5 h-3.5 transition-transform ${advancedOpen ? 'rotate-0' : '-rotate-90'}`}
-          />
-          高级覆盖
-        </button>
-
-        {advancedOpen && (
-          <div className="mt-3 space-y-3">
+      {/* 高级覆盖 */}
+      <div className="border-t border-violet-200 dark:border-violet-500/20 pt-3 space-y-3">
+        <div className="text-[11px] font-medium text-zinc-600 dark:text-zinc-300">高级覆盖</div>
+        <div className="space-y-3">
             <div>
               <label className="text-[11px] font-medium text-zinc-600 dark:text-zinc-300 block mb-1">
                 自定义指令模板
@@ -978,7 +1145,80 @@ function CustomStrategyPanel({
             <p className="text-[10px] text-zinc-400 leading-snug">
               覆盖值仅在选中「自定义组合」策略时生效。重置后将退回到上方采样参数版本的默认值。
             </p>
-          </div>
+        </div>
+      </div>
+
+      {/* 我的策略配置（命名预设，存本地 storage） */}
+      <div className="border-t border-violet-200 dark:border-violet-500/20 pt-3 space-y-3">
+        <div className="text-[11px] font-medium text-zinc-600 dark:text-zinc-300">我的策略配置</div>
+        {presetTip && (
+          <div className="text-[11px] text-violet-600 dark:text-violet-400">{presetTip}</div>
+        )}
+        <div className="flex flex-col sm:flex-row gap-2">
+          <input
+            type="text"
+            className="input text-xs flex-1 min-w-0"
+            placeholder="新预设名称"
+            maxLength={MAX_PRESET_NAME_LEN}
+            value={newPresetName}
+            onChange={(e) => setNewPresetName(e.target.value)}
+          />
+          <button
+            type="button"
+            className="btn-ghost text-xs py-2 shrink-0 justify-center"
+            disabled={!newPresetName.trim()}
+            onClick={() => void onSaveUserPreset()}
+          >
+            保存当前为预设
+          </button>
+        </div>
+        <p className="text-[10px] text-zinc-400 leading-snug">
+          快照包含上方组件版本、高级覆盖项，以及设置里「额外提示词」模板（与所有档位共用、按拼接方式合并）。最多{' '}
+          {MAX_USER_STRATEGY_PRESETS} 条。
+        </p>
+        {presets.length === 0 ? (
+          <p className="text-[10px] text-zinc-400">暂无已保存的预设。</p>
+        ) : (
+          <ul className="space-y-2">
+            {presets.map((p) => (
+              <li
+                key={p.id}
+                className="flex flex-col sm:flex-row sm:items-center gap-2 p-2.5 rounded-xl bg-white/70 dark:bg-zinc-900/50 border border-zinc-200/90 dark:border-zinc-700/90"
+              >
+                <div className="flex-1 min-w-0">
+                  <div className="text-sm font-medium text-zinc-800 dark:text-zinc-100 truncate">
+                    {p.name}
+                  </div>
+                  <div className="text-[10px] text-zinc-400">
+                    {new Date(p.createdAt).toLocaleString()}
+                  </div>
+                </div>
+                <div className="flex flex-wrap gap-1.5 shrink-0">
+                  <button
+                    type="button"
+                    className="btn-primary text-[11px] py-1.5 px-3"
+                    onClick={() => onApplyUserPreset(p)}
+                  >
+                    应用
+                  </button>
+                  <button
+                    type="button"
+                    className="btn-ghost text-[11px] py-1.5 px-3 border border-zinc-200 dark:border-zinc-600"
+                    onClick={() => void onRenameUserPreset(p)}
+                  >
+                    重命名
+                  </button>
+                  <button
+                    type="button"
+                    className="btn-ghost text-[11px] py-1.5 px-3 text-rose-600 dark:text-rose-400 border border-rose-200 dark:border-rose-900/50"
+                    onClick={() => void onRemoveUserPreset(p)}
+                  >
+                    删除
+                  </button>
+                </div>
+              </li>
+            ))}
+          </ul>
         )}
       </div>
     </div>

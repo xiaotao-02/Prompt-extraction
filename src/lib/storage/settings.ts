@@ -5,7 +5,7 @@ import { DEFAULT_UPDATE_SETTINGS } from '../updater';
 import { notifyBackupSubscribers } from './events';
 import { DISCOVERED_KEY, SETTINGS_KEY } from './keys';
 
-export { DISCOVERED_KEY, SETTINGS_KEY } from './keys';
+export { DISCOVERED_KEY, SETTINGS_KEY, USER_STRATEGY_PRESETS_KEY } from './keys';
 
 interface DiscoveredCache {
   models: string[];

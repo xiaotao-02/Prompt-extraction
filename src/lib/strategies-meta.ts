@@ -43,7 +43,7 @@
  * 真正的版本注册表 (`STYLE_PROMPT_SETS`) 在 strategies.ts，那里有几 KB 的 prompt
  * 字符串；这里只保留版本号字面量 type 给 components 字段引用，不会带任何运行时代价。
  */
-export type StylePromptSetVersion = 'v0.1.0' | 'v0.2.2' | 'v0.3.0';
+export type StylePromptSetVersion = 'v0.1.0' | 'v0.2.2' | 'v0.3.0' | 'v0.3.5';
 /** sampling 组件的版本号。同上，只是 type，注册表在 strategies.ts。 */
 export type SamplingVersion = 'v0.1.0' | 'v0.2.2' | 'v0.3.0';
 /** customJoin 组件的版本号。同上，只是 type，注册表在 strategies.ts。 */
@@ -160,6 +160,18 @@ const STRATEGIES_INTERNAL = {
       '温度 0.3 · 上限 1536 token · 自定义模板前置。针对 GPT Image 2 / Nano Banana 等新一代文生图模型优化：8 维度分句结构、具名风格锚定、摄影技术参数（相机/镜头/胶片/景深）、形容词密度控制、肯定句式。优先级：图片还原度 ≫ 通用性。',
     components: {
       stylePromptSet: 'v0.3.0',
+      sampling: 'v0.3.0',
+      customJoin: 'v0.3.0',
+    },
+  },
+  // v035：在 v0.3.0 的采样与拼接不变的前提下，将「中文自然语言」档改为按图结构
+  // 分段（约 3–8 段）、中文+参数、只输出提示词正文；面向曾用「自定义组合」固化该口径的用户。
+  v035: {
+    label: 'v0.3.5 策略',
+    description:
+      '温度 0.3 · 上限 1536 token · 自定义模板前置。在 v0.3.0 采样/拼接上，中文档按图片结构分 3–8 段详述，中文自然语言+参数，只返提示词本体、无违规内容；英文/标签档指令仍与 v0.3.0 成套一致。',
+    components: {
+      stylePromptSet: 'v0.3.5',
       sampling: 'v0.3.0',
       customJoin: 'v0.3.0',
     },

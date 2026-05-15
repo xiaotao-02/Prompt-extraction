@@ -329,14 +329,6 @@ const SHOT_3 = pageShell(`
                 .join('')}
             </div>
           </div>
-
-          <div style="margin-top: 22px; padding: 14px 16px; background: #ecfdf5;
-            border: 1px solid #a7f3d0; border-radius: 10px;
-            display: flex; align-items: center; gap: 10px;">
-            <div style="width: 22px; height: 22px; background: #10b981; color: white; border-radius: 50%;
-              display: inline-flex; align-items: center; justify-content: center; font-size: 13px; font-weight: 800;">✓</div>
-            <div style="font-size: 13px; color: #065f46; font-weight: 600;">联通性测试通过 · 模型响应正常</div>
-          </div>
         </div>
       </div>
 

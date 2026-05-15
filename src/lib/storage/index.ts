@@ -38,3 +38,19 @@ export {
 } from './folders';
 export { onLocalDataChange } from './events';
 export { buildBackup, restoreBackup, type BackupPayload } from './backup';
+export {
+  MAX_USER_STRATEGY_PRESETS,
+  MAX_PRESET_NAME_LEN,
+  DEFAULT_CUSTOM_COMPONENTS,
+  getUserStrategyPresets,
+  setUserStrategyPresets,
+  mergeUserStrategyPresets,
+  buildUserStrategyPresetFromSettings,
+  applyUserStrategyPresetToSettings,
+  briefUserPresetFingerprint,
+  isSettingsMatchingUserPreset,
+  addUserStrategyPreset,
+  removeUserStrategyPreset,
+  updateUserStrategyPresetName,
+} from './userStrategyPresets';
+export { USER_STRATEGY_PRESETS_KEY } from './keys';

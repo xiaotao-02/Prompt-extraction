@@ -140,7 +140,7 @@ export async function pickDataDirectory(): Promise<{
     const file = await fileHandle.getFile();
     const text = await file.text();
     const parsed = JSON.parse(text) as BackupPayload;
-    if (parsed && parsed.version === 1) {
+    if (parsed && (parsed.version === 1 || parsed.version === 2 || parsed.version === 3)) {
       existing = parsed;
     }
   } catch (err) {
@@ -181,7 +181,8 @@ async function isShrinkOverwrite(
   );
   const noHistory = !next.history || next.history.length === 0;
   const noFolders = !next.folders || next.folders.length === 0;
-  if (!allKeysEmpty || !noHistory || !noFolders) return false;
+  const noPresets = !next.strategyPresets || next.strategyPresets.length === 0;
+  if (!allKeysEmpty || !noHistory || !noFolders || !noPresets) return false;
 
   let existingText: string | null = null;
   try {
@@ -201,7 +202,9 @@ async function isShrinkOverwrite(
     );
     const hadHistory = Array.isArray(prev.history) && prev.history.length > 0;
     const hadFolders = Array.isArray(prev.folders) && prev.folders.length > 0;
-    if (hadAnyKey || hadHistory || hadFolders) return true;
+    const hadPresets =
+      Array.isArray(prev.strategyPresets) && prev.strategyPresets.length > 0;
+    if (hadAnyKey || hadHistory || hadFolders || hadPresets) return true;
   } catch {
     // JSON 解析失败 → 用纯字节数兜底
   }

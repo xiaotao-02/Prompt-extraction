@@ -154,7 +154,7 @@ export default function SetupGuide({ settings, applyConfig }: Props) {
           <div>
             <h3 className="text-xs font-semibold text-zinc-700 dark:text-zinc-200 flex items-center gap-1.5 mb-2">
               <KeyRound className="w-3.5 h-3.5 text-violet-500" />
-              配置 API 的 4 个步骤
+              配置 API 的 3 个步骤
             </h3>
             <ol className="space-y-2 text-xs text-zinc-600 dark:text-zinc-300 leading-relaxed">
               <Step n={1}>
@@ -164,10 +164,7 @@ export default function SetupGuide({ settings, applyConfig }: Props) {
                 点击该 provider 卡片旁的「去申请」链接，在官网创建 API Key 并复制。
               </Step>
               <Step n={3}>
-                把 Key 粘贴到「API Key」输入框，必要时调整 Base URL 和模型，然后点右上角「保存设置」。
-              </Step>
-              <Step n={4}>
-                在下方「联通性测试」点击「运行测试」，看到「调用成功」即可去任意网页右键图片使用。
+                把 Key 粘贴到「API Key」输入框，必要时调整 Base URL 和模型，然后点右上角「保存设置」。保存后即可在任意网页右键图片使用扩展。
               </Step>
             </ol>
 

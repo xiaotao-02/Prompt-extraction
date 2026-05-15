@@ -5,10 +5,11 @@
  * 备份格式版本：
  * - v1：仅 settings + history
  * - v2：在 v1 基础上新增 folders（提示词库的项目 / 文件夹）
+ * - v3：在 v2 基础上新增 strategyPresets（用户命名的自定义策略预设）
  *
  * 恢复时 v1 备份会被静默接受（folders 视为空数组），不会丢失老用户的数据。
  */
-import type { AppSettings, HistoryItem, LibraryFolder } from '../types';
+import type { AppSettings, HistoryItem, LibraryFolder, UserStrategyPreset } from '../types';
 import { getSettings, saveSettings } from './settings';
 import {
   ensureLibraryReady,
@@ -28,10 +29,15 @@ import {
 } from './historyDb';
 import { getFolders, mergeFolders, replaceFolders } from './folders';
 import { mirrorCurrentVersion, normalizePromptVersions } from './versionState';
+import {
+  getUserStrategyPresets,
+  mergeUserStrategyPresets,
+  setUserStrategyPresets,
+} from './userStrategyPresets';
 
 export interface BackupPayload {
-  /** 备份文件格式版本，递增；当前 2（v1 仍兼容）。 */
-  version: 1 | 2;
+  /** 备份文件格式版本，递增；当前 3（v1/v2 仍兼容）。 */
+  version: 1 | 2 | 3;
   /** 备份生成时间 ISO 字符串，便于人眼判断新旧。 */
   exportedAt: string;
   /** 生成备份的扩展版本，便于排查。 */
@@ -40,22 +46,26 @@ export interface BackupPayload {
   history: HistoryItem[];
   /** 提示词库项目 / 文件夹列表，v2 起新增；v1 备份恢复时按空数组处理。 */
   folders?: LibraryFolder[];
+  /** 用户自定义策略预设，v3 起新增；v1/v2 恢复时保留本地已有预设。 */
+  strategyPresets?: UserStrategyPreset[];
 }
 
 export async function buildBackup(appVersion?: string): Promise<BackupPayload> {
   await ensureLibraryReady();
-  const [settings, history, folders] = await Promise.all([
+  const [settings, history, folders, strategyPresets] = await Promise.all([
     getSettings(),
     exportAllHistoryPublic(),
     getFolders(),
+    getUserStrategyPresets(),
   ]);
   return {
-    version: 2,
+    version: 3,
     exportedAt: new Date().toISOString(),
     appVersion,
     settings,
     history,
     folders,
+    strategyPresets,
   };
 }
 
@@ -69,7 +79,7 @@ export async function restoreBackup(
   payload: BackupPayload,
   mode: 'replace' | 'merge' = 'merge'
 ): Promise<{ settingsRestored: boolean; historyAdded: number; historyTotal: number }> {
-  if (!payload || (payload.version !== 1 && payload.version !== 2)) {
+  if (!payload || (payload.version !== 1 && payload.version !== 2 && payload.version !== 3)) {
     throw new Error('不支持的备份格式');
   }
   let settingsRestored = false;
@@ -84,6 +94,19 @@ export async function restoreBackup(
       await replaceFolders(payload.folders);
     } else {
       await mergeFolders(payload.folders);
+    }
+  }
+
+  // strategyPresets：仅当备份里显式带了数组时才恢复（v1/v2 无此字段 → 不动本地预设）
+  if (Array.isArray(payload.strategyPresets)) {
+    if (mode === 'replace') {
+      await setUserStrategyPresets(payload.strategyPresets);
+    } else {
+      const merged = mergeUserStrategyPresets(
+        await getUserStrategyPresets(),
+        payload.strategyPresets
+      );
+      await setUserStrategyPresets(merged);
     }
   }
 

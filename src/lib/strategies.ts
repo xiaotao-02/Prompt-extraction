@@ -172,6 +172,14 @@ const STYLE_PROMPT_SET_V030: Record<OutputStyle, string> = {
     'Generate a Midjourney v6 prompt optimized for faithful image recreation. Output a single English line. Begin with a named style anchor (e.g. "cinematic photography," "editorial fashion," "Studio Ghibli watercolor," "cel-shaded anime"). Then one dense descriptive sentence covering in order: subject and key features → expression and gaze → pose → clothing and accessories → setting → lighting (direction + color temperature + quality) → color palette (concrete color names). Then append a camera/lens clause (e.g. "shot on Canon EOS R5, 85mm f/1.4, shallow depth of field, Kodak Portra 400 film grain"). Then append comma-separated style modifiers. Finally append Midjourney parameters: --ar matching the image aspect ratio, --style raw, --stylize 100. For photorealistic images, include "photorealistic" in the descriptive sentence. Hard rules: (a) describe only visible elements; (b) no subjective fillers ("beautiful, dreamy, breathtaking"); (c) no template phrases; (d) no dimension labels; (e) use only affirmative language, never negations; (f) skip invisible dimensions silently; (g) limit adjectives to 8 total. Output ONLY the prompt line, no explanation, no Markdown.',
 };
 
+// v0.3.5：中文自然语言档单独收紧为「按图结构分 3–8 段 + 中文+参数 + 只出正文」；
+// 其余 OutputStyle 与 v0.3.0 成套一致，避免英文/标签档被套用纯中文说明。
+const STYLE_PROMPT_SET_V035: Record<OutputStyle, string> = {
+  ...STYLE_PROMPT_SET_V030,
+  'natural-zh':
+    '根据图片结构合理分段详细描述提示词，不严格规定有几段，但是大概保留3-8段落，提示词为中文自然语言+参数，通用的提示词不适配模型，只返回提示词本体，不要出现违规提示词',
+};
+
 /**
  * stylePromptSet 组件的版本注册表。键是版本号，值是该版本下完整的 4 套指令。
  *
@@ -184,6 +192,7 @@ export const STYLE_PROMPT_SETS: Record<StylePromptSetVersion, Record<OutputStyle
   'v0.1.0': STYLE_PROMPT_SET_V010,
   'v0.2.2': STYLE_PROMPT_SET_V022,
   'v0.3.0': STYLE_PROMPT_SET_V030,
+  'v0.3.5': STYLE_PROMPT_SET_V035,
 };
 
 // ----- sampling 各版本 -----

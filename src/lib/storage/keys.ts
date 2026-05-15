@@ -6,3 +6,6 @@ export const SETTINGS_KEY = 'app_settings_v1';
  * 「从端点拉取的模型列表」缓存所在的 local storage 键（与 SETTINGS_KEY 分离见 settings.ts 注释）。
  */
 export const DISCOVERED_KEY = 'discovered_models_v1';
+
+/** 用户命名的自定义策略预设列表（chrome.storage.local） */
+export const USER_STRATEGY_PRESETS_KEY = 'user_strategy_presets_v1';

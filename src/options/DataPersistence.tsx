@@ -37,7 +37,7 @@ import {
   restoreBackup,
   type BackupPayload,
 } from '@/lib/storage';
-import { DISCOVERED_KEY, SETTINGS_KEY } from '@/lib/storage/keys';
+import { DISCOVERED_KEY, SETTINGS_KEY, USER_STRATEGY_PRESETS_KEY } from '@/lib/storage/keys';
 import { getCurrentVersion } from '@/lib/updater';
 
 /**
@@ -184,7 +184,8 @@ export default function DataPersistence({ onDataRestored }: DataPersistenceProps
         'history_v1' in changes ||
         LIBRARY_REV_KEY in changes ||
         'library_folders_v1' in changes ||
-        DISCOVERED_KEY in changes
+        DISCOVERED_KEY in changes ||
+        USER_STRATEGY_PRESETS_KEY in changes
       ) {
         doSync();
       }
@@ -348,7 +349,7 @@ export default function DataPersistence({ onDataRestored }: DataPersistenceProps
     try {
       const text = await file.text();
       const payload = JSON.parse(text) as BackupPayload;
-      if (!payload || (payload.version !== 1 && payload.version !== 2)) {
+      if (!payload || (payload.version !== 1 && payload.version !== 2 && payload.version !== 3)) {
         showTip(false, '不是合法的备份文件');
         return;
       }
