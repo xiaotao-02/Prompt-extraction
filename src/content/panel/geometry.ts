@@ -23,6 +23,33 @@ export const MIN_HEIGHT = 220;
 export const VIEWPORT_MARGIN = 8;
 export const SIDEBAR_WIDTH = 280;
 
+/**
+ * 用于 clamp 的布局盒：优先 Visual Viewport（移动端地址栏、软键盘、 pinch-zoom），
+ * 与 `window.innerWidth/innerHeight` 不一致时避免面板被「夹到」不可见区域。
+ */
+export function getLayoutViewportBox(): {
+  width: number;
+  height: number;
+  originLeft: number;
+  originTop: number;
+} {
+  const vv = typeof window !== 'undefined' ? window.visualViewport : null;
+  if (vv && vv.width > 0 && vv.height > 0) {
+    return {
+      width: vv.width,
+      height: vv.height,
+      originLeft: vv.offsetLeft,
+      originTop: vv.offsetTop,
+    };
+  }
+  return {
+    width: window.innerWidth,
+    height: window.innerHeight,
+    originLeft: 0,
+    originTop: 0,
+  };
+}
+
 function readSession(): PanelGeometry | null {
   try {
     const raw = sessionStorage.getItem(STORAGE_KEY);
@@ -58,8 +85,7 @@ function writeSession(g: PanelGeometry): void {
  * - left / top 上限：让面板至少有 32px 露在视口里（这里直接保留 margin 当下限）
  */
 export function clampGeometry(g: PanelGeometry): PanelGeometry {
-  const vw = window.innerWidth;
-  const vh = window.innerHeight;
+  const { width: vw, height: vh, originLeft, originTop } = getLayoutViewportBox();
   const w =
     g.width !== undefined
       ? Math.max(MIN_WIDTH, Math.min(g.width, vw - VIEWPORT_MARGIN * 2))
@@ -72,10 +98,12 @@ export function clampGeometry(g: PanelGeometry): PanelGeometry {
   // 一小条留在视口里。如果 width/height 是 undefined，就用一个最小估值兜底。
   const estW = w ?? Math.min(720, vw - 48);
   const estH = h ?? Math.min(480, vh - 48);
-  const maxLeft = vw - estW - VIEWPORT_MARGIN;
-  const maxTop = vh - estH - VIEWPORT_MARGIN;
-  const left = Math.max(VIEWPORT_MARGIN, Math.min(g.left, Math.max(VIEWPORT_MARGIN, maxLeft)));
-  const top = Math.max(VIEWPORT_MARGIN, Math.min(g.top, Math.max(VIEWPORT_MARGIN, maxTop)));
+  const minL = originLeft + VIEWPORT_MARGIN;
+  const minT = originTop + VIEWPORT_MARGIN;
+  const maxLeft = originLeft + vw - estW - VIEWPORT_MARGIN;
+  const maxTop = originTop + vh - estH - VIEWPORT_MARGIN;
+  const left = Math.max(minL, Math.min(g.left, Math.max(minL, maxLeft)));
+  const top = Math.max(minT, Math.min(g.top, Math.max(minT, maxTop)));
   return { left, top, width: w, height: h };
 }
 
@@ -93,11 +121,12 @@ export function ensureGeometry(): PanelGeometry {
     setPanelGeometry(c);
     return c;
   }
-  const vw = window.innerWidth;
-  const vh = window.innerHeight;
+  const { width: vw, height: vh, originLeft, originTop } = getLayoutViewportBox();
   const defaultWidth = Math.min(720, vw - 48);
-  const left = Math.max(VIEWPORT_MARGIN, Math.round((vw - defaultWidth) / 2));
-  const top = Math.max(VIEWPORT_MARGIN, Math.min(80, Math.round(vh * 0.08)));
+  const minL = originLeft + VIEWPORT_MARGIN;
+  const minT = originTop + VIEWPORT_MARGIN;
+  const left = Math.max(minL, Math.round(originLeft + (vw - defaultWidth) / 2));
+  const top = Math.max(minT, Math.min(originTop + 80, Math.round(originTop + vh * 0.08)));
   const g: PanelGeometry = { left, top };
   setPanelGeometry(g);
   return g;
@@ -173,9 +202,11 @@ let _sidebarLeftShift = 0;
 export function expandPanelForSidebar(): void {
   if (!panel) return;
   const base = panelGeometry ?? ensureGeometry();
+  const { originLeft } = getLayoutViewportBox();
+  const edgeMinLeft = originLeft + VIEWPORT_MARGIN;
   const currentWidth = base.width ?? panel.offsetWidth;
   const desiredLeft = base.left - SIDEBAR_WIDTH;
-  const clampedLeft = Math.max(VIEWPORT_MARGIN, desiredLeft);
+  const clampedLeft = Math.max(edgeMinLeft, desiredLeft);
   _sidebarLeftShift = base.left - clampedLeft;
   updateGeometry({ left: clampedLeft, width: currentWidth + SIDEBAR_WIDTH });
 }

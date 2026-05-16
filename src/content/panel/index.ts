@@ -41,7 +41,6 @@ import {
   stopRefineTicker,
   applyRefinePatch,
 } from './loading';
-import { panelHtml } from './templates';
 import {
   bindEvents,
   syncVersions,
@@ -52,13 +51,24 @@ import {
 } from './events';
 
 export { applyStoredPromptStrategy, applyStoredRewriteRandomness } from './events';
+export { applyStoredPanelAutofocus } from './focusPolicy';
 import {
   ensureGeometry,
   applyGeometryToPanel,
   scheduleReclampOnViewportChange,
 } from './geometry';
+import { panelHtml, PANEL_ANNOUNCE_HTML } from './templates';
+import {
+  clearPendingAppendReferenceQueue,
+  enqueuePendingAppendReference,
+  mergePendingAppendUrlsInto,
+} from './pendingReferenceQueue';
+import { shouldPanelContentAutofocus } from './focusPolicy';
 
 let viewportListenerBound = false;
+
+/** 最近一次 renderPanel 的 status；关闭面板后清空，用于 a11y 播报与 autofocus */
+let lastRenderedPanelStatus: PanelState['status'] | null = null;
 
 function ensureHost(): { host: HTMLDivElement; shadow: ShadowRoot } {
   if (host && shadow) return { host, shadow };
@@ -79,6 +89,11 @@ function ensureHost(): { host: HTMLDivElement; shadow: ShadowRoot } {
   // 视口尺寸变化时，把当前几何 clamp 回安全范围；避免「窗口缩小后面板留在屏幕外」。
   if (!viewportListenerBound) {
     window.addEventListener('resize', scheduleReclampOnViewportChange);
+    const vv = window.visualViewport;
+    if (vv) {
+      vv.addEventListener('resize', scheduleReclampOnViewportChange);
+      vv.addEventListener('scroll', scheduleReclampOnViewportChange);
+    }
     viewportListenerBound = true;
   }
   return { host: h, shadow: s };
@@ -115,12 +130,47 @@ function setPanelSurfaceHtml(root: HTMLElement, state: PanelState): void {
     surface.dataset.role = 'panel-surface';
     root.insertBefore(surface, root.firstChild);
   }
-  surface.innerHTML = panelHtml(state);
+  surface.innerHTML = PANEL_ANNOUNCE_HTML + panelHtml(state);
+}
+
+/** 仅在状态切换时播报，避免流式渲染重复朗读 */
+function updatePanelAriaAnnounce(prev: PanelState['status'] | null, state: PanelState): void {
+  if (!panel || prev === state.status) return;
+  const el = panel.querySelector<HTMLElement>('[data-role="panel-announce"]');
+  if (!el) return;
+  if (state.status === 'loading') {
+    el.textContent = '正在提取提示词，请稍候';
+  } else if (state.status === 'success') {
+    el.textContent = '提示词提取完成';
+  } else if (state.status === 'error') {
+    el.textContent = `提取失败：${state.error?.trim() || '未知错误'}`;
+  } else {
+    el.textContent = '已打开参考合成';
+  }
+}
+
+function tryPanelTransitionFocus(prev: PanelState['status'] | null, state: PanelState): void {
+  if (!shouldPanelContentAutofocus()) return;
+  if (prev === state.status) return;
+  if (state.status !== 'success' && state.status !== 'compose' && state.status !== 'error') return;
+  const rid = state.requestId;
+  requestAnimationFrame(() => {
+    if (!panel || !currentState || currentState.requestId !== rid) return;
+    const ta = panel.querySelector<HTMLTextAreaElement>('[data-role="editor"]');
+    if (!ta || ta.disabled) return;
+    try {
+      ta.focus({ preventScroll: true });
+    } catch {
+      /* ignore */
+    }
+  });
 }
 
 export function renderPanel(state: PanelState): void {
   const { shadow } = ensureHost();
+  const prevStatus = lastRenderedPanelStatus;
   setCurrentState(state);
+  lastRenderedPanelStatus = state.status;
 
   if (panel) {
     const surface = panel.querySelector(PANEL_SURFACE_SELECTOR);
@@ -137,6 +187,8 @@ export function renderPanel(state: PanelState): void {
       manageLoadingTicker(state);
       manageLoadingStallWatchdog(state);
       manageRefineTicker(state);
+      updatePanelAriaAnnounce(prevStatus, state);
+      tryPanelTransitionFocus(prevStatus, state);
       return;
     }
   }
@@ -184,6 +236,8 @@ export function renderPanel(state: PanelState): void {
   manageLoadingTicker(state);
   manageLoadingStallWatchdog(state);
   manageRefineTicker(state);
+  updatePanelAriaAnnounce(prevStatus, state);
+  tryPanelTransitionFocus(prevStatus, state);
 }
 
 /**
@@ -194,7 +248,7 @@ export function appendReferenceFromBackground(imageUrl: string): void {
   if (!url) return;
   const cur = currentState;
   if (cur && (cur.status === 'loading' || panelExtractJobs(cur).length > 0)) {
-    console.debug('[PromptExtracto] skip PANEL_APPEND_REFERENCE during loading');
+    enqueuePendingAppendReference(url);
     return;
   }
 
@@ -300,6 +354,8 @@ export function renderPanelForExtractPending(payload: {
     });
     return;
   }
+
+  clearPendingAppendReferenceQueue();
 
   renderPanel({
     requestId: sid,
@@ -408,7 +464,7 @@ export function applyExtractStreamResult(
     nextSel = undefined;
   }
 
-  const merged: PanelState = {
+  let merged: PanelState = {
     ...cur,
     extractJobs: ej.length ? ej : undefined,
     partial: undefined,
@@ -423,6 +479,8 @@ export function applyExtractStreamResult(
     linkedHistoryId: undefined,
     selectedVersionId: nextSel,
   };
+
+  merged = mergePendingAppendUrlsInto(merged);
 
   setCurrentState(merged);
 
@@ -457,6 +515,12 @@ export function applyExtractStreamError(streamRequestId: string, error: string):
     !(merged.prompt ?? '').trim()
   ) {
     merged = { ...merged, status: 'error', error };
+  }
+
+  const stillMidExtract =
+    merged.status === 'loading' && panelExtractJobs(merged).length > 0;
+  if (!stillMidExtract) {
+    merged = mergePendingAppendUrlsInto(merged);
   }
 
   setCurrentState(merged);
@@ -590,6 +654,8 @@ export function applyHistoryReady(
 
 export function closePanel(): void {
   cancelPendingDirtyChromeDeferred();
+  clearPendingAppendReferenceQueue();
+  lastRenderedPanelStatus = null;
   stopLoadingTicker();
   stopLoadingStallWatchdog();
   stopRefineTicker();

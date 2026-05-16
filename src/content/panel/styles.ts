@@ -9,6 +9,18 @@ import { UI_FONT_STACK_SANS } from '@/lib/uiFontStack';
 
 export const STYLE = `
 :host, * { box-sizing: border-box; }
+.panel-sr-announce {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+  pointer-events: none;
+}
 .panel {
   /* 位置和尺寸由 JS 写入到 inline style（top/left/width/height），
      这里只给一组兜底默认值。height 不写死，让面板按内容自适应；
@@ -41,6 +53,7 @@ export const STYLE = `
    默认高度随内容；用户拖边缘 resize 写入 geometry.height 后根节点带
    .panel-locked-height，再改回 flex:1 铺满固定高度。 */
 .panel > [data-role="panel-surface"] {
+  position: relative;
   flex: 0 1 auto;
   min-height: 0;
   max-height: calc(100vh - 16px);
@@ -519,14 +532,15 @@ export const STYLE = `
 }
 
 /* panel-row：success 状态下，header 下方的横向容器。
-   - flex: 1 1 auto + min-height: 0：占满 panel 剩余高度，超出时由内部
-     .body / .versions-list 自己滚动。
+   - flex: 1 1 auto + min-height: 0：占满 panel 剩余高度；align-items:
+     stretch 让 .body 与 .versions-side 等高，侧栏内含 .versions-list
+     在固定高度内 overflow-y 滚动。
    - overflow: hidden：避免 sidebar width 过渡的中间帧把超出宽度推出去。
    - sidebar 现在是占布局空间的 flex item，不再是覆盖层，所以这里不需要
      position: relative 提供定位上下文。 */
 .panel-row {
   display: flex;
-  align-items: flex-start;
+  align-items: stretch;
   flex: 1 1 auto;
   min-height: 0;
   overflow: hidden;
@@ -539,13 +553,16 @@ export const STYLE = `
    - 用 width 过渡做"展开/收起"动画，比 transform 浮层更直观地告诉用户
      主体内容是被推开了，不会再有"按钮被挡住点不到"的问题。
    - pointer-events 收起时关掉，万一里面有焦点也接不到键鼠事件。
-   - flex: none 防止它被父级 flex 算法压缩到非 width 设定的尺寸。 */
+   - flex: none 防止它被父级 flex 算法压缩到非 width 设定的尺寸。
+   - min-height: 0：避免默认 min-height:auto 卡住，保证 .versions-list
+     可在父列 flex 约束下收紧并出现滚动条。 */
 .versions-side {
   flex: none;
   width: 0;
   max-width: 50%;
   display: flex;
   flex-direction: column;
+  min-height: 0;
   overflow: hidden;
   background: rgba(248,248,250,0.98);
   border-right: 1px solid transparent;

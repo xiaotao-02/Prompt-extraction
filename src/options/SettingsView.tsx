@@ -821,6 +821,25 @@ export default function SettingsView({ registerSaveHandler, onDirtyChange }: Pro
           </label>
         </div>
 
+        <div className="mt-4">
+          <label className="flex items-center gap-3 cursor-pointer select-none">
+            <input
+              type="checkbox"
+              checked={settings.panelAutofocus !== false}
+              onChange={(e) =>
+                setSettings({ ...settings, panelAutofocus: e.target.checked })
+              }
+              className="w-4 h-4 accent-violet-500"
+            />
+            <div>
+              <div className="text-sm">浮动面板自动聚焦编辑器</div>
+              <div className="text-xs text-zinc-500">
+                面板打开或反推结束时将焦点移到编辑区（利于键盘与屏幕阅读器）；关闭后尽量不抢走网页内焦点
+              </div>
+            </div>
+          </label>
+        </div>
+
         <div className="mt-4 pt-4 border-t border-zinc-200 dark:border-zinc-800 space-y-3">
           <div className="text-sm font-medium text-zinc-900 dark:text-zinc-100">
             弹窗里的「编辑 / AI 调整」

@@ -143,6 +143,11 @@ export interface AppSettings {
   popupToolbarPromptAction?: 'library' | 'panel';
   /** 浮动面板 / 提示词库「一键洗稿」的随机强度，默认 moderate */
   oneClickRewriteRandomness?: OneClickRewriteRandomness;
+  /**
+   * 网页浮动面板在状态切换时是否自动把焦点移到编辑器。
+   * 默认开启（可读屏与键盘）；关闭可减少「抢焦点」打扰。
+   */
+  panelAutofocus?: boolean;
 }
 
 /**

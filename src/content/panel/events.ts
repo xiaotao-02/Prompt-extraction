@@ -45,6 +45,7 @@ import {
   MIN_WIDTH,
   MIN_HEIGHT,
   VIEWPORT_MARGIN,
+  getLayoutViewportBox,
 } from './geometry';
 import { buildVersionsListInnerHtml, loadingEditorDisplayedText, successEditorDisplayedText } from './templates';
 import {
@@ -349,9 +350,7 @@ function bindHeaderDrag(root: HTMLElement): void {
     };
 
     const onUp = () => {
-      window.removeEventListener('mousemove', onMove);
-      window.removeEventListener('mouseup', onUp);
-      root.classList.remove('dragging');
+      teardown();
       const r = root.getBoundingClientRect();
       const patch: { left: number; top: number; width?: number; height?: number } = {
         left: r.left,
@@ -362,8 +361,27 @@ function bindHeaderDrag(root: HTMLElement): void {
       }
       updateGeometry(patch);
     };
+
+    const teardown = () => {
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+      window.removeEventListener('keydown', onEscape, true);
+      root.classList.remove('dragging');
+    };
+
+    const onEscape = (ke: KeyboardEvent) => {
+      if (ke.key !== 'Escape') return;
+      ke.preventDefault();
+      ke.stopPropagation();
+      teardown();
+      root.style.left = `${startLeft}px`;
+      root.style.top = `${startTop}px`;
+      updateGeometry({ left: startLeft, top: startTop });
+    };
+
     window.addEventListener('mousemove', onMove);
     window.addEventListener('mouseup', onUp);
+    window.addEventListener('keydown', onEscape, true);
   });
 }
 
@@ -421,37 +439,38 @@ function bindEdgeResize(root: HTMLElement): void {
       const onMove = (mv: MouseEvent) => {
         const dx = mv.clientX - startX;
         const dy = mv.clientY - startY;
-        const vw = window.innerWidth;
-        const vh = window.innerHeight;
+        const { width: vvW, height: vvH, originLeft: oLeft, originTop: oTop } =
+          getLayoutViewportBox();
 
         let newL = startL;
         let newT = startT;
         let newW = startW;
         let newH = startH;
 
+        const edgeRight = oLeft + vvW - VIEWPORT_MARGIN;
+        const edgeBottom = oTop + vvH - VIEWPORT_MARGIN;
+
         if (dir.includes('e')) {
-          newW = clamp(startW + dx, MIN_WIDTH, vw - startL - VIEWPORT_MARGIN);
+          newW = clamp(startW + dx, MIN_WIDTH, edgeRight - startL);
           newL = startL;
         } else if (dir.includes('w')) {
-          // 西边拖动：right 边固定，width = right - newL
           const maxL = right - MIN_WIDTH;
           const minL = Math.max(
-            VIEWPORT_MARGIN,
-            right - (vw - VIEWPORT_MARGIN * 2)
+            oLeft + VIEWPORT_MARGIN,
+            right - (vvW - VIEWPORT_MARGIN * 2),
           );
           newL = clamp(startL + dx, minL, maxL);
           newW = right - newL;
         }
 
         if (dir.includes('s')) {
-          newH = clamp(startH + dy, MIN_HEIGHT, vh - startT - VIEWPORT_MARGIN);
+          newH = clamp(startH + dy, MIN_HEIGHT, edgeBottom - startT);
           newT = startT;
         } else if (dir.includes('n')) {
-          // 北边拖动：bottom 边固定，height = bottom - newT
           const maxT = bottom - MIN_HEIGHT;
           const minT = Math.max(
-            VIEWPORT_MARGIN,
-            bottom - (vh - VIEWPORT_MARGIN * 2)
+            oTop + VIEWPORT_MARGIN,
+            bottom - (vvH - VIEWPORT_MARGIN * 2),
           );
           newT = clamp(startT + dy, minT, maxT);
           newH = bottom - newT;
@@ -467,10 +486,15 @@ function bindEdgeResize(root: HTMLElement): void {
         else root.style.removeProperty('height');
       };
 
-      const onUp = () => {
+      const teardownResize = () => {
         window.removeEventListener('mousemove', onMove);
         window.removeEventListener('mouseup', onUp);
+        window.removeEventListener('keydown', onEscapeResize, true);
         root.classList.remove('resizing');
+      };
+
+      const onUp = () => {
+        teardownResize();
         const r = root.getBoundingClientRect();
         updateGeometry({
           left: r.left,
@@ -479,8 +503,29 @@ function bindEdgeResize(root: HTMLElement): void {
           height: resizeH ? Math.round(r.height) : undefined,
         });
       };
+
+      const onEscapeResize = (ke: KeyboardEvent) => {
+        if (ke.key !== 'Escape') return;
+        ke.preventDefault();
+        ke.stopPropagation();
+        teardownResize();
+        root.style.left = `${startL}px`;
+        root.style.top = `${startT}px`;
+        if (resizeW) root.style.width = `${startW}px`;
+        else root.style.removeProperty('width');
+        if (resizeH) root.style.height = `${startH}px`;
+        else root.style.removeProperty('height');
+        updateGeometry({
+          left: Math.round(startL),
+          top: Math.round(startT),
+          width: resizeW ? Math.round(startW) : undefined,
+          height: resizeH ? Math.round(startH) : undefined,
+        });
+      };
+
       window.addEventListener('mousemove', onMove);
       window.addEventListener('mouseup', onUp);
+      window.addEventListener('keydown', onEscapeResize, true);
     });
   });
 }

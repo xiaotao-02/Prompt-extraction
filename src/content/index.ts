@@ -14,6 +14,7 @@ import {
   applyHistoryPrefetch,
   applyStoredPromptStrategy,
   applyStoredRewriteRandomness,
+  applyStoredPanelAutofocus,
   appendReferenceFromBackground,
 } from './panel';
 import { expandPanelForSidebar } from './panel/geometry';
@@ -23,6 +24,17 @@ import { isExtensionContextValid, safeSendMessage } from '@/content/extensionBri
 export { safeSendMessage } from '@/content/extensionBridge';
 
 try {
+  chrome.storage.sync.get(SETTINGS_KEY, (r) => {
+    try {
+      const raw = r[SETTINGS_KEY] as { panelAutofocus?: boolean } | undefined;
+      if (raw && typeof raw === 'object' && 'panelAutofocus' in raw) {
+        applyStoredPanelAutofocus(raw.panelAutofocus);
+      }
+    } catch {
+      /* ignore */
+    }
+  });
+
   chrome.runtime.onMessage.addListener((message: RuntimeMessage, _sender, sendResponse) => {
     if (message.type === 'START_REGION_CAPTURE') {
       if (window.top !== window) {
@@ -151,11 +163,13 @@ try {
     const nv = ch.newValue as {
       promptStrategy?: StrategyId;
       oneClickRewriteRandomness?: OneClickRewriteRandomness;
+      panelAutofocus?: boolean;
     };
     const ps = nv.promptStrategy;
     const rr = nv.oneClickRewriteRandomness;
     if (ps != null) applyStoredPromptStrategy(ps);
     if (rr != null) applyStoredRewriteRandomness(normalizeOneClickRewriteRandomness(rr));
+    if ('panelAutofocus' in nv) applyStoredPanelAutofocus(nv.panelAutofocus);
   });
 } catch {
   // Extension context already invalidated at registration time

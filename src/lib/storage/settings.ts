@@ -40,6 +40,7 @@ function defaultSettings(): AppSettings {
     updates: { ...DEFAULT_UPDATE_SETTINGS },
     promptStrategy: DEFAULT_STRATEGY_ID,
     oneClickRewriteRandomness: DEFAULT_ONE_CLICK_REWRITE_RANDOMNESS,
+    panelAutofocus: true,
     popupToolbarPromptAction: 'library',
     customComponents: {
       stylePromptSet: 'v0.3.0',

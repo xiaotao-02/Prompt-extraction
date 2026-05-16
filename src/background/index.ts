@@ -49,6 +49,19 @@ const NATIVE_PREP_TTL_MS = 10_000;
 /** 同一 dedupe 图并行反推落库时串行化 addHistory，避免读改写竞态丢版本 */
 const persistHistoryTailByKey = new Map<string, Promise<HistoryItem | undefined>>();
 
+/** 同 tab 新一次视觉反代会递增序号；Stale 链路不再发往 content，避免乱序覆盖。 */
+const extractionGenerationByTabId = new Map<number, number>();
+
+function beginTabExtractionGeneration(tabId: number): number {
+  const next = (extractionGenerationByTabId.get(tabId) ?? 0) + 1;
+  extractionGenerationByTabId.set(tabId, next);
+  return next;
+}
+
+function extractionStillCurrent(tabId: number, generation: number): boolean {
+  return extractionGenerationByTabId.get(tabId) === generation;
+}
+
 function applyCtxMenuPrep(tabId: number, payload: CtxMenuPrepPayload): void {
   const { extractionUrl, showFallback } = payload;
   if (extractionUrl) {
@@ -219,6 +232,7 @@ chrome.commands.onCommand.addListener((cmd) => {
 // 标签关闭时清理待处理的 fallback 图片缓存
 chrome.tabs?.onRemoved.addListener((tabId) => {
   pendingTabExtract.delete(tabId);
+  extractionGenerationByTabId.delete(tabId);
 });
 
 function hideFallbackContextMenus(): void {
@@ -634,6 +648,7 @@ async function prefetchLibraryVersionsForExtract(
   tabId: number,
   requestId: string,
   imageUrls: string[],
+  prefetchStillValid?: () => boolean,
 ): Promise<string[] | undefined> {
   try {
     await ensureLibraryReady();
@@ -647,15 +662,17 @@ async function prefetchLibraryVersionsForExtract(
       const row = await getByDedupeKey(key);
       if (row) {
         const item = toPublicHistory(row);
-        postToTab(tabId, {
-          type: 'HISTORY_PREFETCH',
-          payload: {
-            requestId,
-            storageId: item.id,
-            versions: item.versions,
-            prompt: item.prompt,
-          },
-        });
+        if (!prefetchStillValid || prefetchStillValid()) {
+          postToTab(tabId, {
+            type: 'HISTORY_PREFETCH',
+            payload: {
+              requestId,
+              storageId: item.id,
+              versions: item.versions,
+              prompt: item.prompt,
+            },
+          });
+        }
       }
     }
     return thumbs;
@@ -677,6 +694,11 @@ async function runExtraction(params: {
   const imageUrl = imageUrls[0]!;
   const { tabId, pageUrl, pageTitle, strategyOverride } = params;
   const requestId = params.requestId || crypto.randomUUID();
+  const runGeneration = beginTabExtractionGeneration(tabId);
+  const postTab = (message: RuntimeMessage) => {
+    if (!extractionStillCurrent(tabId, runGeneration)) return;
+    postToTab(tabId, message);
+  };
 
   const settingsPromise = getSettings();
   const imagePromise = Promise.all(imageUrls.map((u) => fetchImageAsBase64(u)));
@@ -684,7 +706,7 @@ async function runExtraction(params: {
 
   let thumbnailForPersistPromise: Promise<string[] | undefined> = Promise.resolve(undefined);
 
-  postToTab(tabId, {
+  postTab({
     type: 'EXTRACT_PENDING',
     payload: {
       requestId,
@@ -709,7 +731,7 @@ async function runExtraction(params: {
     (settings) => {
       const activeProvider = settings.activeProvider;
       const activeModel = settings.providers[activeProvider]?.model;
-      postToTab(tabId, {
+      postTab({
         type: 'EXTRACT_PROGRESS',
         payload: {
           requestId,
@@ -720,7 +742,12 @@ async function runExtraction(params: {
         },
       });
       if (settings.saveHistory) {
-        thumbnailForPersistPromise = prefetchLibraryVersionsForExtract(tabId, requestId, imageUrls);
+        thumbnailForPersistPromise = prefetchLibraryVersionsForExtract(
+          tabId,
+          requestId,
+          imageUrls,
+          () => extractionStillCurrent(tabId, runGeneration),
+        );
       }
     },
     () => undefined
@@ -741,7 +768,8 @@ async function runExtraction(params: {
   );
   setTimeout(() => {
     if (imageReady) return;
-    postToTab(tabId, {
+    if (!extractionStillCurrent(tabId, runGeneration)) return;
+    postTab({
       type: 'EXTRACT_PROGRESS',
       payload: { requestId, stage: 'fetching' },
     });
@@ -758,14 +786,14 @@ async function runExtraction(params: {
       prefetched,
       onProgress: (ev) => {
         // 流式阶段已经在 API 层节流到 ≈80ms 一次，这里直接转发到 content。
-        postToTab(tabId, {
+        postTab({
           type: 'EXTRACT_PROGRESS',
           payload: { requestId, stage: ev.stage, partial: ev.partial },
         });
       },
     });
 
-    postToTab(tabId, {
+    postTab({
       type: 'EXTRACT_RESULT',
       payload: {
         requestId,
@@ -791,8 +819,8 @@ async function runExtraction(params: {
         strategy: settings.promptStrategy,
         precomputedThumbnails,
       }).then((stored) => {
-        if (!stored) return;
-        postToTab(tabId, {
+        if (!stored || !extractionStillCurrent(tabId, runGeneration)) return;
+        postTab({
           type: 'HISTORY_READY',
           payload: {
             requestId,
@@ -805,7 +833,7 @@ async function runExtraction(params: {
     }
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    postToTab(tabId, {
+    postTab({
       type: 'EXTRACT_ERROR',
       payload: { requestId, ok: false, error: message },
     });

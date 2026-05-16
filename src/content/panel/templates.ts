@@ -453,6 +453,10 @@ function versionsChromeForRow(
   return { sidebar, openClassSuffix };
 }
 
+/** 插在 panel-surface 最前：`aria-live` 状态播报（仅在 status 切换时写入文案）。 */
+export const PANEL_ANNOUNCE_HTML =
+  '<div data-role="panel-announce" aria-live="polite" aria-atomic="true" class="panel-sr-announce"></div>';
+
 export function panelHtml(state: PanelState): string {
   if (state.status === 'loading') {
     const versions = state.versions || [];
