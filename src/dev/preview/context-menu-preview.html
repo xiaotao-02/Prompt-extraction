@@ -1,0 +1,289 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>DEV · 右键菜单演示 · Prompt Extracto</title>
+    <style>
+      :root {
+        font-family: system-ui, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+        background: #fafafa;
+        color: #18181b;
+      }
+      @media (prefers-color-scheme: dark) {
+        :root {
+          background: #0a0a0a;
+          color: #e4e4e7;
+        }
+      }
+      html {
+        height: 100%;
+      }
+      body {
+        margin: 0;
+        min-height: 100%;
+        padding: 1.25rem clamp(14px, 3vw, 2rem) 1.25rem;
+        line-height: 1.55;
+        box-sizing: border-box;
+      }
+      code {
+        font-size: 0.82em;
+      }
+      .ctx-demo-card {
+        margin: 0;
+        padding: 0.85rem 1rem;
+        border-radius: 12px;
+        border: 1px solid #e4e4e7;
+        background: #fff;
+        max-width: 100%;
+        box-sizing: border-box;
+      }
+      @media (prefers-color-scheme: dark) {
+        .ctx-demo-card {
+          border-color: #27272a;
+          background: #18181b;
+        }
+      }
+      .ctx-demo-title {
+        font-size: 0.82rem;
+        font-weight: 600;
+        margin: 0 0 0.35rem;
+      }
+      .ctx-demo-desc {
+        margin: 0 0 0.65rem;
+        font-size: 0.82rem;
+        line-height: 1.45;
+        opacity: 0.78;
+        max-width: 88ch;
+      }
+      .ctx-demo-stage {
+        display: inline-block;
+        padding: 0.5rem;
+        border-radius: 8px;
+        border: 1px dashed #a1a1aa;
+        background: #fafafa;
+      }
+      @media (prefers-color-scheme: dark) {
+        .ctx-demo-stage {
+          border-color: #52525b;
+          background: #27272a;
+        }
+      }
+      .ctx-demo-img {
+        display: block;
+        border-radius: 6px;
+        cursor: context-menu;
+        user-select: none;
+      }
+      .ctx-demo-status {
+        margin: 0.5rem 0 0;
+        font-size: 0.8rem;
+        opacity: 0.75;
+        min-height: 1.25em;
+      }
+      .ctx-fake-menu {
+        position: fixed;
+        z-index: 100000;
+        display: none;
+        min-width: 208px;
+        max-width: min(320px, calc(100vw - 16px));
+        padding: 4px 0;
+        margin: 0;
+        border-radius: 4px;
+        box-shadow:
+          0 2px 10px rgba(0, 0, 0, 0.12),
+          0 8px 28px rgba(0, 0, 0, 0.18),
+          0 0 0 1px rgba(0, 0, 0, 0.06);
+        background: #f2f2f2;
+        color: #18181b;
+        font-size: 13px;
+        line-height: 1.35;
+        user-select: none;
+      }
+      @media (prefers-color-scheme: dark) {
+        .ctx-fake-menu {
+          background: #2d2d2d;
+          color: #e4e4e7;
+          box-shadow:
+            0 2px 10px rgba(0, 0, 0, 0.4),
+            0 8px 28px rgba(0, 0, 0, 0.45),
+            0 0 0 1px rgba(255, 255, 255, 0.08);
+        }
+      }
+      .ctx-fake-menu.is-open {
+        display: block;
+      }
+      .ctx-fake-menu-ext {
+        padding: 5px 14px 3px;
+        font-size: 11px;
+        line-height: 1.3;
+        color: #71717a;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      @media (prefers-color-scheme: dark) {
+        .ctx-fake-menu-ext {
+          color: #a1a1aa;
+        }
+      }
+      .ctx-fake-menu-item {
+        display: block;
+        width: 100%;
+        box-sizing: border-box;
+        text-align: left;
+        border: none;
+        margin: 0;
+        background: transparent;
+        font: inherit;
+        color: inherit;
+        padding: 6px 14px 7px;
+        cursor: pointer;
+      }
+      .ctx-fake-menu-item:hover,
+      .ctx-fake-menu-item:focus-visible {
+        background: rgba(0, 0, 0, 0.06);
+        outline: none;
+      }
+      @media (prefers-color-scheme: dark) {
+        .ctx-fake-menu-item:hover,
+        .ctx-fake-menu-item:focus-visible {
+          background: rgba(255, 255, 255, 0.08);
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="ctx-demo-card" id="ctx-demo-root">
+      <p class="ctx-demo-title">右键菜单演示（仅本页模拟）</p>
+      <p class="ctx-demo-desc">
+        本开发服务器无法注册 <code>chrome.contextMenus</code>。在下方图片上<strong>右键</strong>可查看与生产环境一致的子菜单文案「添加到参考」「直接反推提示词」（真实扩展出现在浏览器右键菜单中；遮罩图等另有兜底项，本演示不展开）。
+      </p>
+      <div class="ctx-demo-stage" data-ctx-demo-stage>
+        <img
+          class="ctx-demo-img"
+          src="/icons/icon-128.png"
+          alt="在演示区右键查看模拟扩展菜单"
+          width="128"
+          height="128"
+        />
+      </div>
+      <p class="ctx-demo-status" id="ctx-demo-status" aria-live="polite"></p>
+    </div>
+
+    <div
+      id="ctx-fake-menu"
+      class="ctx-fake-menu"
+      role="menu"
+      aria-hidden="true"
+      aria-label="模拟 Prompt Extracto 右键菜单"
+    >
+      <div class="ctx-fake-menu-ext" aria-hidden="true">Prompt Extracto</div>
+      <button type="button" role="menuitem" tabindex="-1" class="ctx-fake-menu-item" id="ctx-fake-menu-item-add">
+        添加到参考
+      </button>
+      <button type="button" role="menuitem" tabindex="-1" class="ctx-fake-menu-item" id="ctx-fake-menu-item-extract">
+        直接反推提示词
+      </button>
+    </div>
+
+    <script>
+      (function () {
+        var stage = document.querySelector('[data-ctx-demo-stage]');
+        var menu = document.getElementById('ctx-fake-menu');
+        var menuItemAdd = document.getElementById('ctx-fake-menu-item-add');
+        var menuItemExtract = document.getElementById('ctx-fake-menu-item-extract');
+        var statusEl = document.getElementById('ctx-demo-status');
+        if (!stage || !menu || !menuItemAdd || !menuItemExtract) return;
+
+        var open = false;
+
+        function closeMenu() {
+          var was = open;
+          open = false;
+          menu.classList.remove('is-open');
+          menu.setAttribute('aria-hidden', 'true');
+          if (was) {
+            document.removeEventListener('click', onDocClick, false);
+            document.removeEventListener('keydown', onDocKey, true);
+          }
+        }
+
+        function onDocClick(e) {
+          if (menu.contains(e.target)) return;
+          closeMenu();
+        }
+
+        function onDocKey(e) {
+          if (e.key !== 'Escape') return;
+          e.preventDefault();
+          e.stopPropagation();
+          closeMenu();
+        }
+
+        function clampMenuPosition() {
+          var pad = 8;
+          var rect = menu.getBoundingClientRect();
+          var left = parseFloat(menu.style.left);
+          var top = parseFloat(menu.style.top);
+          if (!isFinite(left)) left = pad;
+          if (!isFinite(top)) top = pad;
+          var maxL = window.innerWidth - rect.width - pad;
+          var maxT = window.innerHeight - rect.height - pad;
+          left = Math.min(Math.max(pad, left), maxL);
+          top = Math.min(Math.max(pad, top), maxT);
+          menu.style.left = left + 'px';
+          menu.style.top = top + 'px';
+        }
+
+        function openMenuAt(clientX, clientY) {
+          closeMenu();
+          open = true;
+          menu.style.left = clientX + 'px';
+          menu.style.top = clientY + 'px';
+          menu.classList.add('is-open');
+          menu.setAttribute('aria-hidden', 'false');
+          requestAnimationFrame(function () {
+            clampMenuPosition();
+            try {
+              menuItemAdd.focus();
+            } catch (err) {
+              void err;
+            }
+          });
+          document.addEventListener('click', onDocClick, false);
+          document.addEventListener('keydown', onDocKey, true);
+        }
+
+        stage.addEventListener('contextmenu', function (e) {
+          e.preventDefault();
+          openMenuAt(e.clientX, e.clientY);
+        });
+
+        menuItemAdd.addEventListener('click', function (e) {
+          e.stopPropagation();
+          if (statusEl) {
+            statusEl.textContent = '已模拟：添加到参考（预览环境不请求后台）';
+          }
+          closeMenu();
+        });
+
+        menuItemExtract.addEventListener('click', function (e) {
+          e.stopPropagation();
+          if (statusEl) {
+            statusEl.textContent = '已模拟：直接反推提示词（预览环境不请求后台）';
+          }
+          closeMenu();
+        });
+
+        window.addEventListener('resize', function () {
+          if (open) clampMenuPosition();
+        });
+
+        document.addEventListener('visibilitychange', function () {
+          if (document.visibilityState === 'hidden') closeMenu();
+        });
+      })();
+    </script>
+  </body>
+</html>

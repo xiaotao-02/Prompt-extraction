@@ -63,7 +63,7 @@ GET https://api.github.com/repos/xiaotao-02/Prompt-extraction/releases/latest
 
 | 权限 | 用途 |
 |---|---|
-| `contextMenus` | 在你右键图片 / 视频 / 动图时显示「添加到参考」菜单；在正常页面上下文还提供「截取区域添加到参考」（适用于自定义右键的站点）；收集到面板后由你点击「生成提示词」再调用模型 |
+| `contextMenus` | 在你右键图片 / 视频 / 动图时显示「添加到参考」「直接反推提示词」；在正常页面上下文还提供「截取区域添加到参考」（适用于自定义右键的站点）；「直接反推」或面板内点击「生成提示词」后再调用模型 |
 | `storage` | 本地保存 API Key、偏好、历史记录 |
 | `scripting` + `activeTab` | 在需要时由后台向当前标签页程序化注入扩展内容脚本（例如兜底注入）；声明式脚本随页面轻量加载，用于右键探测与消息。**`activeTab` 亦用于在用户从弹窗快捷键/菜单发起的流程中截取当前标签页可视区域快照并裁剪**。可见的结果浮动面板仅在用户发起「添加到参考」「区域截取」或面板内反推等操作后出现 |
 | `clipboardWrite` | 你点「复制」时把提示词等文本写入剪贴板（含面板、弹窗、设置/库中的复制操作） |
@@ -146,7 +146,7 @@ It reads only the latest version number and release notes. No API key, image, or
 
 | Permission | Purpose |
 |---|---|
-| `contextMenus` | Adds **“Add to reference”** on `<img>/<video>` and a masked-image fallback entry; adds **“Capture region to reference”** on generic page contexts |
+| `contextMenus` | Adds **“Add to reference”** and **“Extract prompt directly”** on `<img>/<video>` with masked-image fallback entries; adds **“Capture region to reference”** on generic page contexts |
 | `storage` | Save API keys, preferences and history locally |
 | `scripting` + `activeTab` | Fallback programmatic injection plus a declarative lightweight content script at `document_idle`; **`activeTab` also allows `captureVisibleTab` for the rectangle-screenshot flow you start from the toolbar popup/hotkey**. The floating result panel appears only after you initiate an action |
 | `clipboardWrite` | Write prompts or selected text to the clipboard when the user clicks a copy control (panel, popup, options / library) |

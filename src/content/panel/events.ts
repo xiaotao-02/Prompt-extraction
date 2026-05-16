@@ -360,9 +360,6 @@ function bindHeaderDrag(root: HTMLElement): void {
       if (root.style.width && panelGeometry?.width === undefined) {
         patch.width = Math.round(r.width);
       }
-      if (root.style.height && panelGeometry?.height === undefined) {
-        patch.height = Math.round(r.height);
-      }
       updateGeometry(patch);
     };
     window.addEventListener('mousemove', onMove);
@@ -408,16 +405,17 @@ function bindEdgeResize(root: HTMLElement): void {
       const bottom = startT + startH;
       const startX = e.clientX;
       const startY = e.clientY;
+      const resizeW = dir.includes('e') || dir.includes('w');
+      const resizeH = dir.includes('n') || dir.includes('s');
 
       // 加 .resizing class：与 .dragging 共用「轻量 blur」分支，避免满载毛玻璃
       // + 位移每帧全视口采样导致卡顿；动画在此关闭。
       root.classList.add('resizing');
-      // 用户首次按下 resize 拉手时，把当前自适应尺寸固化进 geometry。
-      // 这样即便用户只小拖一下也不会回到 auto 状态，下次切 tab / 切版本
-      // 不会"尺寸还原"。
+      // 只固化本次拖动涉及的轴；另一轴传 undefined 以解除 session 里旧的 width/height 锁，
+      // 避免「只拖左右边」却钉死高度 → 内容变高时面板不再长高、底部留白。
       updateGeometry({
-        width: Math.round(startW),
-        height: Math.round(startH),
+        width: resizeW ? Math.round(startW) : undefined,
+        height: resizeH ? Math.round(startH) : undefined,
       });
 
       const onMove = (mv: MouseEvent) => {
@@ -460,11 +458,13 @@ function bindEdgeResize(root: HTMLElement): void {
         }
 
         // mousemove 不写 sessionStorage / setState，直接改 inline style；
-        // 松手时再 commit 一次最终几何。
+        // 松手时再 commit 一次最终几何。未拖动的轴去掉 inline，交给 CSS/内容自适应。
         root.style.left = `${newL}px`;
         root.style.top = `${newT}px`;
-        root.style.width = `${newW}px`;
-        root.style.height = `${newH}px`;
+        if (resizeW) root.style.width = `${newW}px`;
+        else root.style.removeProperty('width');
+        if (resizeH) root.style.height = `${newH}px`;
+        else root.style.removeProperty('height');
       };
 
       const onUp = () => {
@@ -475,8 +475,8 @@ function bindEdgeResize(root: HTMLElement): void {
         updateGeometry({
           left: r.left,
           top: r.top,
-          width: Math.round(r.width),
-          height: Math.round(r.height),
+          width: resizeW ? Math.round(r.width) : undefined,
+          height: resizeH ? Math.round(r.height) : undefined,
         });
       };
       window.addEventListener('mousemove', onMove);

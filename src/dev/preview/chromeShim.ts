@@ -9,7 +9,8 @@ export const DEV_PREVIEW_NAV = 'DEV_PREVIEW_NAV' as const;
 export type DevPreviewNavPayload =
   | { view: 'popup' }
   | { view: 'options'; optionsHash?: string }
-  | { view: 'panel' };
+  | { view: 'panel' }
+  | { view: 'contextmenu' };
 
 /**
  * 嵌入聚合预览（gallery）时通知父页切换 Tab；独立打开单页预览时不做任何事。

@@ -23,13 +23,17 @@ import {
 import { DEFAULT_FEED_URL, getCurrentVersion, performUpdateCheck } from '@/lib/updater';
 
 /**
- * 仅注册「添加到参考」：Chrome 在同一次右键下若本扩展有多个可见项，会折叠到「Prompt Extracto」子菜单。
- * 反推在面板 compose 中点「生成提示词」。
+ * 多条右键项时 Chrome 可能折叠到「Prompt Extracto」子菜单。
+ * 「添加到参考」仅并入 compose；「直接反推提示词」等同面板内立即生成。
  */
 /** 原生 image/video 上下文：加入浮动面板参考列表 */
 const MENU_ID_ADD_REF = 'extract-image-prompt-add-ref';
+/** 原生 image/video：立即走视觉反推（等同面板「生成提示词」） */
+const MENU_DIRECT_EXTRACT = 'extract-image-prompt-direct-extract';
 /** 兜底：非原生上下文（遮罩图等）下的「添加到参考」 */
 const MENU_FALLBACK_ADD = 'extract-image-prompt-fb-add';
+/** 兜底：同上上下文下的「直接反推提示词」 */
+const MENU_FALLBACK_EXTRACT = 'extract-image-prompt-fb-direct-extract';
 /** page/frame 等上下文：拖拽截取可视区域后加入参考（站点自定义右键时仍可用此项） */
 const MENU_REGION_SNIP = 'extract-region-snip-add-ref';
 
@@ -54,6 +58,9 @@ function applyCtxMenuPrep(tabId: number, payload: CtxMenuPrepPayload): void {
   }
   const showItems = showFallback && !!extractionUrl;
   chrome.contextMenus.update(MENU_FALLBACK_ADD, { visible: showItems }, () => {
+    void chrome.runtime.lastError;
+  });
+  chrome.contextMenus.update(MENU_FALLBACK_EXTRACT, { visible: showItems }, () => {
     void chrome.runtime.lastError;
   });
 }
@@ -149,8 +156,25 @@ function ensureContextMenus(): void {
     );
     chrome.contextMenus.create(
       {
+        id: MENU_DIRECT_EXTRACT,
+        title: '直接反推提示词',
+        contexts: ['image', 'video'],
+      },
+      () => void chrome.runtime.lastError
+    );
+    chrome.contextMenus.create(
+      {
         id: MENU_FALLBACK_ADD,
         title: '添加到参考',
+        contexts: ['page', 'frame', 'link', 'selection', 'editable'],
+        visible: false,
+      },
+      () => void chrome.runtime.lastError
+    );
+    chrome.contextMenus.create(
+      {
+        id: MENU_FALLBACK_EXTRACT,
+        title: '直接反推提示词',
         contexts: ['page', 'frame', 'link', 'selection', 'editable'],
         visible: false,
       },
@@ -201,6 +225,9 @@ function hideFallbackContextMenus(): void {
   chrome.contextMenus.update(MENU_FALLBACK_ADD, { visible: false }, () => {
     void chrome.runtime.lastError;
   });
+  chrome.contextMenus.update(MENU_FALLBACK_EXTRACT, { visible: false }, () => {
+    void chrome.runtime.lastError;
+  });
 }
 
 chrome.contextMenus.onClicked.addListener((info, tab) => {
@@ -213,6 +240,18 @@ chrome.contextMenus.onClicked.addListener((info, tab) => {
     return;
   }
 
+  if (info.menuItemId === MENU_DIRECT_EXTRACT) {
+    const imageUrl = resolveUrlForNativeContextMenu(tab.id, info.srcUrl);
+    if (!imageUrl) return;
+    void runExtraction({
+      tabId: tab.id,
+      imageUrls: [imageUrl],
+      pageUrl: tab.url ?? '',
+      pageTitle: tab.title ?? '',
+    });
+    return;
+  }
+
   if (info.menuItemId === MENU_FALLBACK_ADD) {
     const cached = pendingTabExtract.get(tab.id);
     pendingTabExtract.delete(tab.id);
@@ -220,6 +259,21 @@ chrome.contextMenus.onClicked.addListener((info, tab) => {
     const imageUrl = cached?.imageUrl || info.srcUrl || info.linkUrl || '';
     if (!imageUrl) return;
     postToTab(tab.id, { type: 'PANEL_APPEND_REFERENCE', payload: { imageUrl } });
+    return;
+  }
+
+  if (info.menuItemId === MENU_FALLBACK_EXTRACT) {
+    const cached = pendingTabExtract.get(tab.id);
+    pendingTabExtract.delete(tab.id);
+    hideFallbackContextMenus();
+    const imageUrl = cached?.imageUrl || info.srcUrl || info.linkUrl || '';
+    if (!imageUrl) return;
+    void runExtraction({
+      tabId: tab.id,
+      imageUrls: [imageUrl],
+      pageUrl: tab.url ?? '',
+      pageTitle: tab.title ?? '',
+    });
     return;
   }
 

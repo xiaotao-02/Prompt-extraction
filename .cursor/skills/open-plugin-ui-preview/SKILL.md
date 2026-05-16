@@ -16,7 +16,7 @@ description: >-
 1. 在仓库根目录执行 `npm run dev`（[`package.json`](../../../package.json)）。
 2. 在浏览器打开 **`http://localhost:5173/__dev__/ui-preview`**（`vite.config.ts` 中 `server.port` 为 `5173` 且 `strictPort: true`）。
 3. 默认配置下 Vite 会在就绪后 **自动** 用系统浏览器打开上述路径（`server.open: '/__dev__/ui-preview'`）。若未弹出，手动输入 URL 即可。
-4. 聚合页内可用锚点切换：**`#popup`** / **`#options`** / **`#panel`**。
+4. 聚合页内可用锚点切换：**`#popup`** / **`#options`** / **`#panel`** / **`#contextmenu`**（第四格为静态模拟右键菜单，非 React 壳）；快捷键 **`1`–`4`**（焦点在聚合页时）。
 
 ## 由 Agent 代为打开浏览器时
 

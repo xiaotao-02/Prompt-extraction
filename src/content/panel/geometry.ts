@@ -116,6 +116,7 @@ export function applyGeometryToPanel(p: HTMLElement, g: PanelGeometry): void {
   else p.style.removeProperty('width');
   if (g.height !== undefined) p.style.height = `${g.height}px`;
   else p.style.removeProperty('height');
+  p.classList.toggle('panel-locked-height', g.height !== undefined);
 }
 
 /**

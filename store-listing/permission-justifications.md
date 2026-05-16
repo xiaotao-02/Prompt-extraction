@@ -9,10 +9,10 @@
 ## 1. `contextMenus`
 
 **EN**
-The extension adds a single visible right-click item ("Add to reference") on `<img>`, `<video>`, and — via a fallback path — masked images, `<canvas>`, inline `<svg>`, and CSS background images. Separately it adds ("Capture region to reference") on page-like contexts when the site's own menu blocks the usual image flow. Users then compose references in the in-page panel and run extraction.
+The extension adds right-click items on `<img>` / `<video>` ("Add to reference" composes in the panel; "Extract prompt directly" runs extraction immediately with the same URL rules). Masked images and similar use a fallback pair with the same titles. Separately it adds "Capture region to reference" on page-like contexts when the site's menu blocks the usual image flow.
 
 **ZH**
-扩展在 `<img>` / `<video>` 上提供**一级**右键项「添加到参考」，并在遮罩图等场景通过兜底菜单提供同一入口。**另在网页/帧等上下文提供「截取区域添加到参考」，用于站点劫持原生右键、扩展图片菜单无法出现的情形。**随后在页内面板中收集参考并生成提示词。无此权限将无法在网页上完成主要工作流。
+扩展在 `<img>` / `<video>` 上提供右键项「添加到参考」（并入面板 compose）与「直接反推提示词」（立即走视觉反推，等同面板内「生成提示词」），并在遮罩图等场景通过兜底菜单提供**同名两项**。**另在网页/帧等上下文提供「截取区域添加到参考」。**无此权限将无法在网页上完成主要工作流。
 
 ---
 

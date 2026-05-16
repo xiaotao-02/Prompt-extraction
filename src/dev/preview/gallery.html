@@ -118,128 +118,6 @@
       code {
         font-size: 0.82em;
       }
-      .ctx-demo-card {
-        margin: 0 0 0.75rem;
-        padding: 0.85rem 1rem;
-        border-radius: 12px;
-        border: 1px solid #e4e4e7;
-        background: #fff;
-        max-width: 100%;
-        box-sizing: border-box;
-      }
-      @media (prefers-color-scheme: dark) {
-        .ctx-demo-card {
-          border-color: #27272a;
-          background: #18181b;
-        }
-      }
-      .ctx-demo-title {
-        font-size: 0.82rem;
-        font-weight: 600;
-        margin: 0 0 0.35rem;
-      }
-      .ctx-demo-desc {
-        margin: 0 0 0.65rem;
-        font-size: 0.82rem;
-        line-height: 1.45;
-        opacity: 0.78;
-        max-width: 88ch;
-      }
-      .ctx-demo-stage {
-        display: inline-block;
-        padding: 0.5rem;
-        border-radius: 8px;
-        border: 1px dashed #a1a1aa;
-        background: #fafafa;
-      }
-      @media (prefers-color-scheme: dark) {
-        .ctx-demo-stage {
-          border-color: #52525b;
-          background: #27272a;
-        }
-      }
-      .ctx-demo-img {
-        display: block;
-        border-radius: 6px;
-        cursor: context-menu;
-        user-select: none;
-      }
-      .ctx-demo-status {
-        margin: 0.5rem 0 0;
-        font-size: 0.8rem;
-        opacity: 0.75;
-        min-height: 1.25em;
-      }
-      .ctx-fake-menu {
-        position: fixed;
-        z-index: 100000;
-        display: none;
-        min-width: 208px;
-        max-width: min(320px, calc(100vw - 16px));
-        padding: 4px 0;
-        margin: 0;
-        border-radius: 4px;
-        box-shadow:
-          0 2px 10px rgba(0, 0, 0, 0.12),
-          0 8px 28px rgba(0, 0, 0, 0.18),
-          0 0 0 1px rgba(0, 0, 0, 0.06);
-        background: #f2f2f2;
-        color: #18181b;
-        font-size: 13px;
-        line-height: 1.35;
-        user-select: none;
-      }
-      @media (prefers-color-scheme: dark) {
-        .ctx-fake-menu {
-          background: #2d2d2d;
-          color: #e4e4e7;
-          box-shadow:
-            0 2px 10px rgba(0, 0, 0, 0.4),
-            0 8px 28px rgba(0, 0, 0, 0.45),
-            0 0 0 1px rgba(255, 255, 255, 0.08);
-        }
-      }
-      .ctx-fake-menu.is-open {
-        display: block;
-      }
-      .ctx-fake-menu-ext {
-        padding: 5px 14px 3px;
-        font-size: 11px;
-        line-height: 1.3;
-        color: #71717a;
-        white-space: nowrap;
-        overflow: hidden;
-        text-overflow: ellipsis;
-      }
-      @media (prefers-color-scheme: dark) {
-        .ctx-fake-menu-ext {
-          color: #a1a1aa;
-        }
-      }
-      .ctx-fake-menu-item {
-        display: block;
-        width: 100%;
-        box-sizing: border-box;
-        text-align: left;
-        border: none;
-        margin: 0;
-        background: transparent;
-        font: inherit;
-        color: inherit;
-        padding: 6px 14px 7px;
-        cursor: pointer;
-      }
-      .ctx-fake-menu-item:hover,
-      .ctx-fake-menu-item:focus-visible {
-        background: rgba(0, 0, 0, 0.06);
-        outline: none;
-      }
-      @media (prefers-color-scheme: dark) {
-        .ctx-fake-menu-item:hover,
-        .ctx-fake-menu-item:focus-visible {
-          background: rgba(255, 255, 255, 0.08);
-        }
-      }
     </style>
   </head>
   <body>
@@ -248,11 +126,11 @@
       根目录 <code>npm run dev</code>（<code>http://localhost:5173</code>）→ 真实 React +
       <code>STYLE</code>/<code>panelHtml</code> + HMR；预览为内存 <code>chrome.storage</code> 与占位
       <code>runtime.sendMessage</code>，与 <code>chrome-extension://</code> 不完全一致。顶栏或
-      <code>#popup</code>/<code>#options</code>/<code>#panel</code>，快捷键 <kbd>1</kbd>/<kbd>2</kbd>/<kbd>3</kbd>
-      （本页焦点）。同源 IndexedDB 占位见 <code>src/dev/preview/seedPreviewLibrary.ts</code>：
-      <code>preview-demo-1</code>（双版本）、<code>preview-demo-2</code>、<code>preview-demo-3</code>、
-      <code>preview-demo-10v</code>（10 版本链，Popup <code>v10</code>）；启动补缺失 id。Panel iframe 默认
-      <code>preview-demo-10v</code>；另开
+      <code>#popup</code>/<code>#options</code>/<code>#panel</code>/<code>#contextmenu</code>，快捷键
+      <kbd>1</kbd>/<kbd>2</kbd>/<kbd>3</kbd>/<kbd>4</kbd>（本页焦点）。同源 IndexedDB 占位见
+      <code>src/dev/preview/seedPreviewLibrary.ts</code>：<code>preview-demo-1</code>（双版本）、
+      <code>preview-demo-2</code>、<code>preview-demo-3</code>、<code>preview-demo-10v</code>（10 版本链，
+      Popup <code>v10</code>）；启动补缺失 id。Panel iframe 默认 <code>preview-demo-10v</code>；另开
       <code>/src/dev/preview/panel-preview.html#focus=preview-demo-1</code>（或 <code>item=</code> 别名）切记录。
     </p>
 
@@ -266,35 +144,8 @@
       <button type="button" role="tab" id="tab-panel" aria-selected="false" aria-controls="panel-panelui" tabindex="-1" data-view="panel">
         浮动面板 · Content panel
       </button>
-    </div>
-
-    <div class="ctx-demo-card" id="ctx-demo-root">
-      <p class="ctx-demo-title">右键菜单演示（仅本页模拟）</p>
-      <p class="ctx-demo-desc">
-        本开发服务器无法注册 <code>chrome.contextMenus</code>。在下方图片上<strong>右键</strong>可查看与扩展生产环境一致的菜单文案「添加到参考」（真实扩展中出现在系统右键菜单里；遮罩图等场景另有兜底项，本演示不展开）。
-      </p>
-      <div class="ctx-demo-stage" data-ctx-demo-stage>
-        <img
-          class="ctx-demo-img"
-          src="/icons/icon-128.png"
-          alt="在演示区右键查看模拟扩展菜单"
-          width="128"
-          height="128"
-        />
-      </div>
-      <p class="ctx-demo-status" id="ctx-demo-status" aria-live="polite"></p>
-    </div>
-
-    <div
-      id="ctx-fake-menu"
-      class="ctx-fake-menu"
-      role="menu"
-      aria-hidden="true"
-      aria-label="模拟 Prompt Extracto 右键菜单"
-    >
-      <div class="ctx-fake-menu-ext" aria-hidden="true">Prompt Extracto</div>
-      <button type="button" role="menuitem" tabindex="-1" class="ctx-fake-menu-item" id="ctx-fake-menu-item">
-        添加到参考
+      <button type="button" role="tab" id="tab-contextmenu" aria-selected="false" aria-controls="panel-contextmenu" tabindex="-1" data-view="contextmenu">
+        右键菜单演示（仅本页模拟）
       </button>
     </div>
 
@@ -308,11 +159,14 @@
       <div class="tabpanel" role="tabpanel" id="panel-panelui" aria-labelledby="tab-panel" hidden data-view="panel">
         <iframe src="/src/dev/preview/panel-preview.html" title="Panel 预览"></iframe>
       </div>
+      <div class="tabpanel" role="tabpanel" id="panel-contextmenu" aria-labelledby="tab-contextmenu" hidden data-view="contextmenu">
+        <iframe src="/src/dev/preview/context-menu-preview.html" title="右键菜单演示"></iframe>
+      </div>
     </div>
 
     <script>
       (function () {
-        var VIEWS = ['popup', 'options', 'panel'];
+        var VIEWS = ['popup', 'options', 'panel', 'contextmenu'];
         var tabs = Array.prototype.slice.call(document.querySelectorAll('[role="tab"][data-view]'));
         var panels = Array.prototype.slice.call(document.querySelectorAll('.tabpanel[data-view]'));
 
@@ -418,97 +272,13 @@
           if (e.code === 'Digit1' || e.code === 'Numpad1') activate('popup', { skipHash: false });
           else if (e.code === 'Digit2' || e.code === 'Numpad2') activate('options', { skipHash: false });
           else if (e.code === 'Digit3' || e.code === 'Numpad3') activate('panel', { skipHash: false });
+          else if (e.code === 'Digit4' || e.code === 'Numpad4') activate('contextmenu', { skipHash: false });
         });
 
         activate(viewFromHash(), { skipHash: true });
         if (!window.location.hash || VIEWS.indexOf(window.location.hash.replace(/^#/, '').toLowerCase()) < 0) {
           window.history.replaceState(null, '', '#' + viewFromHash());
         }
-      })();
-    </script>
-    <script>
-      (function () {
-        var stage = document.querySelector('[data-ctx-demo-stage]');
-        var menu = document.getElementById('ctx-fake-menu');
-        var menuItem = document.getElementById('ctx-fake-menu-item');
-        var statusEl = document.getElementById('ctx-demo-status');
-        if (!stage || !menu || !menuItem) return;
-
-        var open = false;
-
-        function closeMenu() {
-          var was = open;
-          open = false;
-          menu.classList.remove('is-open');
-          menu.setAttribute('aria-hidden', 'true');
-          if (was) {
-            document.removeEventListener('click', onDocClick, false);
-            document.removeEventListener('keydown', onDocKey, true);
-          }
-        }
-
-        function onDocClick(e) {
-          if (menu.contains(e.target)) return;
-          closeMenu();
-        }
-
-        function onDocKey(e) {
-          if (e.key !== 'Escape') return;
-          e.preventDefault();
-          e.stopPropagation();
-          closeMenu();
-        }
-
-        function clampMenuPosition() {
-          var pad = 8;
-          var rect = menu.getBoundingClientRect();
-          var left = parseFloat(menu.style.left);
-          var top = parseFloat(menu.style.top);
-          if (!isFinite(left)) left = pad;
-          if (!isFinite(top)) top = pad;
-          var maxL = window.innerWidth - rect.width - pad;
-          var maxT = window.innerHeight - rect.height - pad;
-          left = Math.min(Math.max(pad, left), maxL);
-          top = Math.min(Math.max(pad, top), maxT);
-          menu.style.left = left + 'px';
-          menu.style.top = top + 'px';
-        }
-
-        function openMenuAt(clientX, clientY) {
-          closeMenu();
-          open = true;
-          menu.style.left = clientX + 'px';
-          menu.style.top = clientY + 'px';
-          menu.classList.add('is-open');
-          menu.setAttribute('aria-hidden', 'false');
-          requestAnimationFrame(function () {
-            clampMenuPosition();
-            try {
-              menuItem.focus();
-            } catch (err) {
-              void err;
-            }
-          });
-          document.addEventListener('click', onDocClick, false);
-          document.addEventListener('keydown', onDocKey, true);
-        }
-
-        stage.addEventListener('contextmenu', function (e) {
-          e.preventDefault();
-          openMenuAt(e.clientX, e.clientY);
-        });
-
-        menuItem.addEventListener('click', function (e) {
-          e.stopPropagation();
-          if (statusEl) {
-            statusEl.textContent = '已模拟：添加到参考（预览环境不请求后台）';
-          }
-          closeMenu();
-        });
-
-        window.addEventListener('resize', function () {
-          if (open) clampMenuPosition();
-        });
       })();
     </script>
   </body>

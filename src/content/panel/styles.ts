@@ -37,13 +37,20 @@ export const STYLE = `
      不再依赖 CSS 原生 resize: both，因为后者只支持右下角一个方向。 */
   animation: panelIn .22s cubic-bezier(.2,.9,.3,1.2);
 }
-/* 主 UI 在 panel-surface 内替换；根节点与拉手常驻，避免整板销毁导致闪断。 */
+/* 主 UI 在 panel-surface 内替换；根节点与拉手常驻，避免整板销毁导致闪断。
+   默认高度随内容；用户拖边缘 resize 写入 geometry.height 后根节点带
+   .panel-locked-height，再改回 flex:1 铺满固定高度。 */
 .panel > [data-role="panel-surface"] {
-  flex: 1;
+  flex: 0 1 auto;
   min-height: 0;
+  max-height: calc(100vh - 16px);
   display: flex;
   flex-direction: column;
   overflow: hidden;
+}
+.panel.panel-locked-height > [data-role="panel-surface"] {
+  flex: 1 1 auto;
+  max-height: none;
 }
 
 /* 8 个边缘 resize 拉手：分别贴在 panel 内侧的 4 边 + 4 角。
@@ -191,8 +198,12 @@ export const STYLE = `
      是纵向，flex:1 1 auto 同样让它撑满 panel 剩余高度，行为一致。 */
   flex: 1 1 auto;
   min-width: 0;
+  min-height: 0;
   padding: 16px; display: flex; flex-direction: column; gap: 12px;
   overflow-y: auto;
+}
+.panel:not(.panel-locked-height) .body {
+  flex: 0 1 auto;
 }
 .thumb {
   width: 100%; height: 220px; border-radius: 12px; overflow: hidden;
@@ -513,6 +524,7 @@ export const STYLE = `
      position: relative 提供定位上下文。 */
 .panel-row {
   display: flex;
+  align-items: flex-start;
   flex: 1 1 auto;
   min-height: 0;
   overflow: hidden;
