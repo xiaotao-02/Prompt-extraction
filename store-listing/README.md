@@ -17,6 +17,7 @@
 | `permission-justifications.md` | Privacy practices → Permission justifications（每条权限单独的解释框）|
 | `data-usage-disclosure.md` | Privacy practices → Data usage（一系列勾选框 + 文本解释）|
 | `privacy-policy-url.txt` | Privacy practices → Privacy policy |
+| `clipboard-permission-snippets.zh.txt` | 发布拦截「需提供 clipboardRead 理由」时快速粘贴的中/短文案（与 `permission-justifications.md` 一致） |
 | `CHECKLIST.md` | 上传前自检清单 |
 
 ## 一句话："为什么要拆这么细？"
