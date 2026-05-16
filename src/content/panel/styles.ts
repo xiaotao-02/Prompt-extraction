@@ -202,10 +202,10 @@ export const STYLE = `
 .thumb img { width: 100%; height: 100%; object-fit: contain; }
 .ref-thumb-wrap {
   height: auto;
-  min-height: 100px;
-  max-height: 220px;
+  min-height: 120px;
+  max-height: 288px;
   padding: 8px;
-  align-items: flex-start;
+  align-items: center;
   justify-content: center;
 }
 .ref-strip {
@@ -214,15 +214,15 @@ export const STYLE = `
   flex-wrap: wrap;
   gap: 8px;
   width: 100%;
-  max-height: 188px;
+  max-height: 260px;
   overflow-y: auto;
-  align-content: flex-start;
-  justify-content: flex-start;
+  align-content: center;
+  justify-content: center;
 }
 .ref-item {
   position: relative;
-  width: 72px;
-  height: 72px;
+  width: 112px;
+  height: 112px;
   border-radius: 8px;
   overflow: hidden;
   flex: none;
