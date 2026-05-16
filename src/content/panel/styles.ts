@@ -202,7 +202,9 @@ export const STYLE = `
   padding: 16px; display: flex; flex-direction: column; gap: 12px;
   overflow-y: auto;
 }
-.panel:not(.panel-locked-height) .body {
+/* 仅单列布局（surface 直接子节点 .body：compose/error）。勿用后代选择器命中
+   .panel-row > .body，否则横向 flex 下 flex-grow:0 会让主栏宽度收缩、右侧留白。 */
+.panel:not(.panel-locked-height) [data-role='panel-surface'] > .body {
   flex: 0 1 auto;
 }
 .thumb {
