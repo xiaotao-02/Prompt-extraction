@@ -87,5 +87,24 @@ export function extractStreamDisplayedBody(state: {
     const one = state.extractJobs[0]!;
     return one.partial ?? state.extractBaselinePrompt ?? state.prompt ?? state.draft ?? '';
   }
+
+  /** 对齐 `loading.ts` 里 `previewingExtractHistory`：侧边栏选了库内版本行时不在此用 extract job 覆盖。 */
+  const viewingHistoryExtractSidebar =
+    state.selectedVersionId != null &&
+    state.selectedVersionId !== EXTRACT_STREAM_VERSION_ID &&
+    parseExtractJobSentinel(state.selectedVersionId ?? undefined) == null;
+
+  if (state.extractJobs?.length === 1 && !viewingHistoryExtractSidebar) {
+    const one = state.extractJobs[0]!;
+    return (
+      one.partial ??
+      state.partial ??
+      state.extractBaselinePrompt ??
+      state.prompt ??
+      state.draft ??
+      ''
+    );
+  }
+
   return state.partial ?? state.extractBaselinePrompt ?? state.prompt ?? state.draft ?? '';
 }
