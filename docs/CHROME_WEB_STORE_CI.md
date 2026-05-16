@@ -192,3 +192,20 @@ git push origin v0.2.0
 
 ### CI 跑挂在 npm ci
 - 检查 package-lock.json 是否提交。`auto-release.yml` 会自动 commit lock 文件，但如果你手动改了 package.json 没跑 `npm install`，CI 会因为 lock 不匹配而失败。
+
+### Publish job 退出码 1（需看首个失败步骤）
+
+在 GitHub Actions 中打开本次运行 → `publish` job → **从上往下第一个标红的步骤**，展开日志尾部：
+
+| 失败步骤 | 常见原因 |
+|----------|----------|
+| Install dependencies | `package-lock.json` 与 `package.json` 不同步；网络或 registry |
+| Build & zip (release:store) | `npm run build` 失败；`scripts/release-store.mjs` 合规校验未过（如含 `*.map`、`manifest.version` 与 `package.json` 不一致、缺图标、zip 超过 10 MiB 等） |
+| Locate zip / Upload artifact | `dist-zip/store/` 下未生成 `prompt-extracto-store-v*.zip` |
+| Upload to Chrome Web Store / Publish | `CWS_*` Secret 缺失或错误；refresh token 失效；扩展 ID 错误；商店 API 拒绝（审核中等） |
+
+本地可先执行 `npm ci && npm run release:store`，与 CI 中 `dry_run=true` 的路径一致（不含商店 API）。
+
+### Runner 与 Node 版本
+
+`publish-chrome-store.yml` 与 `auto-release.yml` 使用 **Node 22**（`actions/setup-node@v6`），与基于 Node 20 的 `actions/*@v4` 弃用说明对齐；若日志里仍有 Actions 运行时告警，请将工作流中的 `actions/checkout`、`actions/setup-node`、`actions/upload-artifact` 升到文档成文时的推荐主版本。
