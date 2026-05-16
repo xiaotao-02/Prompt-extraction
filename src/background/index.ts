@@ -21,6 +21,7 @@ import {
   PROMPT_EXTRACTO_KEEPALIVE_PORT,
 } from '@/lib/keepalivePort';
 import { refreshRemoteRuntimeConfigNow } from '@/lib/remoteRuntimeConfig';
+import { applyExtensionUpdateFromFeed } from '@/lib/applyExtensionUpdate';
 import { DEFAULT_FEED_URL, getCurrentVersion, performUpdateCheck } from '@/lib/updater';
 
 /**
@@ -480,6 +481,29 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       .catch((e) => {
         sendResponse({
           ok: false,
+          error: e instanceof Error ? e.message : String(e),
+        });
+      });
+    return true;
+  }
+  if (message?.type === 'APPLY_EXTENSION_UPDATE') {
+    void refreshRemoteRuntimeConfigNow().catch(() => undefined);
+    applyExtensionUpdateFromFeed(DEFAULT_FEED_URL)
+      .then((result) => {
+        sendResponse({ ok: true as const, result });
+        if (result.applied && result.willReload) {
+          setTimeout(() => {
+            chrome.runtime.reload();
+          }, 50);
+          return;
+        }
+        if (!result.applied && result.reason !== 'already_latest' && result.openUrl) {
+          void chrome.tabs.create({ url: result.openUrl });
+        }
+      })
+      .catch((e) => {
+        sendResponse({
+          ok: false as const,
           error: e instanceof Error ? e.message : String(e),
         });
       });

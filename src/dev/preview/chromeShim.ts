@@ -138,6 +138,11 @@ export function installChromePreviewShim(): void {
             checkedAt: Date.now(),
           },
         };
+      case 'APPLY_EXTENSION_UPDATE':
+        return {
+          ok: true as const,
+          result: { applied: false as const, reason: 'already_latest' as const },
+        };
       case 'REFINE_PROMPT': {
         const payload = (
           message as {

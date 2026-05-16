@@ -1,17 +1,18 @@
 import { useEffect, useState } from 'react';
-import { RefreshCw, Check, AlertCircle, ExternalLink, Sparkles, Megaphone } from 'lucide-react';
+import { RefreshCw, Check, AlertCircle, ExternalLink, Sparkles, Megaphone, Download } from 'lucide-react';
 import { getUpdateSettings } from '@/lib/storage';
 import type { RemoteRuntimeConfigCache } from '@/lib/remoteRuntimeConfig';
 import { readRemoteRuntimeConfigCache } from '@/lib/remoteRuntimeConfig';
 import { REMOTE_RUNTIME_CONFIG_CACHE_KEY } from '@/lib/storage/keys';
 import { getCurrentVersion } from '@/lib/updater';
 import { isNewerVersion } from '@/lib/version';
-import type { UpdateCheckResult, UpdateSettings } from '@/lib/types';
+import type { ApplyExtensionUpdateResult, UpdateCheckResult, UpdateSettings } from '@/lib/types';
 
 /**
- * 「检查更新」面板。
+ * 「检查更新 / 立即更新」面板。
  *
- * 点按钮 → background `CHECK_UPDATE`（GitHub Release）；
+ * 「检查」→ background `CHECK_UPDATE`（GitHub Release）；
+ * 「立即更新」→ `APPLY_EXTENSION_UPDATE`：比对 GitHub 后请求浏览器拉包并重载，必要时打开发布页。
  * 同路径会顺带尝试刷新远端「纯数据」配置缓存（需在 `constants.ts` 配置 HTTPS URL）。
  * 远端公告 / 软性版本提示取自 `chrome.storage.local`，不嵌入可执行代码。
  */
@@ -21,7 +22,7 @@ export default function UpdateSection({
   variant?: 'card' | 'plain';
 }) {
   const [u, setU] = useState<UpdateSettings | null>(null);
-  const [busy, setBusy] = useState(false);
+  const [busyKind, setBusyKind] = useState<null | 'check' | 'apply'>(null);
   const [tip, setTip] = useState<{ ok: boolean; msg: string } | null>(null);
   const [remoteHints, setRemoteHints] = useState<RemoteRuntimeConfigCache | null>(null);
 
@@ -49,7 +50,7 @@ export default function UpdateSection({
   const current = getCurrentVersion();
 
   const onCheck = async () => {
-    setBusy(true);
+    setBusyKind('check');
     setTip(null);
     try {
       const resp = (await chrome.runtime.sendMessage({ type: 'CHECK_UPDATE' })) as
@@ -75,7 +76,42 @@ export default function UpdateSection({
         }
       }
     } finally {
-      setBusy(false);
+      setBusyKind(null);
+      await load();
+      await loadRemoteHints();
+    }
+  };
+
+  const onApply = async () => {
+    setBusyKind('apply');
+    setTip(null);
+    try {
+      const resp = (await chrome.runtime.sendMessage({ type: 'APPLY_EXTENSION_UPDATE' })) as
+        | { ok: true; result: ApplyExtensionUpdateResult }
+        | { ok: false; error?: string }
+        | undefined;
+      if (!resp || resp.ok !== true) {
+        const errMsg =
+          resp && typeof resp === 'object' && typeof resp.error === 'string' && resp.error
+            ? resp.error
+            : '更新失败，请稍后再试';
+        setTip({ ok: false, msg: errMsg });
+        return;
+      }
+      const { result } = resp;
+      if (result.applied && result.willReload) {
+        setTip({ ok: true, msg: '更新已就绪，扩展即将重载…' });
+      } else if (!result.applied && result.reason === 'already_latest') {
+        setTip({ ok: true, msg: '与 GitHub 对比：当前已是最新版本' });
+      } else if (!result.applied) {
+        const opened = !!result.openUrl;
+        setTip({
+          ok: opened,
+          msg: opened ? `${result.message}（已在新标签页打开发布页）` : result.message,
+        });
+      }
+    } finally {
+      setBusyKind(null);
       await load();
       await loadRemoteHints();
     }
@@ -83,6 +119,7 @@ export default function UpdateSection({
 
   if (!u) return null;
 
+  const busy = busyKind !== null;
   const latest = u.lastResult?.latest;
   const hasUpdate = !!u.lastResult?.hasUpdate && !!latest;
 
@@ -103,8 +140,14 @@ export default function UpdateSection({
         </h2>
         <span className="text-[11px] text-zinc-400">当前版本 v{current}</span>
       </div>
-      <p className="text-xs text-zinc-500 mb-4">
+      <p className="text-xs text-zinc-500 mb-2">
         手动检查 GitHub Releases，看看有没有新版本可用。
+      </p>
+      <p className="text-[11px] text-zinc-500 mb-4 leading-relaxed">
+        <strong className="font-medium text-zinc-600 dark:text-zinc-400">立即更新</strong>
+        会以 GitHub Release 为准判断是否有新版本；从<strong className="font-medium text-zinc-600 dark:text-zinc-400">扩展商店</strong>
+        安装时，若浏览器已拉到新版本将自动重载扩展。若为<strong className="font-medium text-zinc-600 dark:text-zinc-400">解压加载</strong>
+        或商店尚未同步，将打开发布页以便手动下载安装包。
       </p>
 
       {announcementZh ? (
@@ -197,9 +240,21 @@ export default function UpdateSection({
         </div>
 
         <div className="flex items-center gap-2 flex-wrap">
-          <button onClick={onCheck} disabled={busy} className="btn-primary text-xs px-3 py-1.5">
-            <RefreshCw className={`w-3.5 h-3.5 ${busy ? 'animate-spin' : ''}`} />
-            {busy ? '检查中…' : '立即检查更新'}
+          <button
+            onClick={onCheck}
+            disabled={busy}
+            className="btn-primary text-xs px-3 py-1.5"
+          >
+            <RefreshCw className={`w-3.5 h-3.5 ${busyKind === 'check' ? 'animate-spin' : ''}`} />
+            {busyKind === 'check' ? '检查中…' : '立即检查更新'}
+          </button>
+          <button
+            onClick={() => void onApply()}
+            disabled={busy}
+            className="btn-ghost text-xs px-3 py-1.5"
+          >
+            <Download className={`w-3.5 h-3.5 ${busyKind === 'apply' ? 'animate-pulse' : ''}`} />
+            {busyKind === 'apply' ? '处理中…' : '立即更新'}
           </button>
           {tip && (
             <span

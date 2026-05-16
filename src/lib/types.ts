@@ -98,6 +98,20 @@ export interface UpdateCheckResult {
   error?: string;
 }
 
+/**
+ * options → background「立即更新」：GitHub 有新版本后尝试触发浏览器侧更新并重载；
+ * 若商店未同步或为解压加载，则退回打开 Release / 下载页。
+ */
+export type ApplyExtensionUpdateResult =
+  | { applied: true; willReload: true }
+  | { applied: false; reason: 'already_latest' }
+  | {
+      applied: false;
+      reason: 'throttled' | 'manual_required';
+      message: string;
+      openUrl?: string;
+    };
+
 export interface UpdateSettings {
   lastCheckedAt: number;
   lastResult: UpdateCheckResult | null;
@@ -445,6 +459,10 @@ export type RuntimeMessage =
     }
   | {
       type: 'CHECK_UPDATE';
+    }
+  | {
+      /** 对齐 GitHub latest 后请求浏览器拉包并在可用时 reload */
+      type: 'APPLY_EXTENSION_UPDATE';
     }
   | {
       /**
