@@ -1,14 +1,19 @@
 import { useEffect, useState } from 'react';
-import { RefreshCw, Check, AlertCircle, ExternalLink, Sparkles } from 'lucide-react';
+import { RefreshCw, Check, AlertCircle, ExternalLink, Sparkles, Megaphone } from 'lucide-react';
 import { getUpdateSettings } from '@/lib/storage';
+import type { RemoteRuntimeConfigCache } from '@/lib/remoteRuntimeConfig';
+import { readRemoteRuntimeConfigCache } from '@/lib/remoteRuntimeConfig';
+import { REMOTE_RUNTIME_CONFIG_CACHE_KEY } from '@/lib/storage/keys';
 import { getCurrentVersion } from '@/lib/updater';
+import { isNewerVersion } from '@/lib/version';
 import type { UpdateCheckResult, UpdateSettings } from '@/lib/types';
 
 /**
  * 「检查更新」面板。
  *
- * 只做一件事：点按钮 → 向 background 发 CHECK_UPDATE → 展示结果。
- * 没有定时检查、桌面通知、徽章提示、忽略版本、一键更新等附加逻辑。
+ * 点按钮 → background `CHECK_UPDATE`（GitHub Release）；
+ * 同路径会顺带尝试刷新远端「纯数据」配置缓存（需在 `constants.ts` 配置 HTTPS URL）。
+ * 远端公告 / 软性版本提示取自 `chrome.storage.local`，不嵌入可执行代码。
  */
 export default function UpdateSection({
   variant = 'card',
@@ -18,14 +23,27 @@ export default function UpdateSection({
   const [u, setU] = useState<UpdateSettings | null>(null);
   const [busy, setBusy] = useState(false);
   const [tip, setTip] = useState<{ ok: boolean; msg: string } | null>(null);
+  const [remoteHints, setRemoteHints] = useState<RemoteRuntimeConfigCache | null>(null);
 
   const load = async () => {
     const s = await getUpdateSettings();
     setU(s);
   };
 
+  const loadRemoteHints = async () => {
+    const c = await readRemoteRuntimeConfigCache();
+    setRemoteHints(c);
+  };
+
   useEffect(() => {
     void load();
+    void loadRemoteHints();
+    const listener = (changes: Record<string, chrome.storage.StorageChange>) => {
+      if (!(REMOTE_RUNTIME_CONFIG_CACHE_KEY in changes)) return;
+      void loadRemoteHints();
+    };
+    chrome.storage.local.onChanged.addListener(listener);
+    return () => chrome.storage.local.onChanged.removeListener(listener);
   }, []);
 
   const current = getCurrentVersion();
@@ -59,6 +77,7 @@ export default function UpdateSection({
     } finally {
       setBusy(false);
       await load();
+      await loadRemoteHints();
     }
   };
 
@@ -66,6 +85,12 @@ export default function UpdateSection({
 
   const latest = u.lastResult?.latest;
   const hasUpdate = !!u.lastResult?.hasUpdate && !!latest;
+
+  const p = remoteHints?.payload;
+  const announcementZh = p?.announcementZh?.trim();
+  const minRec = p?.minRecommendedExtensionVersion;
+  const docsUrl = p?.docsUrl;
+  const softNudgeExtension = !!(minRec && isNewerVersion(minRec, current));
 
   const Root = variant === 'plain' ? 'div' : 'section';
   const rootClass = variant === 'plain' ? 'space-y-4' : 'card';
@@ -78,7 +103,47 @@ export default function UpdateSection({
         </h2>
         <span className="text-[11px] text-zinc-400">当前版本 v{current}</span>
       </div>
-      <p className="text-xs text-zinc-500 mb-4">手动检查 GitHub Releases，看看有没有新版本可用。</p>
+      <p className="text-xs text-zinc-500 mb-4">
+        手动检查 GitHub Releases，看看有没有新版本可用。
+      </p>
+
+      {announcementZh ? (
+        <div className="mb-3 rounded-xl border border-sky-200/80 bg-sky-50/70 dark:border-sky-800/70 dark:bg-sky-950/25 px-3 py-2 flex gap-2 text-xs text-sky-950 dark:text-sky-50/95">
+          <Megaphone className="w-4 h-4 shrink-0 mt-0.5 opacity-85" aria-hidden />
+          <p className="leading-relaxed whitespace-pre-wrap flex-1 min-w-0">{announcementZh}</p>
+        </div>
+      ) : null}
+
+      {softNudgeExtension ? (
+        <div className="mb-3 rounded-xl border border-amber-200/90 bg-amber-50/80 dark:border-amber-900/60 dark:bg-amber-950/30 px-3 py-2 text-[11px] leading-relaxed text-amber-950 dark:text-amber-50/95">
+          远端配置建议将你保持在 <span className="font-mono">v{minRec}</span> 或更高以获得最佳体验；请继续在{' '}
+          <strong className="font-medium">Chrome / Edge 扩展商店</strong> 中获取正式更新（本扩展不会从第三方渠道热更新代码）。
+          {docsUrl ? (
+            <>
+              {' '}
+              <a
+                href={docsUrl}
+                target="_blank"
+                rel="noreferrer"
+                className="text-amber-800 dark:text-amber-200 underline underline-offset-2 inline-flex items-center gap-0.5"
+              >
+                查看说明 <ExternalLink className="w-3 h-3" />
+              </a>
+            </>
+          ) : null}
+        </div>
+      ) : docsUrl ? (
+        <div className="mb-3 text-[11px]">
+          <a
+            href={docsUrl}
+            target="_blank"
+            rel="noreferrer"
+            className="text-violet-500 hover:underline inline-flex items-center gap-1"
+          >
+            在线说明文档 <ExternalLink className="w-3 h-3" />
+          </a>
+        </div>
+      ) : null}
 
       <div className="space-y-3">
         <div
@@ -147,6 +212,13 @@ export default function UpdateSection({
             </span>
           )}
         </div>
+
+        {remoteHints?.lastError ? (
+          <p className="text-[10px] text-zinc-400 dark:text-zinc-600">
+            最近一次远端配置缓存刷新：<span className="text-rose-500">{remoteHints.lastError}</span>
+            （仍会使用上一份成功载荷，如有）
+          </p>
+        ) : null}
       </div>
     </Root>
   );

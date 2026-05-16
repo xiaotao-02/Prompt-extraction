@@ -3,7 +3,8 @@ dist
 dist-zip
 .DS_Store
 *.log
-.vscode
+.vscode/*
+!.vscode/settings.json
 .idea
 .env
 .env.local

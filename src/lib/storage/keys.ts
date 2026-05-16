@@ -9,3 +9,6 @@ export const DISCOVERED_KEY = 'discovered_models_v1';
 
 /** 用户命名的自定义策略预设列表（chrome.storage.local） */
 export const USER_STRATEGY_PRESETS_KEY = 'user_strategy_presets_v1';
+
+/** 「远端运行时纯数据配置」降级缓存（本地，不上传商店 sync） */
+export const REMOTE_RUNTIME_CONFIG_CACHE_KEY = 'remote_runtime_config_cache_v1';

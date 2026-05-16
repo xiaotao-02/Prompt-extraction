@@ -20,6 +20,7 @@ import {
   KEEPALIVE_PORT_PREP_KIND,
   PROMPT_EXTRACTO_KEEPALIVE_PORT,
 } from '@/lib/keepalivePort';
+import { refreshRemoteRuntimeConfigNow } from '@/lib/remoteRuntimeConfig';
 import { DEFAULT_FEED_URL, getCurrentVersion, performUpdateCheck } from '@/lib/updater';
 
 /**
@@ -206,6 +207,7 @@ function ensureContextMenus(): void {
 
 chrome.runtime.onInstalled.addListener((details) => {
   ensureContextMenus();
+  void refreshRemoteRuntimeConfigNow().catch(() => undefined);
   // 首次安装：自动打开设置页，引导用户配置 API 并设置「数据目录」。
   // 这是"卸载/重装后能自动识别数据"工作流的关键一步 —— 用户必须在数据丢失前
   // 主动挑一个目录绑定。reason === 'install' 只在第一次安装时触发，更新/启用不会。
@@ -220,6 +222,7 @@ chrome.runtime.onInstalled.addListener((details) => {
 
 chrome.runtime.onStartup.addListener(() => {
   ensureContextMenus();
+  void refreshRemoteRuntimeConfigNow().catch(() => undefined);
 });
 
 chrome.commands.onCommand.addListener((cmd) => {
@@ -1195,6 +1198,7 @@ async function injectContentScript(tabId: number): Promise<boolean> {
 // ============== 检查更新（仅手动） ==============
 
 async function runUpdateCheck(): Promise<UpdateCheckResult> {
+  void refreshRemoteRuntimeConfigNow().catch(() => undefined);
   const result = await performUpdateCheck(DEFAULT_FEED_URL);
   await saveUpdateResult(result);
   return result;
