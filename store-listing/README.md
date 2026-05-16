@@ -18,6 +18,7 @@
 | `data-usage-disclosure.md` | Privacy practices → Data usage（一系列勾选框 + 文本解释）|
 | `privacy-policy-url.txt` | Privacy practices → Privacy policy |
 | `clipboard-permission-snippets.zh.txt` | 发布拦截「需提供 clipboardRead 理由」时快速粘贴的中/短文案（与 `permission-justifications.md` 一致） |
+| `clipboard-read-justification-zh-paste-only.txt` | 同上「完整版」**仅正文一行**：全选复制即可贴进 0/1000 输入框，无任何注释 |
 | `CHECKLIST.md` | 上传前自检清单 |
 
 ## 一句话："为什么要拆这么细？"

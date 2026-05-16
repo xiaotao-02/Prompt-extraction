@@ -158,6 +158,8 @@ npm run store:screenshots
 
 跳过发版：在 commit message 里加 `[skip release]` 即可（机器人自己产生的 `chore(release):` commit 也会被自动跳过，不会循环触发）。
 
+合并到 `main` 的改动还会触发 [.github/workflows/gitleaks.yml](.github/workflows/gitleaks.yml)（[gitleaks](https://github.com/gitleaks/gitleaks)），用于降低误提交 API Key / token 的概率；也会在 PR、每周定时与手动操作时执行。
+
 > 用户那侧的扩展默认更新源就是这个仓库，因此 Release 一旦发出，所有装了插件的用户在「设置 → 检查更新」中点一下「立即检查更新」即可收到提示。
 
 ## 检查更新

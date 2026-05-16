@@ -68,7 +68,7 @@ npm run release:store
 | 字段 | 复制自 |
 |---|---|
 | Single purpose | `store-listing/single-purpose.zh.md` 或 `.en.md` |
-| Permission justifications · 每个权限单独的输入框（与 zip 内 `manifest.json` 的 `permissions` **逐项对应**） | `store-listing/permission-justifications.md` 中对应小节；若弹窗提示「必须提供 clipboardRead 理由」，中文可直接复制 `store-listing/clipboard-permission-snippets.zh.txt` 中的完整版或短版 |
+| Permission justifications · 每个权限单独的输入框（与 zip 内 `manifest.json` 的 `permissions` **逐项对应**） | `store-listing/permission-justifications.md` 中对应小节；若弹窗提示「必须提供 clipboardRead 理由」，零注释整段复制：`store-listing/clipboard-read-justification-zh-paste-only.txt`；或见 `clipboard-permission-snippets.zh.txt` 完整版/短版 |
 | Data usage 勾选项 + Approved use cases 文本 | `store-listing/data-usage-disclosure.md` |
 | Privacy policy URL | `store-listing/privacy-policy-url.txt` |
 

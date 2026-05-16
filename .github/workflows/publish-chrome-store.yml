@@ -81,12 +81,13 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
+      # workflow_dispatch + dry_run=true 时跳过上传 / 发布；tag push 等非手动触发一律执行上传。
       - name: Install chrome-webstore-upload-cli
-        if: ${{ github.event.inputs.dry_run != 'true' }}
+        if: ${{ !(github.event_name == 'workflow_dispatch' && github.event.inputs.dry_run == 'true') }}
         run: npm i -g chrome-webstore-upload-cli@3
 
       - name: Upload to Chrome Web Store
-        if: ${{ github.event.inputs.dry_run != 'true' }}
+        if: ${{ !(github.event_name == 'workflow_dispatch' && github.event.inputs.dry_run == 'true') }}
         env:
           EXTENSION_ID: ${{ secrets.CWS_EXTENSION_ID }}
           CLIENT_ID: ${{ secrets.CWS_CLIENT_ID }}
@@ -101,13 +102,13 @@ jobs:
             --refresh-token "$REFRESH_TOKEN"
 
       - name: Publish on Chrome Web Store
-        if: ${{ github.event.inputs.dry_run != 'true' }}
+        if: ${{ !(github.event_name == 'workflow_dispatch' && github.event.inputs.dry_run == 'true') }}
         env:
           EXTENSION_ID: ${{ secrets.CWS_EXTENSION_ID }}
           CLIENT_ID: ${{ secrets.CWS_CLIENT_ID }}
           CLIENT_SECRET: ${{ secrets.CWS_CLIENT_SECRET }}
           REFRESH_TOKEN: ${{ secrets.CWS_REFRESH_TOKEN }}
-          TARGET: ${{ github.event.inputs.target || 'default' }}
+          TARGET: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.target || 'default' }}
         run: |
           # tag 触发时默认发到 default（正式公开渠道）
           chrome-webstore-upload publish \

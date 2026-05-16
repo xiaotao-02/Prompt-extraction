@@ -495,10 +495,6 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           setTimeout(() => {
             chrome.runtime.reload();
           }, 50);
-          return;
-        }
-        if (!result.applied && result.reason !== 'already_latest' && result.openUrl) {
-          void chrome.tabs.create({ url: result.openUrl });
         }
       })
       .catch((e) => {

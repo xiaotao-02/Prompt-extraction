@@ -12,7 +12,7 @@ import type { ApplyExtensionUpdateResult, UpdateCheckResult, UpdateSettings } fr
  * 「检查更新 / 立即更新」面板。
  *
  * 「检查」→ background `CHECK_UPDATE`（GitHub Release）；
- * 「立即更新」→ `APPLY_EXTENSION_UPDATE`：比对 GitHub 后请求浏览器拉包并重载，必要时打开发布页。
+ * 「立即更新」→ `APPLY_EXTENSION_UPDATE`：比对 GitHub 后请求浏览器拉包并重载；无法应用时仅文案提示。
  * 同路径会顺带尝试刷新远端「纯数据」配置缓存（需在 `constants.ts` 配置 HTTPS URL）。
  * 远端公告 / 软性版本提示取自 `chrome.storage.local`，不嵌入可执行代码。
  */
@@ -104,11 +104,7 @@ export default function UpdateSection({
       } else if (!result.applied && result.reason === 'already_latest') {
         setTip({ ok: true, msg: '与 GitHub 对比：当前已是最新版本' });
       } else if (!result.applied) {
-        const opened = !!result.openUrl;
-        setTip({
-          ok: opened,
-          msg: opened ? `${result.message}（已在新标签页打开发布页）` : result.message,
-        });
+        setTip({ ok: false, msg: result.message });
       }
     } finally {
       setBusyKind(null);
@@ -146,8 +142,9 @@ export default function UpdateSection({
       <p className="text-[11px] text-zinc-500 mb-4 leading-relaxed">
         <strong className="font-medium text-zinc-600 dark:text-zinc-400">立即更新</strong>
         会以 GitHub Release 为准判断是否有新版本；从<strong className="font-medium text-zinc-600 dark:text-zinc-400">扩展商店</strong>
-        安装时，若浏览器已拉到新版本将自动重载扩展。若为<strong className="font-medium text-zinc-600 dark:text-zinc-400">解压加载</strong>
-        或商店尚未同步，将打开发布页以便手动下载安装包。
+        安装且浏览器已拉到新版本时，将自动重载扩展。商店尚未同步、检查限流或
+        <strong className="font-medium text-zinc-600 dark:text-zinc-400">解压加载</strong>
+        时无法自动升级包体，请稍后再试或到 chrome://extensions（Edge：edge://extensions）检查「更新」/「重新加载」。
       </p>
 
       {announcementZh ? (

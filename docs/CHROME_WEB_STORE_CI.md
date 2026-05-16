@@ -16,6 +16,23 @@
 
 ---
 
+## 0.5 已通过审核后的默认路线（本仓库 Prompt Extracto）
+
+本仓库默认启用 **GitHub Actions 自动发版**（与下文 §1–3 对齐），对应 workflow：[publish-chrome-store.yml](../.github/workflows/publish-chrome-store.yml)。若你以后只想在 Chrome 开发者控制台手工上传 zip，可在 Actions 里 **Disable workflow** `Publish to Chrome Web Store`，并忽略 §1–3。
+
+已通过审核并存活的列表页可参考：[Chrome 应用商店：Prompt Extracto](https://chromewebstore.google.com/detail/prompt-extracto/oaanodmbndnpeohmfoedgmfleabhdmkg)。
+
+**填写 `CWS_EXTENSION_ID`**：打开上文商店列表链接，从地址栏 URL 中取路径末尾**连续的 32 位小写字母**（EXTENSION_ID）；该值仅在 GitHub **Actions Secret** 中配置，不要在仓库源码或文档里再抄写一遍。
+
+**接下来在本机 / Google Cloud / GitHub 一次性做完（顺序与 §1–3 一致）**：
+
+1. **§1**：新建 GCP 项目 → 启用 **Chrome Web Store API** → OAuth 同意屏幕（External、Testing、Test users 含你的商店开发者账号）→ 创建 **Desktop app** OAuth 客户端，保存 `CLIENT_ID` / `CLIENT_SECRET`。
+2. **§1.5**：在本机执行 `npx -y chrome-webstore-upload-keys`（若在仓库根目录则可 `npm run cws:refresh-token`），用同一开发者账号授权，复制 `refresh_token`。
+3. **§2**：在 GitHub 仓库 **Settings → Secrets and variables → Actions** 添加 `CWS_EXTENSION_ID`（见 §0.5 上文列表链接）、`CWS_CLIENT_ID`、`CWS_CLIENT_SECRET`、`CWS_REFRESH_TOKEN`。
+4. **§3**：在 Actions 里手动跑 **Publish to Chrome Web Store**：先 `dry_run = true`；再 `dry_run = false` 且 `target = trustedTesters` 试发；确认无问题后，正式渠道由 **向 `main` 推送触发 `auto-release` 打出 `v*` tag** 自动联动本 workflow（见 §4），或直接手动 Run workflow、`target = default`。
+
+---
+
 ## 1. 在 Google Cloud Console 创建 OAuth 应用
 
 整个流程的核心是拿到 4 个值：`EXTENSION_ID` / `CLIENT_ID` / `CLIENT_SECRET` / `REFRESH_TOKEN`。
@@ -73,6 +90,12 @@
 npx -y chrome-webstore-upload-keys
 ```
 
+本仓库等价快捷方式（在仓库根目录）：
+
+```powershell
+npm run cws:refresh-token
+```
+
 它会：
 
 1. 让你输入刚才的 `CLIENT_ID` 和 `CLIENT_SECRET`
@@ -110,7 +133,7 @@ curl https://accounts.google.com/o/oauth2/token \
 
 | Name | Value |
 |---|---|
-| `CWS_EXTENSION_ID` | 第 0 节拿到的 32 位扩展 ID |
+| `CWS_EXTENSION_ID` | 同上：从 §0.5 **商店列表 URL** 末尾取 32 位扩展 ID（勿提交到仓库） |
 | `CWS_CLIENT_ID` | 1.4 节拿到的 client_id |
 | `CWS_CLIENT_SECRET` | 1.4 节拿到的 client_secret |
 | `CWS_REFRESH_TOKEN` | 1.5 节拿到的 refresh_token |
@@ -121,9 +144,10 @@ curl https://accounts.google.com/o/oauth2/token \
 
 进入仓库 **Actions** Tab → 选 **Publish to Chrome Web Store** → **Run workflow**：
 
-- 第一次跑时把 `dry_run` 选 `true`，只构建不上传，先确认 zip 出得来
+- 第一次跑时把 `dry_run` 选 `true`，只构建不上传，先确认 zip 出得来（此时不会调用商店 API）。
 - 看到 Workflow 绿色后，下载产物 `chrome-store-zip`，本地解压验证一下能在 `chrome://extensions` 加载
 - 然后再跑一次 `dry_run = false`，并且把 `target` 选 `trustedTesters`（推到测试组，不影响公开商店）
+- **由推送 `v*` tag 触发**（例如 `auto-release.yml` 打 tag）时，workflow 会使用 `release:store` 构建并上传到商店，随后 **始终发布到 `default`（公开渠道）**；若想先发测试组，请用手动 Run workflow 并选用 `trustedTesters`。
 - 如果有"trusted testers"组（在商店后台 Distribution 里配置），他们会立即收到更新
 - 一切 OK 后，正式发版只需要：
 

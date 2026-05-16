@@ -100,7 +100,7 @@ export interface UpdateCheckResult {
 
 /**
  * options → background「立即更新」：GitHub 有新版本后尝试触发浏览器侧更新并重载；
- * 若商店未同步或为解压加载，则退回打开 Release / 下载页。
+ * 若商店未同步、限流或解压加载，仅返回说明文案（不引导手动下载安装包）。
  */
 export type ApplyExtensionUpdateResult =
   | { applied: true; willReload: true }
@@ -109,7 +109,6 @@ export type ApplyExtensionUpdateResult =
       applied: false;
       reason: 'throttled' | 'manual_required';
       message: string;
-      openUrl?: string;
     };
 
 export interface UpdateSettings {
