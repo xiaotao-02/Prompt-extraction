@@ -566,9 +566,15 @@ export function panelHtml(state: PanelState): string {
           }>本地图片</button>
           <input type="file" class="ref-file-input-hidden" data-role="ref-file-input" accept="image/*" />
         </div>
-        <p class="compose-hint">图片 / 视频上右键一级「添加到参考」可继续收集；在下方点「生成提示词」完成反推。当前 ${urls.length} / ${MAX_REFERENCE_IMAGES} 张。</p>
+        <p class="compose-hint">图片 / 视频上右键一级「添加到参考」可继续收集；点「生成提示词」完整反推，或「提取材质 / 提取风格」收窄维度。当前 ${urls.length} / ${MAX_REFERENCE_IMAGES} 张。</p>
         <div class="compose-meta">${strategySelectHtml(state.strategy)}</div>
         <div class="actions compose-actions">
+          <button type="button" class="btn ghost sm" data-action="run-extract-material" ${
+            canRun ? '' : 'disabled'
+          }>提取材质</button>
+          <button type="button" class="btn ghost sm" data-action="run-extract-style" ${
+            canRun ? '' : 'disabled'
+          }>提取风格</button>
           <button type="button" class="btn primary" data-action="run-extract" ${
             canRun ? '' : 'disabled'
           }>生成提示词</button>

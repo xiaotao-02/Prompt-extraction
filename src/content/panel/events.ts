@@ -7,6 +7,7 @@ import {
   restorePromptVersionFromExtension,
 } from '@/content/extensionBridge';
 import type {
+  ExtractFocus,
   OneClickRewriteRandomness,
   RefineResponse,
   RuntimeMessage,
@@ -63,6 +64,43 @@ function renderPanel(...args: Parameters<typeof panelActions.renderPanel>) {
 }
 function closePanel() {
   return panelActions.closePanel();
+}
+
+/** compose 态发起反推：转入 loading 并发 EXTRACT_PROMPT（可选材质/风格收窄）。 */
+function sendComposeExtractPrompt(state: PanelState, urls: string[], extractFocus?: ExtractFocus): void {
+  const newReq = crypto.randomUUID();
+  renderPanel({
+    ...state,
+    requestId: newReq,
+    extractJobs: [{ streamRequestId: newReq, startedAt: Date.now() }],
+    status: 'loading',
+    stage: 'calling',
+    startedAt: Date.now(),
+    prompt: undefined,
+    error: undefined,
+    draft: undefined,
+    selectedVersionId: undefined,
+    partial: undefined,
+    extractBaselinePrompt: undefined,
+    linkedHistoryId: undefined,
+    versions: undefined,
+    versionsOpen: false,
+    refineOpen: false,
+    refineJobs: undefined,
+    refineError: undefined,
+  });
+  safeSendMessage({
+    type: 'EXTRACT_PROMPT',
+    payload: {
+      imageUrl: urls[0]!,
+      imageUrls: urls,
+      pageUrl: location.href,
+      pageTitle: document.title,
+      requestId: newReq,
+      ...(state.strategy !== undefined ? { strategyOverride: state.strategy } : {}),
+      ...(extractFocus ? { extractFocus } : {}),
+    },
+  });
 }
 
 let dirtyVersionHighlightRaf = 0;
@@ -654,43 +692,22 @@ function handleDataAction(root: HTMLElement, el: HTMLElement, event: MouseEvent)
   const state = currentState;
   if (!state) return;
   if (action === 'close') return closePanel();
-  if (action === 'run-extract') {
+  if (
+    action === 'run-extract' ||
+    action === 'run-extract-material' ||
+    action === 'run-extract-style'
+  ) {
     if (state.status !== 'compose') return;
     const urls = normalizeReferenceList(panelReferenceUrls(state));
     if (!urls.length || !isExtensionContextValid()) return;
     safeSendMessage({ type: 'PING' });
-    const newReq = crypto.randomUUID();
-    renderPanel({
-      ...state,
-      requestId: newReq,
-      extractJobs: [{ streamRequestId: newReq, startedAt: Date.now() }],
-      status: 'loading',
-      stage: 'calling',
-      startedAt: Date.now(),
-      prompt: undefined,
-      error: undefined,
-      draft: undefined,
-      selectedVersionId: undefined,
-      partial: undefined,
-      extractBaselinePrompt: undefined,
-      linkedHistoryId: undefined,
-      versions: undefined,
-      versionsOpen: false,
-      refineOpen: false,
-      refineJobs: undefined,
-      refineError: undefined,
-    });
-    safeSendMessage({
-      type: 'EXTRACT_PROMPT',
-      payload: {
-        imageUrl: urls[0]!,
-        imageUrls: urls,
-        pageUrl: location.href,
-        pageTitle: document.title,
-        requestId: newReq,
-        ...(state.strategy !== undefined ? { strategyOverride: state.strategy } : {}),
-      },
-    });
+    const extractFocus: ExtractFocus | undefined =
+      action === 'run-extract-material'
+        ? 'material'
+        : action === 'run-extract-style'
+          ? 'style'
+          : undefined;
+    sendComposeExtractPrompt(state, urls, extractFocus);
     return;
   }
   if (action === 'remove-reference') {

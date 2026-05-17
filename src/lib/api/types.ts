@@ -4,7 +4,14 @@
  * 这些类型同时被 extract / refine / provider 各实现使用，
  * 抽到独立文件避免循环依赖。
  */
-import type { AppSettings, ExtractStage, OutputStyle, ProviderId, RefineStage } from '../types';
+import type {
+  AppSettings,
+  ExtractFocus,
+  ExtractStage,
+  OutputStyle,
+  ProviderId,
+  RefineStage,
+} from '../types';
 import type { FetchedImage } from '../image';
 
 /**
@@ -45,6 +52,8 @@ export interface ExtractParams {
    * 发太多 chrome.tabs.sendMessage。回调里抛错不影响主流程。
    */
   onProgress?: ExtractProgressFn;
+  /** 面板收窄关注点：材质或画风（与运行时 EXTRACT_PROMPT.payload.extractFocus 一致） */
+  extractFocus?: ExtractFocus;
 }
 
 export interface ExtractResult {

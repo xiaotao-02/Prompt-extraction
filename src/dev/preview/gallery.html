@@ -118,6 +118,40 @@
       code {
         font-size: 0.82em;
       }
+      .scene-tools {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 0.5rem 0.75rem;
+        margin: 0 0 0.5rem;
+        font-size: 0.88rem;
+      }
+      .scene-tools label {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.4rem;
+        font-weight: 500;
+      }
+      .scene-tools select {
+        font: inherit;
+        font-weight: 400;
+        padding: 0.35rem 0.5rem;
+        border-radius: 8px;
+        border: 1px solid #e4e4e7;
+        background: #fff;
+        color: inherit;
+        min-width: 11rem;
+      }
+      .scene-tools select:focus-visible {
+        outline: 2px solid #6366f1;
+        outline-offset: 2px;
+      }
+      @media (prefers-color-scheme: dark) {
+        .scene-tools select {
+          border-color: #27272a;
+          background: #18181b;
+        }
+      }
     </style>
   </head>
   <body>
@@ -125,13 +159,13 @@
     <p class="hint">
       根目录 <code>npm run dev</code>（<code>http://localhost:5173</code>）→ 真实 React +
       <code>STYLE</code>/<code>panelHtml</code> + HMR；预览为内存 <code>chrome.storage</code> 与占位
-      <code>runtime.sendMessage</code>，与 <code>chrome-extension://</code> 不完全一致。顶栏或
+      <code>runtime.sendMessage</code>，与 <code>chrome-extension://</code> 不完全一致。      顶栏或
       <code>#popup</code>/<code>#options</code>/<code>#panel</code>/<code>#contextmenu</code>，快捷键
-      <kbd>1</kbd>/<kbd>2</kbd>/<kbd>3</kbd>/<kbd>4</kbd>（本页焦点）。同源 IndexedDB 占位见
-      <code>src/dev/preview/seedPreviewLibrary.ts</code>：<code>preview-demo-1</code>（双版本）、
-      <code>preview-demo-2</code>、<code>preview-demo-3</code>、<code>preview-demo-10v</code>（10 版本链，
-      Popup <code>v10</code>）；启动补缺失 id。Panel iframe 默认 <code>preview-demo-10v</code>；另开
-      <code>/src/dev/preview/panel-preview.html#focus=preview-demo-1</code>（或 <code>item=</code> 别名）切记录。
+      <kbd>1</kbd>/<kbd>2</kbd>/<kbd>3</kbd>/<kbd>4</kbd>（本页焦点）。各标签下有<strong>场景</strong>下拉框：独立
+      <code>?scene=</code>（空库用独立 IndexedDB，与有数据预览互不影响）。同源种子见
+      <code>src/dev/preview/seedPreviewLibrary.ts</code>（<code>preview-demo-*</code>）。Panel 成功态默认
+      <code>#focus=preview-demo-10v</code>；另开单页可加
+      <code>#focus=preview-demo-1</code>。场景选项见 <code>src/dev/preview/previewScene.ts</code>。
     </p>
 
     <div class="tabs" role="tablist" aria-label="预览界面切换">
@@ -151,22 +185,136 @@
 
     <div class="preview-stack">
       <div class="tabpanel active" role="tabpanel" id="panel-popup" aria-labelledby="tab-popup" data-view="popup">
-        <iframe src="/src/dev/preview/popup-preview.html" title="Popup 预览"></iframe>
+        <div class="scene-tools" data-scene-bar="popup"></div>
+        <iframe title="Popup 预览"></iframe>
       </div>
       <div class="tabpanel" role="tabpanel" id="panel-options" aria-labelledby="tab-options" hidden data-view="options">
-        <iframe src="/src/dev/preview/options-preview.html" title="Options 预览"></iframe>
+        <div class="scene-tools" data-scene-bar="options"></div>
+        <iframe title="Options 预览"></iframe>
       </div>
       <div class="tabpanel" role="tabpanel" id="panel-panelui" aria-labelledby="tab-panel" hidden data-view="panel">
-        <iframe src="/src/dev/preview/panel-preview.html" title="Panel 预览"></iframe>
+        <div class="scene-tools" data-scene-bar="panel"></div>
+        <iframe title="Panel 预览"></iframe>
       </div>
       <div class="tabpanel" role="tabpanel" id="panel-contextmenu" aria-labelledby="tab-contextmenu" hidden data-view="contextmenu">
-        <iframe src="/src/dev/preview/context-menu-preview.html" title="右键菜单演示"></iframe>
+        <div class="scene-tools" data-scene-bar="contextmenu"></div>
+        <iframe title="右键菜单演示"></iframe>
       </div>
     </div>
 
     <script>
       (function () {
         var VIEWS = ['popup', 'options', 'panel', 'contextmenu'];
+        var SCENE_STORAGE_KEY = 'pe_dev_ui_preview_scenes_v1';
+        var SCENE_SPECS = {
+          popup: [
+            { id: 'default', label: '有数据（种子库）' },
+            { id: 'empty', label: '空列表' },
+          ],
+          options: [
+            { id: 'default', label: '有数据（种子库）' },
+            { id: 'empty', label: '空提示词库' },
+          ],
+          panel: [
+            { id: 'default', label: '成功态（库记录）' },
+            { id: 'empty', label: '无数据 / 索引错误' },
+            { id: 'loading', label: '反推进行中（流式）' },
+            { id: 'error', label: '反推失败' },
+            { id: 'compose', label: '合成 · 待发图' },
+          ],
+          contextmenu: [{ id: 'default', label: '右键菜单演示' }],
+        };
+        var IFRAME_HTML = {
+          popup: 'popup-preview',
+          options: 'options-preview',
+          panel: 'panel-preview',
+          contextmenu: 'context-menu-preview',
+        };
+        var sceneByView = { popup: 'default', options: 'default', panel: 'default', contextmenu: 'default' };
+
+        function loadScenesFromStorage() {
+          try {
+            var raw = sessionStorage.getItem(SCENE_STORAGE_KEY);
+            if (!raw) return;
+            var o = JSON.parse(raw);
+            if (!o || typeof o !== 'object') return;
+            VIEWS.forEach(function (v) {
+              if (typeof o[v] === 'string' && o[v]) sceneByView[v] = o[v];
+            });
+          } catch (e) {}
+        }
+
+        function saveScenesToStorage() {
+          try {
+            sessionStorage.setItem(SCENE_STORAGE_KEY, JSON.stringify(sceneByView));
+          } catch (e) {}
+        }
+
+        function normalizeSceneForView(view, scene) {
+          var specs = SCENE_SPECS[view] || [];
+          var ok = specs.some(function (s) {
+            return s.id === scene;
+          });
+          return ok ? scene : specs[0] ? specs[0].id : 'default';
+        }
+
+        function buildIframeSrc(view) {
+          var base = IFRAME_HTML[view];
+          if (!base) return '';
+          var scene = normalizeSceneForView(view, sceneByView[view]);
+          sceneByView[view] = scene;
+          var u = '/src/dev/preview/' + base + '.html?scene=' + encodeURIComponent(scene);
+          if (view === 'panel' && scene === 'default') {
+            u += '#focus=preview-demo-10v';
+          }
+          return u;
+        }
+
+        function setIframeSrc(view) {
+          var panelEl = document.querySelector('.tabpanel[data-view="' + view + '"]');
+          if (!panelEl) return;
+          var iframe = panelEl.querySelector('iframe');
+          if (!iframe) return;
+          iframe.src = buildIframeSrc(view);
+        }
+
+        function wireSceneSelects() {
+          VIEWS.forEach(function (view) {
+            var bar = document.querySelector('[data-scene-bar="' + view + '"]');
+            if (!bar) return;
+            bar.textContent = '';
+            var label = document.createElement('label');
+            label.textContent = '场景';
+            var sel = document.createElement('select');
+            sel.setAttribute('aria-label', '预览场景 · ' + view);
+            (SCENE_SPECS[view] || []).forEach(function (spec) {
+              var opt = document.createElement('option');
+              opt.value = spec.id;
+              opt.textContent = spec.label;
+              sel.appendChild(opt);
+            });
+            var normalized = normalizeSceneForView(view, sceneByView[view]);
+            sceneByView[view] = normalized;
+            sel.value = normalized;
+            sel.addEventListener('change', function () {
+              sceneByView[view] = normalizeSceneForView(view, sel.value);
+              saveScenesToStorage();
+              setIframeSrc(view);
+            });
+            label.appendChild(sel);
+            bar.appendChild(label);
+          });
+        }
+
+        loadScenesFromStorage();
+        VIEWS.forEach(function (v) {
+          sceneByView[v] = normalizeSceneForView(v, sceneByView[v]);
+        });
+        wireSceneSelects();
+        VIEWS.forEach(function (v) {
+          setIframeSrc(v);
+        });
+
         var tabs = Array.prototype.slice.call(document.querySelectorAll('[role="tab"][data-view]'));
         var panels = Array.prototype.slice.call(document.querySelectorAll('.tabpanel[data-view]'));
 
@@ -218,7 +366,8 @@
             var iframe = optsPanel && optsPanel.querySelector('iframe');
             if (iframe) {
               var hash = String(d.optionsHash).replace(/^#/, '');
-              iframe.src = '/src/dev/preview/options-preview.html#' + hash;
+              var sc = encodeURIComponent(normalizeSceneForView('options', sceneByView.options));
+              iframe.src = '/src/dev/preview/options-preview.html?scene=' + sc + '#' + hash;
             }
           }
         });

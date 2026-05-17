@@ -312,6 +312,7 @@ export const STYLE = `
 }
 .compose-actions {
   margin-top: 4px;
+  gap: 8px;
 }
 .ref-file-input-hidden {
   display: none;

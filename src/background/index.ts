@@ -12,7 +12,7 @@ import {
 } from '@/lib/storage';
 import { ensureLibraryReady } from '@/lib/storage/history';
 import { getByDedupeKey, naturalDedupeKey, toPublicHistory } from '@/lib/storage/historyDb';
-import type { HistoryItem, RefineResponse, RegionCaptureConfirmPayload, RuntimeMessage, StrategyId, UpdateCheckResult } from '@/lib/types';
+import type { ExtractFocus, HistoryItem, RefineResponse, RegionCaptureConfirmPayload, RuntimeMessage, StrategyId, UpdateCheckResult } from '@/lib/types';
 import { normalizeReferenceList } from '@/lib/referenceImages';
 import { cropTabCaptureToJpeg, parseRegionCaptureConfirmPayload } from '@/lib/regionCaptureCrop';
 import {
@@ -646,7 +646,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       sendResponse({ ok: false, error: 'invalid params' });
       return true;
     }
-    const { pageUrl, pageTitle, requestId, strategyOverride } = payload;
+    const { pageUrl, pageTitle, requestId, strategyOverride, extractFocus: rawFocus } = payload;
+    const extractFocus: ExtractFocus | undefined =
+      rawFocus === 'material' || rawFocus === 'style' ? rawFocus : undefined;
     runExtraction({
       tabId,
       imageUrls,
@@ -654,6 +656,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       pageTitle: pageTitle || sender.tab?.title || '',
       requestId,
       strategyOverride,
+      extractFocus,
     });
     sendResponse({ ok: true });
     return true;
@@ -711,11 +714,12 @@ async function runExtraction(params: {
   pageTitle: string;
   requestId?: string;
   strategyOverride?: import('@/lib/strategies-meta').StrategyId;
+  extractFocus?: ExtractFocus;
 }): Promise<void> {
   const imageUrls = normalizeReferenceList(params.imageUrls);
   if (imageUrls.length === 0) return;
   const imageUrl = imageUrls[0]!;
-  const { tabId, pageUrl, pageTitle, strategyOverride } = params;
+  const { tabId, pageUrl, pageTitle, strategyOverride, extractFocus } = params;
   const requestId = params.requestId || crypto.randomUUID();
   const runGeneration = beginTabExtractionGeneration(tabId);
   const postTab = (message: RuntimeMessage) => {
@@ -807,6 +811,7 @@ async function runExtraction(params: {
       imageUrls,
       settings,
       prefetched,
+      extractFocus,
       onProgress: (ev) => {
         // 流式阶段已经在 API 层节流到 ≈80ms 一次，这里直接转发到 content。
         postTab({

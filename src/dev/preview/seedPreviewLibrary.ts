@@ -2,6 +2,7 @@ import type { HistoryItem, PromptVersion } from '@/lib/types';
 import { getHistoryItem, historyCount } from '@/lib/storage';
 import { bulkPutHistoryItems } from '@/lib/storage/historyDb';
 import { migrateItem, finalizeHistoryMutation } from '@/lib/storage/history';
+import { getDevPreviewScene } from './previewScene';
 
 /** Popup / Options / Panel 开发预览共用首条占位记录 id。 */
 export const PREVIEW_DEMO_PRIMARY_ID = 'preview-demo-1' as const;
@@ -212,6 +213,8 @@ export function buildPreviewSeedItems(base: number): HistoryItem[] {
  * - 库非空：只为缺失的 `PREVIEW_DEMO_*` id 补写，避免老预览库永远看不到后来新增的种子。
  */
 export async function ensurePreviewLibrarySeed(): Promise<void> {
+  if (getDevPreviewScene() === 'empty') return;
+
   const base = Date.now();
   const items = buildPreviewSeedItems(base);
 

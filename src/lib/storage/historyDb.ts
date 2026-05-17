@@ -1,3 +1,6 @@
+/** 开发预览 iframe：`?scene=empty` 时需在本模块其他代码之前初始化库名覆盖。 */
+import '../../dev/preview/previewScene';
+
 /**
  * 提示词库主存储：IndexedDB（单条读写 + 索引），替代 chrome.storage.local 整表 JSON。
  *
@@ -89,9 +92,21 @@ export function toStoredRecord(item: HistoryItem): HistoryStoredRecord {
   return { ...item, ...keys };
 }
 
+function effectiveHistoryDbName(): string {
+  try {
+    const g = globalThis as unknown as { __PE_PREVIEW_HISTORY_DB__?: string };
+    if (typeof g.__PE_PREVIEW_HISTORY_DB__ === 'string' && g.__PE_PREVIEW_HISTORY_DB__.length > 0) {
+      return g.__PE_PREVIEW_HISTORY_DB__;
+    }
+  } catch {
+    /* ignore */
+  }
+  return HISTORY_DB_NAME;
+}
+
 function openDbRaw(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
-    const req = indexedDB.open(HISTORY_DB_NAME, HISTORY_DB_VERSION);
+    const req = indexedDB.open(effectiveHistoryDbName(), HISTORY_DB_VERSION);
     req.onupgradeneeded = () => {
       const db = req.result;
       if (!db.objectStoreNames.contains(HISTORY_STORE)) {

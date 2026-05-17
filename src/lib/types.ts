@@ -189,6 +189,9 @@ export interface UserStrategyPreset {
  */
 export type ExtractStage = 'fetching' | 'calling' | 'streaming' | 'finalizing';
 
+/** 面板「提取材质 / 提取风格」收窄模型关注点；省略则走常规整图反推。 */
+export type ExtractFocus = 'material' | 'style';
+
 /**
  * AI 调整（refine）流程的阶段。比反推少了 fetching / finalizing：
  *   calling    → 已把指令发给大模型，等待首 token
@@ -309,6 +312,8 @@ export type RuntimeMessage =
          * 不传则走 settings 里用户配置的默认策略。
          */
         strategyOverride?: StrategyId;
+        /** 可选：仅提取材质或画面风格维度，不传等同完整提示词反推 */
+        extractFocus?: ExtractFocus;
       };
     }
   | {

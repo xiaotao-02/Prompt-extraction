@@ -8,6 +8,8 @@ import {
   PREVIEW_DEMO_PANEL_DEFAULT_ID,
 } from './seedPreviewLibrary';
 import { historyItemToPanelPreviewState } from './historyToPanelPreviewState';
+import { syntheticPanelStateFromScene } from './panelPreviewScenes';
+import { getDevPreviewScene } from './previewScene';
 import type { HistoryItem } from '@/lib/types';
 import { getHistoryItem } from '@/lib/storage';
 import { STYLE } from '@/content/panel/styles';
@@ -91,6 +93,9 @@ async function fetchHistoryWithRetry(id: string): Promise<HistoryItem | null> {
 }
 
 async function resolvePreviewPanelState(): Promise<PanelState | null> {
+  const syn = syntheticPanelStateFromScene(getDevPreviewScene());
+  if (syn) return syn;
+
   await ensurePreviewLibrarySeed();
   const preferredId = readPanelPreviewPreferredHistoryId();
   let item = await fetchHistoryWithRetry(preferredId);
