@@ -50,7 +50,7 @@ export function ExpandedPanel({
   refineError,
   onChangeRefine,
   onRunRefine,
-  onPickRefineSuggestion,
+  onRunRefinePreset,
   initialDock = null,
   onInitialDockConsumed,
 }: {
@@ -72,7 +72,8 @@ export function ExpandedPanel({
   refineError: string | null;
   onChangeRefine: (v: string) => void;
   onRunRefine: () => void;
-  onPickRefineSuggestion: (s: string) => void;
+  /** 快捷预设：传入完整 instruction，立即发起 refine */
+  onRunRefinePreset: (instruction: string) => void;
   /** 从 Popup / options hash 出库时一次性打开对应区域 */
   initialDock?: LibraryDockIntent;
   onInitialDockConsumed?: () => void;
@@ -353,7 +354,7 @@ export function ExpandedPanel({
             error={refineError}
             onChange={onChangeRefine}
             onSubmit={onRunRefine}
-            onPick={onPickRefineSuggestion}
+            onPresetRun={onRunRefinePreset}
           />
         )}
 

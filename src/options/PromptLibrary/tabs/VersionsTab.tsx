@@ -4,7 +4,7 @@ import { refineStreamSentinelForJob } from '@/lib/refineStreamVersion';
 import type { LibraryRefineJob } from '../types';
 import { getVersionOrdinalLabel, type VersionOrdinalKind } from '@/lib/versionLabel';
 import { STRATEGY_LABELS } from '@/lib/strategies-meta';
-import { SourceTag } from '../SourceTag';
+import { SourceTag } from '@/components/SourceTag';
 
 /** 深色侧栏内的序号标签（避免浅色块抢眼） */
 const ORD_TAG_CLASS: Record<VersionOrdinalKind, string> = {

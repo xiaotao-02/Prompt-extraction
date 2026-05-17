@@ -1205,12 +1205,12 @@ export default function PromptLibrary({
                         if (refineError) setRefineError(null);
                       }}
                       onRunRefine={() => runRefine(item)}
-                      onPickRefineSuggestion={(s) => {
-                        setRefineInput((prev) => {
-                          const t = prev.trim();
-                          return t ? `${t}；${s}` : s;
-                        });
+                      onRunRefinePreset={(instruction) => {
+                        const trimmed = instruction.trim();
+                        if (!trimmed) return;
+                        setRefineInput(instruction);
                         if (refineError) setRefineError(null);
+                        sendLibraryRefine(item, trimmed, 'refine');
                       }}
                       initialDock={
                         dockIntent && expandedId === item.id ? dockIntent : null
@@ -1279,12 +1279,12 @@ export default function PromptLibrary({
                       if (refineError) setRefineError(null);
                     }}
                     onRunRefine={() => runRefine(item)}
-                    onPickRefineSuggestion={(s) => {
-                      setRefineInput((prev) => {
-                        const t = prev.trim();
-                        return t ? `${t}；${s}` : s;
-                      });
+                    onRunRefinePreset={(instruction) => {
+                      const trimmed = instruction.trim();
+                      if (!trimmed) return;
+                      setRefineInput(instruction);
                       if (refineError) setRefineError(null);
+                      sendLibraryRefine(item, trimmed, 'refine');
                     }}
                     initialDock={
                       dockIntent && expandedId === item.id ? dockIntent : null

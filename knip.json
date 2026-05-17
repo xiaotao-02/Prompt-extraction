@@ -1,0 +1,23 @@
+{
+  "$schema": "https://unpkg.com/knip@5/schema.json",
+  "entry": [
+    "src/background/index.ts",
+    "src/content/index.ts",
+    "src/popup/main.tsx",
+    "src/options/main.tsx",
+    "src/dev/preview/panel-entry.tsx",
+    "src/dev/preview/popup-entry.tsx",
+    "src/dev/preview/options-entry.tsx",
+    "src/**/*.test.ts",
+    "scripts/**/*.mjs"
+  ],
+  "project": [
+    "src/**/*.{ts,tsx}",
+    "scripts/**/*.{ts,mjs}",
+    "*.{ts,mjs}"
+  ],
+  "ignoreBinaries": ["powershell"],
+  "ignoreDependencies": [
+    "tailwindcss"
+  ]
+}

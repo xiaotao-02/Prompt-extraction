@@ -19,15 +19,7 @@ export type LibraryRefineJob = {
 /** 同一展开条内并行 REFINE 上限 */
 export const MAX_PARALLEL_LIBRARY_REFINES = 8;
 
-export const REFINE_SUGGESTIONS = [
-  '翻译成英文',
-  '翻译成中文',
-  '改得更电影感',
-  '扩写提示词',
-  '优化提示词',
-  '更改主体为xxx',
-  '精简成不超过 30 字',
-];
+export { REFINE_PRESETS, type RefinePreset } from '@/lib/refineSuggestions';
 
 export const VIEW_STORAGE_KEY = 'prompt_library_view_v1';
 

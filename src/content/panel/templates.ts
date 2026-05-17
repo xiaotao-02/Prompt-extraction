@@ -24,6 +24,8 @@ import {
 } from './state';
 import { panelReferenceUrls } from './state';
 import { MAX_REFERENCE_IMAGES } from '@/lib/referenceImages';
+import { REFINE_PRESETS } from '@/lib/refineSuggestions';
+import { formatTime } from '@/lib/format/time';
 import {
   ICON_CLOSE,
   ICON_COPY,
@@ -69,19 +71,6 @@ function referenceStripHtml(state: PanelState, removable: boolean): string {
       .join('') +
     `</div>`
   );
-}
-
-function formatTime(t: number): string {
-  const d = new Date(t);
-  const now = Date.now();
-  const diff = now - t;
-  if (diff < 60_000) return '刚刚';
-  if (diff < 3600_000) return `${Math.floor(diff / 60_000)} 分钟前`;
-  if (diff < 86_400_000) return `${Math.floor(diff / 3600_000)} 小时前`;
-  return `${d.getMonth() + 1}/${d.getDate()} ${d.getHours()}:${String(d.getMinutes()).padStart(
-    2,
-    '0'
-  )}`;
 }
 
 /**
@@ -133,14 +122,6 @@ function rewriteRandomnessSelectHtml(rr: OneClickRewriteRandomness, disabled: bo
     </div>`;
 }
 
-export const SUGGESTIONS = [
-  '翻译成英文',
-  '改得更电影感',
-  '扩写提示词',
-  '优化提示词',
-  '更改主体为xxx',
-];
-
 function refineBlockHtml(
   state: PanelState,
   options: { runDisabled?: boolean; runIdleLabel?: string } = {}
@@ -184,7 +165,7 @@ function refineBlockHtml(
               class="refine-input"
               data-role="refine-input"
               spellcheck="false"
-              placeholder="例如：扩写提示词、优化提示词、改得更电影感、翻译成英文…"
+              placeholder="例如：扩写提示词、优化提示词、提取材质、提取风格、改得更电影感、翻译成英文…（下方预设点击即运行）"
               ${refining ? 'disabled' : ''}
             >${escapeText(refineInstruction)}</textarea>
             ${
@@ -196,11 +177,13 @@ function refineBlockHtml(
               refining
                 ? ''
                 : `<div class="refine-suggest">
-              ${SUGGESTIONS.map(
-                (s) =>
-                  `<button class="chip" data-action="refine-suggest" data-text="${escapeAttr(
-                    s
-                  )}">${escapeText(s)}</button>`
+              ${REFINE_PRESETS.map(
+                (p) =>
+                  `<button type="button" class="chip" data-action="refine-suggest" data-text="${escapeAttr(
+                    p.instruction
+                  )}" title="${p.instruction.length > 24 ? escapeAttr('点击直接运行') : ''}">${escapeText(
+                    p.label
+                  )}</button>`
               ).join('')}
             </div>`
             }

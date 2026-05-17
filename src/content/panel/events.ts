@@ -1091,17 +1091,11 @@ function handleDataAction(root: HTMLElement, el: HTMLElement, event: MouseEvent)
     return;
   }
   if (action === 'refine-suggest') {
-    const text = el.dataset.text || '';
-    if (!currentState) return;
-    const prev = (currentState.refineInstruction || '').trim();
-    const next = prev ? `${prev}；${text}` : text;
-    setCurrentState({ ...currentState, refineInstruction: next });
-    const refineInput = root.querySelector<HTMLTextAreaElement>('[data-role="refine-input"]');
-    if (refineInput) {
-      refineInput.value = next;
-      refineInput.focus();
-      refineInput.setSelectionRange(next.length, next.length);
-    }
+    const instruction = (el.dataset.text || '').trim();
+    if (!instruction) return;
+    if (panelHasActiveRefine(state)) return;
+    const baseline = state.draft ?? state.prompt ?? '';
+    beginPanelRefineSession(state, baseline, instruction, instruction);
     return;
   }
   if (action === 'run-refine') {

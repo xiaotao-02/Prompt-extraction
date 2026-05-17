@@ -39,6 +39,7 @@ import {
 } from '@/lib/storage';
 import { DISCOVERED_KEY, SETTINGS_KEY, USER_STRATEGY_PRESETS_KEY } from '@/lib/storage/keys';
 import { getCurrentVersion } from '@/lib/updater';
+import { formatTime } from '@/lib/format/time';
 
 /**
  * 「数据持久化」卡片。
@@ -815,15 +816,6 @@ function ChoiceButton({
       <div className="text-[11px] mt-0.5 opacity-80 leading-snug">{desc}</div>
     </button>
   );
-}
-
-function formatTime(t: number): string {
-  const diff = Date.now() - t;
-  if (diff < 60_000) return '刚刚';
-  if (diff < 3600_000) return `${Math.floor(diff / 60_000)} 分钟前`;
-  if (diff < 86400_000) return `${Math.floor(diff / 3600_000)} 小时前`;
-  const d = new Date(t);
-  return `${d.getMonth() + 1}/${d.getDate()} ${d.getHours()}:${String(d.getMinutes()).padStart(2, '0')}`;
 }
 
 function formatBytes(n: number): string {
