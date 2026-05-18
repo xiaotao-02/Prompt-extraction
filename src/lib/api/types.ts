@@ -11,6 +11,7 @@ import type {
   OutputStyle,
   ProviderId,
   RefineStage,
+  VideoSegmentMeta,
 } from '../types';
 import type { FetchedImage } from '../image';
 
@@ -54,6 +55,8 @@ export interface ExtractParams {
   onProgress?: ExtractProgressFn;
   /** 面板收窄关注点：材质或画风（与运行时 EXTRACT_PROMPT.payload.extractFocus 一致） */
   extractFocus?: ExtractFocus;
+  /** 与运行时 EXTRACT_PROMPT.payload.videoSegment 一致（时间段反推 / 分镜锚点） */
+  videoSegment?: VideoSegmentMeta;
 }
 
 export interface ExtractResult {

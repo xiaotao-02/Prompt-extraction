@@ -12,7 +12,7 @@
  *       GIF / APNG / SVG 这几种格式被视觉 API 接受的程度参差不齐
  *       （OpenAI 仅看 GIF 首帧、Anthropic 不接受 GIF、几乎所有 API 都不接受 SVG），
  *       不在客户端栅格化为 JPEG 的话用户会直接看到"调用失败"。
- *     - 视频帧抓取：由 content script 的 `captureVideoFrame` 在右键事件里
+ *     - 视频帧抓取：由 content script 的 `captureVideoFrameToDataUrl` 在右键事件里
  *       同步完成，到 background 时已经是 `data:image/jpeg;base64,…`，
  *       直接走 {@link tryFastDataUrl} 零拷贝返回。
  *

@@ -193,6 +193,16 @@ export type ExtractStage = 'fetching' | 'calling' | 'streaming' | 'finalizing';
 export type ExtractFocus = 'material' | 'style';
 
 /**
+ * 浮动面板「时间段反推」：与多帧 seek 采样一致的起止秒，写入模型指令上下文。
+ * `frameTimesSec` 与采样帧顺序一致，用于分镜标注中的「约 Xs」锚点（可选，兼容旧客户端）。
+ */
+export type VideoSegmentMeta = {
+  startSec: number;
+  endSec: number;
+  frameTimesSec?: number[];
+};
+
+/**
  * AI 调整（refine）流程的阶段。比反推少了 fetching / finalizing：
  *   calling    → 已把指令发给大模型，等待首 token
  *   streaming  → 模型已经开始吐字，正在流式接收
@@ -314,6 +324,8 @@ export type RuntimeMessage =
         strategyOverride?: StrategyId;
         /** 可选：仅提取材质或画面风格维度，不传等同完整提示词反推 */
         extractFocus?: ExtractFocus;
+        /** 「时间段反推」：与同条消息内多帧参考图对齐的起止秒；可含各帧采样时刻 */
+        videoSegment?: VideoSegmentMeta;
       };
     }
   | {

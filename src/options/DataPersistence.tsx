@@ -476,7 +476,7 @@ export default function DataPersistence({
                   <RotateCw
                     className={`w-3.5 h-3.5 ${busy === 'sync' ? 'animate-spin' : ''}`}
                   />
-                  立即同步
+                  {busy === 'sync' ? '同步中' : '立即同步'}
                 </button>
                 <button
                   onClick={onRestoreNow}

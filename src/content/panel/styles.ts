@@ -317,6 +317,63 @@ export const STYLE = `
 .ref-file-input-hidden {
   display: none;
 }
+.compose-video-segment {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border-radius: 10px;
+  border: 1px dashed rgba(0, 0, 0, 0.12);
+  background: rgba(0, 0, 0, 0.02);
+}
+.compose-video-segment-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: rgba(0, 0, 0, 0.55);
+  flex: 0 0 auto;
+}
+.compose-video-seg-tilde {
+  font-size: 12px;
+  opacity: 0.55;
+  user-select: none;
+}
+.compose-video-time-input {
+  width: 5.5rem;
+  padding: 6px 8px;
+  border-radius: 8px;
+  border: 1px solid rgba(0, 0, 0, 0.12);
+  font: inherit;
+  font-size: 12px;
+  background: rgba(255, 255, 255, 0.85);
+  color: inherit;
+}
+.compose-video-picker {
+  flex: 1 1 140px;
+  min-width: 120px;
+  max-width: 100%;
+  padding: 6px 8px;
+  border-radius: 8px;
+  border: 1px solid rgba(0, 0, 0, 0.12);
+  font: inherit;
+  font-size: 11px;
+  background: rgba(255, 255, 255, 0.85);
+  color: inherit;
+}
+@media (prefers-color-scheme: dark) {
+  .compose-video-segment {
+    border-color: rgba(255, 255, 255, 0.14);
+    background: rgba(255, 255, 255, 0.04);
+  }
+  .compose-video-segment-label {
+    color: rgba(255, 255, 255, 0.55);
+  }
+  .compose-video-time-input,
+  .compose-video-picker {
+    border-color: rgba(255, 255, 255, 0.14);
+    background: rgba(255, 255, 255, 0.06);
+  }
+}
 .btn.sm {
   padding: 6px 10px;
   font-size: 12px;

@@ -20,6 +20,8 @@ import {
 import { expandPanelForSidebar } from './panel/geometry';
 import { startRegionCaptureFromExtension, abortRegionCaptureIfActive } from '@/content/regionCapture';
 import { isExtensionContextValid, safeSendMessage } from '@/content/extensionBridge';
+import { forEachAccessibleSameOriginDocument } from '@/content/sameOriginIframes';
+import { captureVideoFrameToDataUrl } from '@/content/videoSegmentSample';
 
 export { safeSendMessage } from '@/content/extensionBridge';
 
@@ -285,7 +287,7 @@ function resolveVideoPosterUrl(video: HTMLVideoElement): string {
  * video 解码帧 → JPEG；失败后依次 poster、`currentSrc`。
  */
 function extractVideoBestUrl(video: HTMLVideoElement): string {
-  const frame = captureVideoFrame(video);
+  const frame = captureVideoFrameToDataUrl(video);
   if (frame) return frame;
   const poster = resolveVideoPosterUrl(video);
   if (poster) return poster;
@@ -406,25 +408,64 @@ function rectContainsClientPoint(r: DOMRectReadOnly, x: number, y: number): bool
   return x >= r.left && x <= r.right && y >= r.top && y <= r.bottom;
 }
 
-function isRoughlyInViewport(r: DOMRectReadOnly): boolean {
-  const h = window.innerHeight;
-  const w = window.innerWidth;
+function isRoughlyInViewportForElement(el: Element, r: DOMRectReadOnly): boolean {
+  const win = el.ownerDocument?.defaultView;
+  if (!win) return false;
+  const h = win.innerHeight;
+  const w = win.innerWidth;
   return r.bottom > 0 && r.top < h && r.right > 0 && r.left < w;
 }
 
 /**
- * 在视口内、包含点击点的 video/img 中，取包围盒面积最小者；含一层 open ShadowRoot。
+ * 将当前 content script 所在 window 的视口坐标映射到 `targetDoc` 对应视口
+ *（用于主帧收到的 clientX/Y 与 iframe 内元素的 getBoundingClientRect 对齐）。
+ */
+function mapClientPointToDocumentViewport(
+  anchorWin: Window,
+  clientX: number,
+  clientY: number,
+  targetDoc: Document
+): { x: number; y: number } | null {
+  if (targetDoc.defaultView === anchorWin) {
+    return { x: clientX, y: clientY };
+  }
+  let x = clientX;
+  let y = clientY;
+  let w: Window | null = targetDoc.defaultView;
+  while (w && w !== anchorWin) {
+    const fe = w.frameElement as HTMLIFrameElement | null;
+    if (!fe) return null;
+    const r = fe.getBoundingClientRect();
+    x -= r.left;
+    y -= r.top;
+    w = w.parent;
+  }
+  return w === anchorWin ? { x, y } : null;
+}
+
+function collectVideoImgFromAccessibleDocuments(rootDoc: Document): (HTMLVideoElement | HTMLImageElement)[] {
+  const out: (HTMLVideoElement | HTMLImageElement)[] = [];
+  forEachAccessibleSameOriginDocument(rootDoc, (doc) => {
+    out.push(...collectVideoImgRoots(doc));
+  });
+  return out;
+}
+
+/**
+ * 在视口内、包含点击点的 video/img 中，取包围盒面积最小者；含 open ShadowRoot 与同源 iframe。
  */
 function pickMediaUrlByRectHit(x: number, y: number): string {
-  const candidates = collectVideoImgRoots(document);
+  const candidates = collectVideoImgFromAccessibleDocuments(document);
   let bestEl: HTMLVideoElement | HTMLImageElement | undefined;
   let bestArea = Infinity;
 
   for (const el of candidates) {
     const r = el.getBoundingClientRect();
     if (r.width < RECT_HIT_MIN_EDGE || r.height < RECT_HIT_MIN_EDGE) continue;
-    if (!isRoughlyInViewport(r)) continue;
-    if (!rectContainsClientPoint(r, x, y)) continue;
+    if (!isRoughlyInViewportForElement(el, r)) continue;
+    const mapped = mapClientPointToDocumentViewport(window, x, y, el.ownerDocument);
+    if (!mapped) continue;
+    if (!rectContainsClientPoint(r, mapped.x, mapped.y)) continue;
     const area = rectArea(r);
     if (area < bestArea) {
       bestArea = area;
@@ -466,39 +507,6 @@ function collectVideoImgRoots(top: Document | ShadowRoot): (HTMLVideoElement | H
 
   visitRoot(top);
   return out;
-}
-
-/**
- * 把 <video> 的当前帧抓到一张 JPEG dataUrl。
- * - 自动按最长边 1280px 缩放，避免 8MB 上限被触发
- * - HAVE_CURRENT_DATA 之前不 draw，便于走 poster / srcUrl
- * - 跨域 video 无 CORS 时 canvas 污染 → 返回空串
- */
-function captureVideoFrame(video: HTMLVideoElement): string {
-  if (video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA) {
-    return '';
-  }
-
-  const w = video.videoWidth || video.clientWidth;
-  const h = video.videoHeight || video.clientHeight;
-  if (!w || !h) return '';
-  const longest = Math.max(w, h);
-  const MAX = 1280;
-  const scale = longest > MAX ? MAX / longest : 1;
-  const cw = Math.max(1, Math.round(w * scale));
-  const ch = Math.max(1, Math.round(h * scale));
-  const off = document.createElement('canvas');
-  off.width = cw;
-  off.height = ch;
-  const ctx = off.getContext('2d');
-  if (!ctx) return '';
-  try {
-    ctx.drawImage(video, 0, 0, cw, ch);
-    return off.toDataURL('image/jpeg', 0.9);
-  } catch (err) {
-    console.debug('[PromptExtracto] video frame capture tainted', err);
-    return '';
-  }
 }
 
 function readCssBgUrl(el: Element): string {

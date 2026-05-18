@@ -24,6 +24,7 @@ import {
 } from './state';
 import { panelReferenceUrls } from './state';
 import { MAX_REFERENCE_IMAGES } from '@/lib/referenceImages';
+import { composeVideoPickerOptionsHtml, listViewportVideos } from '@/content/videoSegmentSample';
 import { REFINE_PRESETS } from '@/lib/refineSuggestions';
 import { formatTime } from '@/lib/format/time';
 import {
@@ -544,6 +545,7 @@ export function panelHtml(state: PanelState): string {
     const urls = panelReferenceUrls(state);
     const canRun = urls.length > 0;
     const atCap = urls.length >= MAX_REFERENCE_IMAGES;
+    const composeHasVideos = listViewportVideos().length > 0;
     return `
       <div class="header">
         <div class="title">
@@ -565,6 +567,37 @@ export function panelHtml(state: PanelState): string {
             atCap ? 'disabled' : ''
           }>本地图片</button>
           <input type="file" class="ref-file-input-hidden" data-role="ref-file-input" accept="image/*" />
+        </div>
+        <div class="compose-video-segment">
+          <span class="compose-video-segment-label">视频片段（秒）</span>
+          <input
+            type="number"
+            class="compose-video-time-input"
+            data-role="video-seg-start"
+            step="any"
+            inputmode="decimal"
+            placeholder="起始 x"
+            aria-label="片段起始秒"
+          />
+          <span class="compose-video-seg-tilde">～</span>
+          <input
+            type="number"
+            class="compose-video-time-input"
+            data-role="video-seg-end"
+            step="any"
+            inputmode="decimal"
+            placeholder="结束 y"
+            aria-label="片段结束秒"
+          />
+          ${composeVideoPickerOptionsHtml()}
+          <button type="button" class="btn ghost sm" data-action="sample-video-segment-to-refs"${
+            composeHasVideos ? '' : ' disabled'
+          }>
+            采样到参考
+          </button>
+          <button type="button" class="btn primary sm" data-action="extract-video-segment"${composeHasVideos ? '' : ' disabled'}>
+            时间段反推
+          </button>
         </div>
         <p class="compose-hint">图片 / 视频上右键一级「添加到参考」可继续收集；点「生成提示词」完整反推，或「提取材质 / 提取风格」收窄维度。当前 ${urls.length} / ${MAX_REFERENCE_IMAGES} 张。</p>
         <div class="compose-meta">${strategySelectHtml(state.strategy)}</div>

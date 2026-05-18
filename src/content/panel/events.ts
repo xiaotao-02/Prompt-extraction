@@ -12,6 +12,7 @@ import type {
   RefineResponse,
   RuntimeMessage,
   StrategyId,
+  VideoSegmentMeta,
 } from '@/lib/types';
 import {
   buildOneClickRewriteInstruction,
@@ -38,6 +39,7 @@ import {
   MAX_PARALLEL_PANEL_EXTRACTS,
 } from './state';
 import { normalizeReferenceList, appendReferenceUrl, MAX_REFERENCE_IMAGES } from '@/lib/referenceImages';
+import { resolveViewportVideoAtIndex, sampleVideoSegmentJPEGs } from '@/content/videoSegmentSample';
 import {
   updateGeometry,
   clampGeometry,
@@ -66,8 +68,13 @@ function closePanel() {
   return panelActions.closePanel();
 }
 
-/** compose 态发起反推：转入 loading 并发 EXTRACT_PROMPT（可选材质/风格收窄）。 */
-function sendComposeExtractPrompt(state: PanelState, urls: string[], extractFocus?: ExtractFocus): void {
+/** compose 态发起反推：转入 loading 并发 EXTRACT_PROMPT（可选材质/风格收窄、时间段元数据）。 */
+function sendComposeExtractPrompt(
+  state: PanelState,
+  urls: string[],
+  extractFocus?: ExtractFocus,
+  videoSegment?: VideoSegmentMeta
+): void {
   const newReq = crypto.randomUUID();
   renderPanel({
     ...state,
@@ -99,9 +106,52 @@ function sendComposeExtractPrompt(state: PanelState, urls: string[], extractFocu
       requestId: newReq,
       ...(state.strategy !== undefined ? { strategyOverride: state.strategy } : {}),
       ...(extractFocus ? { extractFocus } : {}),
+      ...(videoSegment ? { videoSegment } : {}),
     },
   });
 }
+
+function readComposeSegmentFields(root: HTMLElement): {
+  startSec: number;
+  endSec: number;
+  videoIndex: number;
+} | null {
+  const sel = root.querySelector<HTMLSelectElement>('[data-role="video-seg-picker"]');
+  const iStart = root.querySelector<HTMLInputElement>('[data-role="video-seg-start"]');
+  const iEnd = root.querySelector<HTMLInputElement>('[data-role="video-seg-end"]');
+  if (!sel || sel.disabled) {
+    alert('当前页面视口内没有可用的视频元素。');
+    return null;
+  }
+  if (!iStart || !iEnd) return null;
+
+  const startSec = Number.parseFloat(iStart.value);
+  const endSec = Number.parseFloat(iEnd.value);
+  const videoIndex = Number.parseInt(sel.value, 10);
+
+  if (!Number.isFinite(startSec) || !Number.isFinite(endSec)) {
+    alert('请输入有效的起始秒与结束秒（十进制小数可用）。');
+    return null;
+  }
+  if (!Number.isInteger(videoIndex) || videoIndex < 0) {
+    alert('请先选择页面中要采样的视频。');
+    return null;
+  }
+
+  return { startSec, endSec, videoIndex };
+}
+
+function setComposeVideoSegmentBusy(shell: HTMLElement | null | undefined, busy: boolean): void {
+  if (!shell) return;
+  for (const a of ['sample-video-segment-to-refs', 'extract-video-segment'] as const) {
+    shell.querySelector<HTMLButtonElement>(`button[data-action="${a}"]`)?.toggleAttribute(
+      'disabled',
+      busy
+    );
+  }
+}
+
+
 
 let dirtyVersionHighlightRaf = 0;
 
@@ -740,6 +790,73 @@ function handleDataAction(root: HTMLElement, el: HTMLElement, event: MouseEvent)
   if (action === 'pick-ref-file') {
     if (state.status !== 'compose') return;
     root.querySelector<HTMLInputElement>('[data-role="ref-file-input"]')?.click();
+    return;
+  }
+  if (action === 'sample-video-segment-to-refs' || action === 'extract-video-segment') {
+    if (state.status !== 'compose') return;
+
+    const fields = readComposeSegmentFields(root);
+    if (!fields) return;
+
+    const video = resolveViewportVideoAtIndex(fields.videoIndex);
+    if (!video) {
+      alert('未找到所选视频（页面布局可能已变化），请关上悬浮窗后再打开重试。');
+      return;
+    }
+
+    safeSendMessage({ type: 'PING' });
+
+    void (async () => {
+      setComposeVideoSegmentBusy(panel, true);
+      try {
+        const { frames, startSec, endSec, frameTimesSec } = await sampleVideoSegmentJPEGs(
+          video,
+          fields.startSec,
+          fields.endSec
+        );
+
+        const segmentMeta: VideoSegmentMeta = { startSec, endSec, frameTimesSec };
+
+        if (action === 'sample-video-segment-to-refs') {
+          const prev = panelReferenceUrls(state);
+          const merged = normalizeReferenceList([...prev, ...frames]);
+          const added = merged.length - prev.length;
+          if (added <= 0) {
+            alert(
+              '没有加入新的采样帧（参考已满 8 张，或采样结果与现有参考重复）。请删减参考图或清空后再采样。'
+            );
+            return;
+          }
+          renderPanel({
+            ...state,
+            imageUrls: merged,
+            imageUrl: merged[0] || state.imageUrl,
+          });
+          return;
+        }
+
+        if (!isExtensionContextValid()) return;
+
+        if (panelExtractJobs(state).length >= MAX_PARALLEL_PANEL_EXTRACTS) {
+          alert(`并行反推已满（至多 ${MAX_PARALLEL_PANEL_EXTRACTS} 条），请等待进行中任务结束后再试。`);
+          return;
+        }
+
+        const urlsOnly = normalizeReferenceList(frames);
+        if (!urlsOnly.length) {
+          alert('采样未得到有效图片帧。');
+          return;
+        }
+
+        sendComposeExtractPrompt(state, urlsOnly, undefined, segmentMeta);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        alert(msg);
+      } finally {
+        setComposeVideoSegmentBusy(panel, false);
+      }
+    })();
+
     return;
   }
   if (action === 'copy') {

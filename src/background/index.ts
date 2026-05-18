@@ -12,7 +12,7 @@ import {
 } from '@/lib/storage';
 import { ensureLibraryReady } from '@/lib/storage/history';
 import { getByDedupeKey, naturalDedupeKey, toPublicHistory } from '@/lib/storage/historyDb';
-import type { ExtractFocus, HistoryItem, RefineResponse, RegionCaptureConfirmPayload, RuntimeMessage, StrategyId, UpdateCheckResult } from '@/lib/types';
+import type { ExtractFocus, HistoryItem, RefineResponse, RegionCaptureConfirmPayload, RuntimeMessage, StrategyId, UpdateCheckResult, VideoSegmentMeta } from '@/lib/types';
 import { normalizeReferenceList } from '@/lib/referenceImages';
 import { cropTabCaptureToJpeg, parseRegionCaptureConfirmPayload } from '@/lib/regionCaptureCrop';
 import {
@@ -649,6 +649,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     const { pageUrl, pageTitle, requestId, strategyOverride, extractFocus: rawFocus } = payload;
     const extractFocus: ExtractFocus | undefined =
       rawFocus === 'material' || rawFocus === 'style' ? rawFocus : undefined;
+    const videoSegment = parsePayloadVideoSegment(
+      (payload as { videoSegment?: unknown }).videoSegment
+    );
     runExtraction({
       tabId,
       imageUrls,
@@ -657,12 +660,34 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       requestId,
       strategyOverride,
       extractFocus,
+      videoSegment,
     });
     sendResponse({ ok: true });
     return true;
   }
   return false;
 });
+
+function parsePayloadVideoSegment(raw: unknown): VideoSegmentMeta | undefined {
+  if (!raw || typeof raw !== 'object') return undefined;
+  const o = raw as Record<string, unknown>;
+  const startSec =
+    typeof o.startSec === 'number' ? o.startSec : Number.parseFloat(String(o.startSec ?? ''));
+  const endSec =
+    typeof o.endSec === 'number' ? o.endSec : Number.parseFloat(String(o.endSec ?? ''));
+  if (!Number.isFinite(startSec) || !Number.isFinite(endSec)) return undefined;
+
+  let frameTimesSec: number[] | undefined;
+  const ftsRaw = o.frameTimesSec;
+  if (Array.isArray(ftsRaw)) {
+    const nums = ftsRaw
+      .map((x) => (typeof x === 'number' ? x : Number.parseFloat(String(x ?? ''))))
+      .filter((n) => Number.isFinite(n));
+    if (nums.length > 0) frameTimesSec = nums;
+  }
+
+  return frameTimesSec ? { startSec, endSec, frameTimesSec } : { startSec, endSec };
+}
 
 /**
  * 与 {@link addHistory} 使用相同的缩略图 + dedupe 键，在识图完成前查询是否已有同图记录；
@@ -715,11 +740,12 @@ async function runExtraction(params: {
   requestId?: string;
   strategyOverride?: import('@/lib/strategies-meta').StrategyId;
   extractFocus?: ExtractFocus;
+  videoSegment?: VideoSegmentMeta;
 }): Promise<void> {
   const imageUrls = normalizeReferenceList(params.imageUrls);
   if (imageUrls.length === 0) return;
   const imageUrl = imageUrls[0]!;
-  const { tabId, pageUrl, pageTitle, strategyOverride, extractFocus } = params;
+  const { tabId, pageUrl, pageTitle, strategyOverride, extractFocus, videoSegment } = params;
   const requestId = params.requestId || crypto.randomUUID();
   const runGeneration = beginTabExtractionGeneration(tabId);
   const postTab = (message: RuntimeMessage) => {
@@ -812,6 +838,7 @@ async function runExtraction(params: {
       settings,
       prefetched,
       extractFocus,
+      videoSegment,
       onProgress: (ev) => {
         // 流式阶段已经在 API 层节流到 ≈80ms 一次，这里直接转发到 content。
         postTab({
