@@ -123,6 +123,7 @@ export default function DataPersistence({
         const m: SyncMeta = { lastSyncedAt: r.syncedAt || Date.now(), bytes: r.bytes };
         await writeSyncMeta(m);
         setMeta(m);
+        await refresh();
         if (!opts.silent) showTip(true, '已同步到数据目录');
         return;
       }
@@ -148,7 +149,7 @@ export default function DataPersistence({
       await writeSyncMeta(m);
       setMeta(m);
     },
-    [meta?.bytes, meta?.lastSyncedAt]
+    [meta?.bytes, meta?.lastSyncedAt, refresh]
   );
 
   // 监听本地数据变化 → 自动同步到数据目录（如果配置了）。
@@ -246,7 +247,9 @@ export default function DataPersistence({
           showTip(true, `已从备份还原 · 历史 ${r.historyTotal} 条`);
           onDataRestored?.();
           shrinkDismissedRef.current = false;
-          const sr = await syncToDirectory(getCurrentVersion());
+          const sr = await syncToDirectory(getCurrentVersion(), {
+            requestPermission: true,
+          });
           await handleSyncResult(sr, { silent: true });
         } finally {
           setBusy(null);
@@ -254,7 +257,10 @@ export default function DataPersistence({
       } else if (choice === 'overwrite') {
         setBusy('sync');
         try {
-          const sr = await syncToDirectory(getCurrentVersion(), { force: true });
+          const sr = await syncToDirectory(getCurrentVersion(), {
+            force: true,
+            requestPermission: true,
+          });
           await handleSyncResult(sr);
           shrinkDismissedRef.current = false;
         } finally {
@@ -283,7 +289,10 @@ export default function DataPersistence({
       } else if (choice === 'overwrite') {
         setBusy('sync');
         try {
-          const sr = await syncToDirectory(getCurrentVersion(), { force: true });
+          const sr = await syncToDirectory(getCurrentVersion(), {
+            force: true,
+            requestPermission: true,
+          });
           await handleSyncResult(sr);
           shrinkDismissedRef.current = false;
         } finally {
@@ -299,7 +308,7 @@ export default function DataPersistence({
   const onSyncNow = async () => {
     setBusy('sync');
     try {
-      const r = await syncToDirectory(getCurrentVersion());
+      const r = await syncToDirectory(getCurrentVersion(), { requestPermission: true });
       await handleSyncResult(r);
     } finally {
       setBusy(null);

@@ -218,10 +218,12 @@ async function isShrinkOverwrite(
  *                   `reason: 'shrink-blocked'`。UI 收到这个 reason 应弹明确的二次
  *                   确认，让用户主动选择「恢复备份」或「确实要覆盖」，确认后再
  *                   传 `force: true` 重新调用。
+ * @param opts.requestPermission 默认 false。在用户手势上下文里传 true，以便权限过期时
+ *                   弹出系统授权框；异步防抖自动同步应传 false。
  */
 export async function syncToDirectory(
   appVersion?: string,
-  opts: { force?: boolean } = {}
+  opts: { force?: boolean; requestPermission?: boolean } = {}
 ): Promise<{
   ok: boolean;
   reason?: string;
@@ -235,7 +237,7 @@ export async function syncToDirectory(
   if (!handle) {
     return { ok: false, reason: 'not-configured' };
   }
-  const granted = await ensureDirectoryPermission(handle, false);
+  const granted = await ensureDirectoryPermission(handle, opts.requestPermission ?? false);
   if (!granted) {
     return { ok: false, reason: 'permission-denied' };
   }
