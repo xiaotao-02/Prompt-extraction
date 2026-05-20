@@ -6,7 +6,8 @@ export default defineManifest({
   name: 'Prompt Extracto',
   // Chrome Web Store 对 manifest description 显示截断在 ~132 字符，
   // 这里保留中文一句话；商店页面更详细的中英描述见 store-listing/。
-  description: '右键任意网页图片 / 动图 / 视频，调用视觉大模型一键反推 AI 绘画提示词，支持自然语言、SD 标签、Midjourney 多种风格输出。',
+  description:
+    '右键网页图片/GIF/视频帧，用自备视觉模型 API 提炼 AI 绘画提示词（中/英段落·SD·MJ）；支持对话改写、版本回溯及快捷键截取区域添入参考面板。',
   version: pkg.version,
   // 上架展示给用户的"开发者主页"，必须是可公开访问的仓库 / 站点。
   homepage_url: 'https://github.com/xiaotao-02/Prompt-extraction',

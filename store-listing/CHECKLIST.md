@@ -119,3 +119,14 @@ npm run release:store
 | 「Misleading screenshots」 | 截图里的 prompt 都是真实可复现的示例文本 |
 | 「Hidden remote code (eval / new Function)」 | 代码无远程脚本，`permission-justifications.md` 已声明 No |
 | 「Privacy policy not accessible」 | URL 是 GitHub 公开 raw 链接，无登录可访问 |
+
+---
+
+## 9. 发布后：增强型安全浏览提示与可信度运营（非审核项）
+
+部分用户若在 Chrome 中开启 **[安全浏览 · 增强型保护](https://support.google.com/chrome/answer/9890866)**，安装或管理扩展时可能看到 **「增强型安全浏览功能不信任此扩展程序」**。这是浏览器侧的信任分层提示，[**官方说明见帮助中心**](https://support.google.com/chrome_webstore/answer/2664769?hl=zh-Hans)：新开发者/新上架条目常需较长时间合规运营才会归为可信，**不等于恶意判定**，用户仍可 **继续安装**。仓库已在 [`README.md`](../README.md) 常见问题与 [`store-listing/description.*.md`](description.zh.md) 中补充对用户可见的简短解释；更新商店 Description 时请把对应段落同步粘贴到开发者后台 zh_CN / en。
+
+**维护者可长期对齐：**
+
+- [ ] 持续关注 [Chrome 应用商店开发者计划政策](https://developer.chrome.com/docs/webstore/program_policies)，保持零违规与稳定上架节奏
+- [ ] 按需了解 [Chrome Web Store 发布者徽章等政策](https://blog.google/products/chrome/find-great-extensions-new-chrome-web-store-badges)（公信力相关，官方未承诺与上述横幅逐项挂钩）

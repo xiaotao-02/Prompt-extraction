@@ -147,6 +147,12 @@ npm run store:screenshots
 | 隐私政策（提交时填的 URL） | [`PRIVACY.md`](PRIVACY.md) → `https://raw.githubusercontent.com/xiaotao-02/Prompt-extraction/main/PRIVACY.md` |
 | CI 自动发版（推 tag 自动上架） | [`docs/CHROME_WEB_STORE_CI.md`](docs/CHROME_WEB_STORE_CI.md) + [`.github/workflows/publish-chrome-store.yml`](.github/workflows/publish-chrome-store.yml) |
 
+### 维护者备忘：政策合规与可信度
+
+- 持续遵循 [Chrome 应用商店开发者计划政策](https://developer.chrome.com/docs/webstore/program_policies)，避免违规下架申诉记录；稳定提交合规版本有助于客户端侧的信任积累（官方提到新开发者常需数月，无公开「立即解除」通道）。
+- 商品页与用户沟通可参考 [`store-listing/description.zh.md`](store-listing/description.zh.md) 中的「常见问题」——向开启增强型保护的用户说明横幅含义。
+- 关注 Google 公布的发布者与商店徽章等政策（例如 [Chrome Web Store 徽章相关公告](https://blog.google/products/chrome/find-great-extensions-new-chrome-web-store-badges)）；身份验证等与公信力相关，但与上述横幅并无官方保证的一对一对应关系。
+
 ## 自动发布（CI）
 
 仓库已配置 GitHub Actions（`.github/workflows/auto-release.yml`），**每次 push 到 `main` 分支都会自动发布一次新版**，流程如下：
@@ -186,3 +192,6 @@ A：这些"GIF"其实是 `<video>`，请在视频画面上**直接右键**，菜
 
 **Q：可以批量提取吗？**
 A：当前版本聚焦单张图右键体验；后续会加多选 / 当前页一键扫描功能。
+
+**Q：安装或管理扩展时出现「增强型安全浏览功能不信任此扩展程序」是什么意思？**
+A：这通常出现在你已开启 Chrome **安全浏览 · 增强型保护**（[说明](https://support.google.com/chrome/answer/9890866)）时。系统在区分「已向谷歌建立足够信任记录的开发者」与「尚在建立信任过程中的开发者」；[**不等于认定扩展恶意**](https://support.google.com/chrome_webstore/answer/2664769?hl=zh-Hans)，新上架或新开发者账号往往需要数月合规运营才会不再出现该横幅。仍可点 **「继续安装」** 正常使用；若你未开启增强型保护，一般只会看到常规权限提示（例如访问所有网站）。

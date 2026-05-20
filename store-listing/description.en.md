@@ -1,5 +1,8 @@
-**Prompt Extracto** lets you right-click any image on any web page and reverse-extract a high-quality AI painting prompt with a vision LLM in seconds.
-PNG, JPEG, animated GIF / APNG / WebP, and even the "fake-GIF" <video> elements on Twitter / Reddit / Discord — all are supported.
+The slow part of AI art is rarely the final generation—it is turning a reference into a **prompt you can reuse**, in the **right shape** for your toolchain. **Prompt Extracto** works where you already browse: when a pose, lighting, or composition catches your eye, **right-click** to have a vision model read the pixels into a polished prompt instead of juggling downloads/uploads or typing tags line by line.
+
+You **bring your own API key** and pick exactly one upstream provider inside the extension; there is **no developer-operated backend** that receives your images or secrets (details under **Privacy & data flow**). After setup, results land in an on-page floating panel in seconds—ready to copy into SD / MJ workflows—with **chat refinement** and **version history** listed under **Key features**.
+
+Supported inputs span PNG / JPEG, animated GIF / APNG / animated WebP, and the faux-GIF `<video>` players common on Twitter, Reddit, and Discord; canvases, inline SVG, and CSS background images are covered too—see **Key features** for the full list.
 
 ━━━━━━━━━━━━━━━━━━━━━━
 ✦ Key features
@@ -67,3 +70,6 @@ A: Those "GIFs" are actually <video> elements. Right-click directly on the video
 
 Q: Can I use DeepSeek?
 A: Official DeepSeek chat endpoints do not support image input. Use SiliconFlow + the deepseek-ai/deepseek-vl2 model instead.
+
+Q: Chrome shows "This extension is not trusted by Enhanced Safe Browsing"?
+A: With Chrome's Enhanced Safe Browsing enabled, Chrome may warn for extensions whose publisher has not yet been classified as trusted (see Google Help: https://support.google.com/chrome_webstore/answer/2664769). This does not mean the extension is malicious—choose "Continue to install" if you want to proceed.
