@@ -180,6 +180,17 @@ const STYLE_PROMPT_SET_V035: Record<OutputStyle, string> = {
     '根据图片结构合理分段详细描述提示词，不严格规定有几段，但是大概保留3-8段落，提示词为中文自然语言+参数，通用的提示词不适配模型，只返回提示词本体，不要出现违规提示词',
 };
 
+// v_native：极简「图像 → 中文提示词」；反推时由 extract 固定取 natural-zh，四套 key 同文以降低歧义。
+const NATIVE_PROMPT_BODY =
+  '请根据参考图直观写出可作为文生图模型输入的高质量中文提示词。只输出提示词正文：不要标题、前缀、后缀、分项、Markdown 或开场套话（如「这是一张图」「画面展示了」）；只描述画面中可见或可合理推断的视觉信息，看不清或未出现的内容请勿编造、勿脑补镜头外叙事。';
+
+const STYLE_PROMPT_SET_NATIVE: Record<OutputStyle, string> = {
+  'natural-zh': NATIVE_PROMPT_BODY,
+  'natural-en': NATIVE_PROMPT_BODY,
+  'sd-tags': NATIVE_PROMPT_BODY,
+  midjourney: NATIVE_PROMPT_BODY,
+};
+
 /**
  * stylePromptSet 组件的版本注册表。键是版本号，值是该版本下完整的 4 套指令。
  *
@@ -193,6 +204,7 @@ export const STYLE_PROMPT_SETS: Record<StylePromptSetVersion, Record<OutputStyle
   'v0.2.2': STYLE_PROMPT_SET_V022,
   'v0.3.0': STYLE_PROMPT_SET_V030,
   'v0.3.5': STYLE_PROMPT_SET_V035,
+  v_native: STYLE_PROMPT_SET_NATIVE,
 };
 
 // ----- sampling 各版本 -----

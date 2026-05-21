@@ -43,7 +43,7 @@
  * 真正的版本注册表 (`STYLE_PROMPT_SETS`) 在 strategies.ts，那里有几 KB 的 prompt
  * 字符串；这里只保留版本号字面量 type 给 components 字段引用，不会带任何运行时代价。
  */
-export type StylePromptSetVersion = 'v0.1.0' | 'v0.2.2' | 'v0.3.0' | 'v0.3.5';
+export type StylePromptSetVersion = 'v0.1.0' | 'v0.2.2' | 'v0.3.0' | 'v0.3.5' | 'v_native';
 /** sampling 组件的版本号。同上，只是 type，注册表在 strategies.ts。 */
 export type SamplingVersion = 'v0.1.0' | 'v0.2.2' | 'v0.3.0';
 /** customJoin 组件的版本号。同上，只是 type，注册表在 strategies.ts。 */
@@ -172,6 +172,18 @@ const STRATEGIES_INTERNAL = {
       '温度 0.3 · 上限 1536 token · 自定义模板前置。在 v0.3.0 采样/拼接上，中文档按图片结构分 3–8 段详述，中文自然语言+参数，只返提示词本体、无违规内容；英文/标签档指令仍与 v0.3.0 成套一致。',
     components: {
       stylePromptSet: 'v0.3.5',
+      sampling: 'v0.3.0',
+      customJoin: 'v0.3.0',
+    },
+  },
+  // native：图像直送具备视觉能力的模型，仅用极简指令令其输出文生图用提示词；不套用
+  // 结构化维度清单。反推时使用固定「自然中文」口径（与设置页的「输出风格」四档脱钩）。
+  native: {
+    label: '原生识别',
+    description:
+      '温度 0.3 · 上限 1536 token · 自定义模板前置。极简指令：按图直观写出可用提示词本体；不包含复杂维度拆解。采样/拼接与 v0.3.0 对齐。注意「输出风格」四档不参与本策略反推，仅在为其他策略预选时生效。',
+    components: {
+      stylePromptSet: 'v_native',
       sampling: 'v0.3.0',
       customJoin: 'v0.3.0',
     },

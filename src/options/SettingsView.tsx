@@ -767,6 +767,11 @@ export default function SettingsView({ registerSaveHandler, onDirtyChange }: Pro
             <section className="space-y-4">
         <h2 className="text-sm font-semibold mb-1">输出风格</h2>
         <p className="text-xs text-zinc-500 mb-4">决定生成的提示词使用什么语言和格式</p>
+        {settings.promptStrategy === 'native' && (
+          <p className="text-[11px] text-violet-600 dark:text-violet-400 mb-4 leading-snug">
+            当前策略为「原生识别」：反推固定按<strong>自然中文段落</strong>调用模型，下列「输出风格」四档不会改变本次结果；切换到其他策略后仍会使用你在此处选中的档位。
+          </p>
+        )}
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2">
           {STYLE_OPTIONS.map((s) => {
             const active = settings.outputStyle === s.value;
@@ -1078,6 +1083,7 @@ const STYLE_PROMPT_SET_LABELS: Record<StylePromptSetVersion, string> = {
   'v0.2.2': 'v0.2.2 — 10 维度显式清单 + 三禁 + 空槽位跳过',
   'v0.3.0': 'v0.3.0 — 8 维度分句 / 具名风格锚定 / 摄影参数',
   'v0.3.5': 'v0.3.5 — 按图结构 3–8 段 / 中文自然语言+参数 / 只出正文',
+  v_native: 'v_native — 极简直出 · 图像直送 VLM · 「原生识别」策略下不参与输出风格四档',
 };
 const SAMPLING_LABELS: Record<SamplingVersion, string> = {
   'v0.1.0': 'v0.1.0 — temperature 0.4 · max_tokens 1024',

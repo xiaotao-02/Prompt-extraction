@@ -2,7 +2,7 @@
  * 视觉反推主入口：根据 settings.activeProvider 路由到具体 provider 实现，
  * 并负责"图片就绪 → 调用模型 → 流式回传"的阶段调度。
  */
-import type { AppSettings, ExtractFocus, VideoSegmentMeta } from '../types';
+import type { AppSettings, ExtractFocus, OutputStyle, VideoSegmentMeta } from '../types';
 import { fetchImageAsBase64 } from '../image';
 import { normalizeReferenceList } from '../referenceImages';
 import { getStrategy, resolveCustomStrategy, type PromptStrategy } from '../strategies';
@@ -75,8 +75,14 @@ function appendExtractFocusInstruction(instruction: string, focus: ExtractFocus 
   return instruction + EXTRACT_FOCUS_STYLE_NOTE;
 }
 
+/** 「原生识别」策略固定中文口径，不参与 settings.outputStyle。 */
+function effectiveOutputStyleForExtract(settings: AppSettings, strategy: PromptStrategy): OutputStyle {
+  return strategy.id === 'native' ? 'natural-zh' : settings.outputStyle;
+}
+
 function buildInstruction(settings: AppSettings, strategy: PromptStrategy): string {
-  const base = strategy.stylePrompts[settings.outputStyle] ?? strategy.stylePrompts['natural-zh'];
+  const styleKey = effectiveOutputStyleForExtract(settings, strategy);
+  const base = strategy.stylePrompts[styleKey] ?? strategy.stylePrompts['natural-zh'];
   const custom = settings.customPromptTemplate.trim();
   if (!custom) return base;
   // 拼接位置由策略决定：
@@ -170,6 +176,6 @@ export async function extractPrompt(params: ExtractParams): Promise<ExtractResul
     prompt: prompt.trim(),
     provider: providerId,
     model: cfg.model,
-    style: settings.outputStyle,
+    style: effectiveOutputStyleForExtract(settings, strategy),
   };
 }
